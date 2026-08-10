@@ -27,6 +27,7 @@ COPY VERSION ./VERSION
 COPY rust/Cargo.toml rust/Cargo.lock ./rust/
 COPY rust/src ./rust/src
 COPY rust/static ./rust/static
+COPY app/catalogs ./app/catalogs
 RUN cargo build --locked --release --manifest-path rust/Cargo.toml
 
 FROM ${RUNTIME_IMAGE} AS runtime
