@@ -26,11 +26,16 @@ use crate::pricing::{
     },
     http::{PricingHttpClient, PricingSource},
     live::{
-        AZURE_RETAIL_MAX_PAGES, AwsRegionScope, aws_region_index_url, aws_region_offer_url,
-        aws_region_scope, azure_calculator_url, azure_region_scope, azure_retail_continuation_url,
-        azure_retail_url, ebs_meter_map_url, ec2_leaf_url, ec2_metadata_url, ec2_selector_url,
+        AZURE_RETAIL_MAX_PAGES, AwsRegionScope, PARSER_SCHEMA_VERSION, aws_region_index_url,
+        aws_region_offer_url, aws_region_scope, azure_calculator_url, azure_region_scope,
+        azure_retail_continuation_url, azure_retail_url, ebs_meter_map_url, ec2_leaf_url,
+        ec2_metadata_url, ec2_selector_url,
     },
-    provider::ProviderError,
+    provider::{ProviderError, ResolutionStatus},
+    snapshot::{
+        AwsPriceSnapshot, AzurePriceSnapshot, RateProvenance, SnapshotCreationMetadata,
+        SnapshotError, utc_now_rfc3339,
+    },
 };
 
 const AZURE_RETAIL_PAGE_SIZE: usize = 1_000;
@@ -167,6 +172,35 @@ impl LivePricingLoader {
             },
         )
         .map_err(map_ebs_error)
+    }
+
+    pub async fn load_aws_snapshot(
+        &self,
+        source_region: &str,
+    ) -> Result<AwsPriceSnapshot, ProviderError> {
+        let (ec2, rds, ebs) = tokio::try_join!(
+            self.load_aws_ec2(source_region),
+            self.load_aws_rds(source_region),
+            self.load_aws_ebs(source_region),
+        )?;
+        let mut warnings = ec2.warnings;
+        warnings.extend(rds.warnings);
+        warnings.extend(ebs.warnings);
+        let provenance = ec2
+            .records
+            .iter()
+            .map(|record| &record.provenance)
+            .chain(rds.records.iter().map(|record| &record.provenance))
+            .chain(ebs.records.iter().map(|record| &record.provenance));
+        let (source_urls, source_published_at) = snapshot_sources(provenance);
+        AwsPriceSnapshot::create(
+            live_snapshot_metadata(warnings, source_urls, source_published_at)?,
+            source_region,
+            ec2.records,
+            rds.records,
+            ebs.records,
+        )
+        .map_err(map_snapshot_error)
     }
 
     pub async fn load_aws_ec2(
@@ -359,6 +393,60 @@ impl LivePricingLoader {
         }
         Ok(normalized)
     }
+
+    pub async fn load_azure_snapshot(
+        &self,
+        target_region: &str,
+        capabilities: &CapabilityCatalog,
+    ) -> Result<AzurePriceSnapshot, ProviderError> {
+        let normalized = self.load_azure_sql_mi(target_region, capabilities).await?;
+        let (_, source_published_at) =
+            snapshot_sources(normalized.records.iter().map(|record| &record.provenance));
+        AzurePriceSnapshot::create(
+            live_snapshot_metadata(
+                normalized.warnings,
+                normalized.source_urls,
+                source_published_at,
+            )?,
+            target_region,
+            normalized.records,
+        )
+        .map_err(map_snapshot_error)
+    }
+}
+
+fn snapshot_sources<'a>(
+    provenance: impl Iterator<Item = &'a RateProvenance>,
+) -> (Vec<String>, Option<String>) {
+    let mut source_urls = BTreeSet::new();
+    let mut source_published_at = None;
+    for value in provenance {
+        source_urls.insert(value.source_url.clone());
+        if let Some(effective_at) = &value.effective_at
+            && source_published_at
+                .as_ref()
+                .is_none_or(|current| effective_at > current)
+        {
+            source_published_at = Some(effective_at.clone());
+        }
+    }
+    (source_urls.into_iter().collect(), source_published_at)
+}
+
+fn live_snapshot_metadata(
+    warnings: Vec<String>,
+    source_urls: Vec<String>,
+    source_published_at: Option<String>,
+) -> Result<SnapshotCreationMetadata, ProviderError> {
+    Ok(SnapshotCreationMetadata {
+        status: ResolutionStatus::Fresh,
+        retrieved_at: utc_now_rfc3339().map_err(map_snapshot_error)?,
+        source_published_at,
+        currency: "USD".to_owned(),
+        source_urls,
+        parser_schema_version: PARSER_SCHEMA_VERSION.to_owned(),
+        warnings,
+    })
 }
 
 fn project_azure_retail_page(
@@ -560,6 +648,10 @@ fn map_azure_sql_mi_error(error: AzureSqlMiNormalizationError) -> ProviderError 
         | AzureSqlMiNormalizationError::InvalidValue
         | AzureSqlMiNormalizationError::ConflictingRetailRate => ProviderError::SchemaChanged,
     }
+}
+
+fn map_snapshot_error(_error: SnapshotError) -> ProviderError {
+    ProviderError::SchemaChanged
 }
 
 #[cfg(test)]
@@ -772,6 +864,7 @@ mod tests {
             .expect("load Azure SQL MI prices");
 
         assert_eq!(normalized.records.len(), 8);
+        assert_eq!(normalized.source_urls.len(), 3);
         assert_eq!(normalized.warnings.len(), 1);
         let record = &normalized.records[0];
         assert_eq!(record.rate.compute_hourly.to_string(), "5.632");
@@ -784,6 +877,18 @@ mod tests {
             record.provenance.source_version.as_deref(),
             Some("calculator-etag")
         );
+
+        let snapshot = loader
+            .load_azure_snapshot("swedencentral", &azure_capabilities())
+            .await
+            .expect("create Azure SQL MI snapshot");
+        assert_eq!(snapshot.metadata.status, ResolutionStatus::Fresh);
+        assert_eq!(
+            snapshot.metadata.parser_schema_version,
+            PARSER_SCHEMA_VERSION
+        );
+        assert_eq!(snapshot.metadata.source_urls.len(), 3);
+        assert_eq!(snapshot.mi_rates.len(), 8);
     }
 
     #[tokio::test]

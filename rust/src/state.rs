@@ -13,6 +13,7 @@ use crate::{
         repository::{InMemoryProjectRepository, ProjectRepository, RepositoryError},
     },
     pricing::{
+        coordinator::PricingCoordinator,
         http::PricingHttpClient,
         loader::LivePricingLoader,
         local_fixture::{self, LocalFixtureError},
@@ -51,6 +52,7 @@ pub struct AppState {
     pub projects: Arc<dyn ProjectRepository>,
     pub persistence_backend: PersistenceBackend,
     pub snapshots: InMemorySnapshotRepository,
+    pub pricing: PricingCoordinator,
     pub live_pricing: Option<LivePricingLoader>,
     pub guest_rate_limit: TokenBucket,
     pub refresh_rate_limit: TokenBucket,
@@ -82,9 +84,10 @@ impl AppState {
         projects: Arc<dyn ProjectRepository>,
         persistence_backend: PersistenceBackend,
     ) -> Result<Self, StateError> {
-        let capabilities: CapabilityCatalog =
-            serde_json::from_str(include_str!("../../app/catalogs/sql-mi-capabilities.json"))?;
-        let calculations = CalculationEngine::new(Arc::new(capabilities), FORMULA_VERSION)?;
+        let capabilities = Arc::new(serde_json::from_str::<CapabilityCatalog>(include_str!(
+            "../../app/catalogs/sql-mi-capabilities.json"
+        ))?);
+        let calculations = CalculationEngine::new(Arc::clone(&capabilities), FORMULA_VERSION)?;
         let snapshots = InMemorySnapshotRepository::new();
         let live_pricing = if config.environment == AppEnvironment::Local {
             None
@@ -94,10 +97,15 @@ impl AppState {
             )?))
         };
         if config.environment == AppEnvironment::Local {
-            let (aws, azure) = local_fixture::load()?;
+            let (aws, azure) = local_fixture::load_for_runtime()?;
             snapshots.put_aws(aws)?;
             snapshots.put_azure(azure)?;
         }
+        let pricing = PricingCoordinator::new(
+            snapshots.clone(),
+            live_pricing.clone(),
+            Arc::clone(&capabilities),
+        );
         let guest_rate_limit =
             TokenBucket::new(config.guest_requests_per_minute, Duration::from_secs(60));
         let refresh_rate_limit = TokenBucket::new(
@@ -113,6 +121,7 @@ impl AppState {
             projects,
             persistence_backend,
             snapshots,
+            pricing,
             live_pricing,
             guest_rate_limit,
             refresh_rate_limit,

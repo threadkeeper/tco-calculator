@@ -4,8 +4,16 @@ use std::{
 };
 
 use thiserror::Error;
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
-use super::snapshot::{AwsPriceSnapshot, AzurePriceSnapshot};
+use super::{
+    provider::ResolutionStatus,
+    snapshot::{AwsPriceSnapshot, AzurePriceSnapshot, SnapshotMetadata},
+};
+
+const HOT_CACHE_MAX_AGE: Duration = Duration::minutes(15);
+const FRESH_MAX_AGE: Duration = Duration::hours(24);
+const USABLE_MAX_AGE: Duration = Duration::days(7);
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum SnapshotRepositoryError {
@@ -46,24 +54,26 @@ impl InMemorySnapshotRepository {
         &self,
         snapshot_id: &str,
     ) -> Result<Option<Arc<AwsPriceSnapshot>>, SnapshotRepositoryError> {
-        Ok(self
+        let snapshot = self
             .aws
             .read()
             .map_err(|_| SnapshotRepositoryError::Unavailable)?
             .get(snapshot_id)
-            .cloned())
+            .cloned();
+        Ok(snapshot.and_then(|snapshot| classify_aws(snapshot, OffsetDateTime::now_utc())))
     }
 
     pub fn get_azure(
         &self,
         snapshot_id: &str,
     ) -> Result<Option<Arc<AzurePriceSnapshot>>, SnapshotRepositoryError> {
-        Ok(self
+        let snapshot = self
             .azure
             .read()
             .map_err(|_| SnapshotRepositoryError::Unavailable)?
             .get(snapshot_id)
-            .cloned())
+            .cloned();
+        Ok(snapshot.and_then(|snapshot| classify_azure(snapshot, OffsetDateTime::now_utc())))
     }
 
     pub fn find_aws(
@@ -71,14 +81,15 @@ impl InMemorySnapshotRepository {
         currency: &str,
         source_region: &str,
     ) -> Result<Option<Arc<AwsPriceSnapshot>>, SnapshotRepositoryError> {
-        Ok(self
+        let snapshot = self
             .aws
             .read()
             .map_err(|_| SnapshotRepositoryError::Unavailable)?
             .values()
             .filter(|snapshot| snapshot.matches_scope(currency, source_region))
             .max_by(|left, right| left.metadata.retrieved_at.cmp(&right.metadata.retrieved_at))
-            .cloned())
+            .cloned();
+        Ok(snapshot.and_then(|snapshot| classify_aws(snapshot, OffsetDateTime::now_utc())))
     }
 
     pub fn find_azure(
@@ -86,14 +97,15 @@ impl InMemorySnapshotRepository {
         currency: &str,
         target_region: &str,
     ) -> Result<Option<Arc<AzurePriceSnapshot>>, SnapshotRepositoryError> {
-        Ok(self
+        let snapshot = self
             .azure
             .read()
             .map_err(|_| SnapshotRepositoryError::Unavailable)?
             .values()
             .filter(|snapshot| snapshot.matches_scope(currency, target_region))
             .max_by(|left, right| left.metadata.retrieved_at.cmp(&right.metadata.retrieved_at))
-            .cloned())
+            .cloned();
+        Ok(snapshot.and_then(|snapshot| classify_azure(snapshot, OffsetDateTime::now_utc())))
     }
 
     pub fn list_latest_aws(&self) -> Result<Vec<Arc<AwsPriceSnapshot>>, SnapshotRepositoryError> {
@@ -115,7 +127,51 @@ impl InMemorySnapshotRepository {
                 }
             }
         }
-        Ok(latest.into_values().collect())
+        let now = OffsetDateTime::now_utc();
+        Ok(latest
+            .into_values()
+            .filter_map(|snapshot| classify_aws(snapshot, now))
+            .collect())
+    }
+}
+
+fn classify_aws(
+    snapshot: Arc<AwsPriceSnapshot>,
+    now: OffsetDateTime,
+) -> Option<Arc<AwsPriceSnapshot>> {
+    let status = effective_status(&snapshot.metadata, now)?;
+    if snapshot.metadata.status == status {
+        return Some(snapshot);
+    }
+    let mut classified = (*snapshot).clone();
+    classified.metadata.status = status;
+    Some(Arc::new(classified))
+}
+
+fn classify_azure(
+    snapshot: Arc<AzurePriceSnapshot>,
+    now: OffsetDateTime,
+) -> Option<Arc<AzurePriceSnapshot>> {
+    let status = effective_status(&snapshot.metadata, now)?;
+    if snapshot.metadata.status == status {
+        return Some(snapshot);
+    }
+    let mut classified = (*snapshot).clone();
+    classified.metadata.status = status;
+    Some(Arc::new(classified))
+}
+
+fn effective_status(metadata: &SnapshotMetadata, now: OffsetDateTime) -> Option<ResolutionStatus> {
+    let retrieved_at = OffsetDateTime::parse(&metadata.retrieved_at, &Rfc3339).ok()?;
+    let age = now - retrieved_at;
+    if age.is_negative() || age > USABLE_MAX_AGE {
+        None
+    } else if age > FRESH_MAX_AGE {
+        Some(ResolutionStatus::Stale)
+    } else if age > HOT_CACHE_MAX_AGE || metadata.status != ResolutionStatus::Fresh {
+        Some(ResolutionStatus::Cached)
+    } else {
+        Some(ResolutionStatus::Fresh)
     }
 }
 
@@ -133,7 +189,8 @@ mod tests {
         let snapshot = AwsPriceSnapshot::create(
             SnapshotCreationMetadata {
                 status: ResolutionStatus::Fresh,
-                retrieved_at: "2026-07-31T00:00:00Z".to_owned(),
+                retrieved_at: crate::pricing::snapshot::utc_now_rfc3339()
+                    .expect("current retrieval time"),
                 source_published_at: None,
                 currency: "USD".to_owned(),
                 source_urls: vec!["https://example.invalid/synthetic-prices".to_owned()],
@@ -168,5 +225,59 @@ mod tests {
                 .expect("provider-scoped lookup")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn snapshot_status_follows_the_freshness_windows() {
+        let now = OffsetDateTime::parse("2026-08-10T12:00:00Z", &Rfc3339).expect("test time");
+        for (retrieved_at, original_status, expected) in [
+            (
+                "2026-08-10T11:50:00Z",
+                ResolutionStatus::Fresh,
+                Some(ResolutionStatus::Fresh),
+            ),
+            (
+                "2026-08-10T11:50:00Z",
+                ResolutionStatus::Cached,
+                Some(ResolutionStatus::Cached),
+            ),
+            (
+                "2026-08-10T11:00:00Z",
+                ResolutionStatus::Fresh,
+                Some(ResolutionStatus::Cached),
+            ),
+            (
+                "2026-08-08T12:00:00Z",
+                ResolutionStatus::Fresh,
+                Some(ResolutionStatus::Stale),
+            ),
+            ("2026-08-02T12:00:00Z", ResolutionStatus::Fresh, None),
+            ("2026-08-10T12:01:00Z", ResolutionStatus::Fresh, None),
+        ] {
+            let snapshot = Arc::new(snapshot(retrieved_at, original_status));
+            assert_eq!(
+                classify_aws(snapshot, now).map(|snapshot| snapshot.metadata.status),
+                expected
+            );
+        }
+    }
+
+    fn snapshot(retrieved_at: &str, status: ResolutionStatus) -> AwsPriceSnapshot {
+        AwsPriceSnapshot::create(
+            SnapshotCreationMetadata {
+                status,
+                retrieved_at: retrieved_at.to_owned(),
+                source_published_at: None,
+                currency: "USD".to_owned(),
+                source_urls: vec!["https://example.invalid/synthetic-prices".to_owned()],
+                parser_schema_version: "test-v1".to_owned(),
+                warnings: Vec::new(),
+            },
+            "eu-west-1",
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("synthetic snapshot")
     }
 }

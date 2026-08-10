@@ -41,6 +41,7 @@ pub struct AzureRetailPagePayload<'a> {
 #[derive(Debug)]
 pub struct AzureSqlMiNormalization {
     pub records: Vec<AzureMiRateRecord>,
+    pub source_urls: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -249,7 +250,16 @@ pub fn normalize_azure_sql_mi(
     warnings.sort();
     warnings.dedup();
     records.sort_by(|left, right| left.stable_key.cmp(&right.stable_key));
-    Ok(AzureSqlMiNormalization { records, warnings })
+    let mut source_urls = retail_pages
+        .iter()
+        .map(|page| page.source_url.to_owned())
+        .collect::<BTreeSet<_>>();
+    source_urls.insert(context.calculator_source_url.to_owned());
+    Ok(AzureSqlMiNormalization {
+        records,
+        source_urls: source_urls.into_iter().collect(),
+        warnings,
+    })
 }
 
 fn validate_context(
@@ -574,6 +584,13 @@ mod tests {
         .expect("normalize Azure SQL MI prices");
 
         assert_eq!(normalized.records.len(), 8);
+        assert_eq!(
+            normalized.source_urls,
+            vec![
+                "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/".to_owned(),
+                "https://prices.azure.com/api/retail/prices".to_owned(),
+            ]
+        );
         assert_eq!(normalized.warnings.len(), 1);
         let payg = record(&normalized, PurchaseOption::Payg);
         assert_eq!(payg.rate.compute_hourly.to_string(), "5.632");

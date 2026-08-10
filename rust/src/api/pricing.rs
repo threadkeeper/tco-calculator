@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::{
     Json,
     extract::{State, rejection::JsonRejection},
@@ -9,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     domain::{project::ValidationIssue, resource::Resource},
     pricing::{
+        coordinator::SnapshotResolution,
         provider::{Provider, ResolutionStatus},
         snapshot::{AwsPriceSnapshot, AzurePriceSnapshot, SnapshotMetadata},
     },
@@ -41,31 +40,31 @@ pub async fn resolve_aws(
     State(state): State<AppState>,
     request: Result<Json<PriceResolutionRequest>, JsonRejection>,
 ) -> Result<Json<PriceResolutionResponse>, Problem> {
-    resolve_aws_request(state, request, false)
+    resolve_aws_request(state, request, false).await
 }
 
 pub async fn refresh_aws(
     State(state): State<AppState>,
     request: Result<Json<PriceResolutionRequest>, JsonRejection>,
 ) -> Result<Json<PriceResolutionResponse>, Problem> {
-    resolve_aws_request(state, request, true)
+    resolve_aws_request(state, request, true).await
 }
 
 pub async fn resolve_azure(
     State(state): State<AppState>,
     request: Result<Json<PriceResolutionRequest>, JsonRejection>,
 ) -> Result<Json<PriceResolutionResponse>, Problem> {
-    resolve_azure_request(state, request, false)
+    resolve_azure_request(state, request, false).await
 }
 
 pub async fn refresh_azure(
     State(state): State<AppState>,
     request: Result<Json<PriceResolutionRequest>, JsonRejection>,
 ) -> Result<Json<PriceResolutionResponse>, Problem> {
-    resolve_azure_request(state, request, true)
+    resolve_azure_request(state, request, true).await
 }
 
-fn resolve_aws_request(
+async fn resolve_aws_request(
     state: AppState,
     request: Result<Json<PriceResolutionRequest>, JsonRejection>,
     refresh: bool,
@@ -81,30 +80,40 @@ fn resolve_aws_request(
             }],
         )
     })?;
-    let snapshot = state
-        .snapshots
-        .find_aws(&request.currency, source_region)
-        .map_err(|_| Problem::internal(AWS_INSTANCE))?;
-    Ok(Json(match snapshot {
-        Some(snapshot) => resolved(snapshot, refresh),
-        None => unavailable(Provider::Aws),
-    }))
+    let resolution = if refresh {
+        state
+            .pricing
+            .refresh_aws(&request.currency, source_region, &request.azure_region)
+            .await
+    } else {
+        state.pricing.resolve_aws(&request.currency, source_region)
+    }
+    .map_err(|_| Problem::internal(AWS_INSTANCE))?;
+    Ok(Json(response(resolution, Provider::Aws)))
 }
 
-fn resolve_azure_request(
+async fn resolve_azure_request(
     state: AppState,
     request: Result<Json<PriceResolutionRequest>, JsonRejection>,
     refresh: bool,
 ) -> Result<Json<PriceResolutionResponse>, Problem> {
     let request = parse_request(request, AZURE_INSTANCE)?;
-    let snapshot = state
-        .snapshots
-        .find_azure(&request.currency, &request.azure_region)
-        .map_err(|_| Problem::internal(AZURE_INSTANCE))?;
-    Ok(Json(match snapshot {
-        Some(snapshot) => resolved(snapshot, refresh),
-        None => unavailable(Provider::Azure),
-    }))
+    let resolution = if refresh {
+        state
+            .pricing
+            .refresh_azure(
+                &request.currency,
+                request.aws_region.as_deref(),
+                &request.azure_region,
+            )
+            .await
+    } else {
+        state
+            .pricing
+            .resolve_azure(&request.currency, &request.azure_region)
+    }
+    .map_err(|_| Problem::internal(AZURE_INSTANCE))?;
+    Ok(Json(response(resolution, Provider::Azure)))
 }
 
 fn parse_request(
@@ -159,15 +168,16 @@ impl SnapshotWithMetadata for AzurePriceSnapshot {
     }
 }
 
-fn resolved<T: SnapshotWithMetadata>(snapshot: Arc<T>, refresh: bool) -> PriceResolutionResponse {
+fn response<T: SnapshotWithMetadata>(
+    resolution: SnapshotResolution<T>,
+    provider: Provider,
+) -> PriceResolutionResponse {
+    let Some(snapshot) = resolution.snapshot else {
+        return unavailable(provider, resolution.warnings);
+    };
     let metadata = snapshot.metadata();
     let mut warnings = metadata.warnings.clone();
-    if refresh {
-        warnings.push(
-            "The immutable local fixture cannot be refreshed; the existing snapshot was returned."
-                .to_owned(),
-        );
-    }
+    warnings.extend(resolution.warnings);
     warnings.sort();
     warnings.dedup();
     PriceResolutionResponse {
@@ -179,15 +189,12 @@ fn resolved<T: SnapshotWithMetadata>(snapshot: Arc<T>, refresh: bool) -> PriceRe
     }
 }
 
-fn unavailable(provider: Provider) -> PriceResolutionResponse {
+fn unavailable(provider: Provider, warnings: Vec<String>) -> PriceResolutionResponse {
     PriceResolutionResponse {
         provider,
         status: ResolutionStatus::Unavailable,
         snapshot_id: None,
         retrieved_at: None,
-        warnings: vec![
-            "No usable snapshot exists for this scope and live provider transport is not configured in this build."
-                .to_owned(),
-        ],
+        warnings,
     }
 }

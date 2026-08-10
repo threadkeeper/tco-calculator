@@ -3,8 +3,9 @@ use thiserror::Error;
 
 use super::snapshot::{
     AwsEbsRateRecord, AwsEc2RateRecord, AwsPriceSnapshot, AwsRdsRateRecord, AzureMiRateRecord,
-    AzurePriceSnapshot, SnapshotCreationMetadata, SnapshotError,
+    AzurePriceSnapshot, SnapshotCreationMetadata, SnapshotError, utc_now_rfc3339,
 };
+use crate::pricing::provider::ResolutionStatus;
 
 #[derive(Debug, Error)]
 pub enum LocalFixtureError {
@@ -51,6 +52,40 @@ pub fn load() -> Result<(AwsPriceSnapshot, AzurePriceSnapshot), LocalFixtureErro
         fixture.azure.metadata,
         fixture.azure.target_region,
         fixture.azure.mi_rates,
+    )?;
+    Ok((aws, azure))
+}
+
+pub fn load_for_runtime() -> Result<(AwsPriceSnapshot, AzurePriceSnapshot), LocalFixtureError> {
+    let (aws, azure) = load()?;
+    let retrieved_at = utc_now_rfc3339()?;
+    let aws = AwsPriceSnapshot::create(
+        SnapshotCreationMetadata {
+            status: ResolutionStatus::Cached,
+            retrieved_at: retrieved_at.clone(),
+            source_published_at: aws.metadata.source_published_at,
+            currency: aws.metadata.currency,
+            source_urls: aws.metadata.source_urls,
+            parser_schema_version: aws.metadata.parser_schema_version,
+            warnings: aws.metadata.warnings,
+        },
+        aws.source_region,
+        aws.ec2_rates,
+        aws.rds_rates,
+        aws.ebs_rates,
+    )?;
+    let azure = AzurePriceSnapshot::create(
+        SnapshotCreationMetadata {
+            status: ResolutionStatus::Cached,
+            retrieved_at,
+            source_published_at: azure.metadata.source_published_at,
+            currency: azure.metadata.currency,
+            source_urls: azure.metadata.source_urls,
+            parser_schema_version: azure.metadata.parser_schema_version,
+            warnings: azure.metadata.warnings,
+        },
+        azure.target_region,
+        azure.mi_rates,
     )?;
     Ok((aws, azure))
 }
