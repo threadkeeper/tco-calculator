@@ -33,9 +33,9 @@ pub enum ServerError {
     MissingStaticIndex(PathBuf),
 }
 
-pub fn router(mut config: crate::config::Config) -> Result<Router, ServerError> {
+pub async fn router(mut config: crate::config::Config) -> Result<Router, ServerError> {
     config.web_asset_dir = validate_asset_root(&config)?;
-    let state = AppState::in_memory(config)?;
+    let state = AppState::new(config).await?;
     let api_router = Router::new()
         .route("/session", get(api::session::get_session))
         .route("/catalog/aws/regions", get(api::catalog::aws_regions))

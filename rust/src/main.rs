@@ -10,7 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Config::from_env()?;
     let bind_address = config.bind_address;
-    let app = server::router(config)?;
+    let app = server::router(config).await?;
     let listener = tokio::net::TcpListener::bind(bind_address).await?;
 
     tracing::info!(%bind_address, "server listening");

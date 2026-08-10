@@ -5,7 +5,11 @@ targetScope = 'resourceGroup'
 param namePrefix string
 param location string = 'southafricanorth'
 param containerImage string
+@minLength(36)
+@maxLength(36)
 param entraClientId string
+@secure()
+@minLength(1)
 param entraClientSecretUri string
 @minValue(1)
 param guestRequestsPerMinute int = 60
@@ -74,9 +78,11 @@ module cosmosPrivateEndpoint 'modules/cosmos-private-endpoint.bicep' = {
 module containerApp 'modules/container-app.bicep' = {
   name: 'container-app'
   params: {
+    applicationRegion: location
     containerAppsSubnetId: network.outputs.containerAppsSubnetId
     containerImage: containerImage
     calculationConcurrency: calculationConcurrency
+    cosmosEndpoint: cosmos.outputs.endpoint
     entraClientId: entraClientId
     entraClientSecretUri: entraClientSecretUri
     guestRequestsPerMinute: guestRequestsPerMinute

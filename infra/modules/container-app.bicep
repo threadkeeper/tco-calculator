@@ -1,13 +1,19 @@
 param namePrefix string
 param location string
 param tags object
+param applicationRegion string
 param containerAppsSubnetId string
 param logAnalyticsCustomerId string
 @secure()
 param logAnalyticsSharedKey string
 param registryServer string
 param containerImage string
+param cosmosEndpoint string
+@minLength(36)
+@maxLength(36)
 param entraClientId string
+@secure()
+@minLength(1)
 param entraClientSecretUri string
 @minValue(1)
 param guestRequestsPerMinute int = 60
@@ -86,6 +92,14 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               value: '0.0.0.0:8080'
             }
             {
+              name: 'AZURE_REGION'
+              value: applicationRegion
+            }
+            {
+              name: 'COSMOSDB_ENDPOINT'
+              value: cosmosEndpoint
+            }
+            {
               name: 'GUEST_REQUESTS_PER_MINUTE'
               value: string(guestRequestsPerMinute)
             }
@@ -153,8 +167,15 @@ resource auth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
     globalValidation: {
       unauthenticatedClientAction: 'AllowAnonymous'
     }
+    httpSettings: {
+      forwardProxy: {
+        convention: 'NoProxy'
+      }
+      requireHttps: true
+    }
     identityProviders: {
       azureActiveDirectory: {
+        enabled: true
         registration: {
           clientId: entraClientId
           clientSecretSettingName: 'entra-client-secret'
@@ -165,6 +186,16 @@ resource auth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
             entraClientId
           ]
         }
+      }
+    }
+    login: {
+      allowedExternalRedirectUrls: []
+      nonce: {
+        validateNonce: true
+      }
+      preserveUrlFragmentsForLogins: false
+      tokenStore: {
+        enabled: false
       }
     }
     platform: {

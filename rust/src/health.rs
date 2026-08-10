@@ -3,7 +3,7 @@ use serde::Serialize;
 
 use crate::{
     config::{APP_VERSION, AppEnvironment, FORMULA_VERSION, SCHEMA_VERSION},
-    state::AppState,
+    state::{AppState, PersistenceBackend},
 };
 
 #[derive(Serialize)]
@@ -31,20 +31,23 @@ pub async fn healthz() -> Json<HealthResponse> {
 
 pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     let local = state.config.environment == AppEnvironment::Local;
+    let persistence_ready = state.projects.check_health().await.is_ok();
+    let providers_ready = local;
+    let ready = persistence_ready && providers_ready;
     (
-        if local {
+        if ready {
             StatusCode::OK
         } else {
             StatusCode::SERVICE_UNAVAILABLE
         },
         Json(ReadinessResponse {
-            status: if local { "ready" } else { "not_ready" },
-            persistence: if local {
-                "memory_local_only"
-            } else {
-                "not_configured"
+            status: if ready { "ready" } else { "not_ready" },
+            persistence: match (state.persistence_backend, persistence_ready) {
+                (PersistenceBackend::MemoryLocal, true) => "memory_local_only",
+                (PersistenceBackend::Cosmos, true) => "cosmos_ready",
+                (_, false) => "unavailable",
             },
-            price_providers: if local {
+            price_providers: if providers_ready {
                 "frozen_local_fixture"
             } else {
                 "not_configured"

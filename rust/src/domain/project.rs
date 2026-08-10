@@ -60,6 +60,7 @@ pub struct ProjectDocument {
     pub schema_version: String,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default, rename = "_etag", skip_serializing)]
     pub etag: String,
 }
 

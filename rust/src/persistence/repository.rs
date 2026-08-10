@@ -15,7 +15,7 @@ use crate::{
 };
 
 pub const MAX_PROJECT_DOCUMENT_BYTES: usize = 1_800_000;
-const PROJECT_DOCUMENT_TYPE: &str = "project";
+pub(crate) const PROJECT_DOCUMENT_TYPE: &str = "project";
 
 #[derive(Debug, Error)]
 pub enum RepositoryError {
@@ -31,6 +31,8 @@ pub enum RepositoryError {
 
 #[async_trait]
 pub trait ProjectRepository: Send + Sync {
+    async fn check_health(&self) -> Result<(), RepositoryError>;
+
     async fn list(&self, owner_id: &str) -> Result<Vec<ProjectDocument>, RepositoryError>;
 
     async fn create(
@@ -91,6 +93,10 @@ impl InMemoryProjectRepository {
 
 #[async_trait]
 impl ProjectRepository for InMemoryProjectRepository {
+    async fn check_health(&self) -> Result<(), RepositoryError> {
+        self.read_projects().map(|_| ())
+    }
+
     async fn list(&self, owner_id: &str) -> Result<Vec<ProjectDocument>, RepositoryError> {
         let projects = self.read_projects()?;
         let mut documents = projects
@@ -116,24 +122,14 @@ impl ProjectRepository for InMemoryProjectRepository {
         let now = current_timestamp()?;
         let id = Uuid::new_v4();
         let version = 1;
-        let document = ProjectDocument {
+        let document = new_project_document(
+            owner_id,
             id,
-            document_type: PROJECT_DOCUMENT_TYPE.to_owned(),
-            owner_id: owner_id.to_owned(),
-            name: project.name,
-            description: project.description,
-            settings: project.settings,
-            resources: project.resources,
-            aws_price_snapshot_id: project.aws_price_snapshot_id,
-            azure_price_snapshot_id: project.azure_price_snapshot_id,
-            latest_calculation_revision: calculation_revision,
-            formula_version: FORMULA_VERSION.to_owned(),
-            schema_version: SCHEMA_VERSION.to_owned(),
-            created_at: now.clone(),
-            updated_at: now,
-            etag: etag(version),
-        };
-        enforce_document_size(&document)?;
+            project,
+            calculation_revision,
+            now,
+            etag(version),
+        )?;
 
         self.write_projects()?.insert(
             (owner_id.to_owned(), id),
@@ -171,34 +167,17 @@ impl ProjectRepository for InMemoryProjectRepository {
             return Err(RepositoryError::PreconditionFailed);
         }
 
-        let pricing_inputs_unchanged = pricing_inputs_unchanged(&stored.document, &project)?;
-        let latest_calculation_revision = if pricing_inputs_unchanged {
-            stored.document.latest_calculation_revision.clone()
-        } else {
-            calculation_revision
-        };
         let version = stored
             .version
             .checked_add(1)
             .ok_or(RepositoryError::Unavailable)?;
-        let document = ProjectDocument {
-            id: project_id,
-            document_type: PROJECT_DOCUMENT_TYPE.to_owned(),
-            owner_id: owner_id.to_owned(),
-            name: project.name,
-            description: project.description,
-            settings: project.settings,
-            resources: project.resources,
-            aws_price_snapshot_id: project.aws_price_snapshot_id,
-            azure_price_snapshot_id: project.azure_price_snapshot_id,
-            latest_calculation_revision,
-            formula_version: FORMULA_VERSION.to_owned(),
-            schema_version: SCHEMA_VERSION.to_owned(),
-            created_at: stored.document.created_at.clone(),
-            updated_at: current_timestamp()?,
-            etag: etag(version),
-        };
-        enforce_document_size(&document)?;
+        let document = updated_project_document(
+            &stored.document,
+            project,
+            calculation_revision,
+            current_timestamp()?,
+            etag(version),
+        )?;
 
         *stored = StoredProject {
             document: document.clone(),
@@ -215,7 +194,7 @@ impl ProjectRepository for InMemoryProjectRepository {
     }
 }
 
-fn current_timestamp() -> Result<String, RepositoryError> {
+pub(crate) fn current_timestamp() -> Result<String, RepositoryError> {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .map_err(|_| RepositoryError::Unavailable)
@@ -225,7 +204,69 @@ fn etag(version: u64) -> String {
     format!("\"{version}\"")
 }
 
-fn enforce_document_size(document: &ProjectDocument) -> Result<(), RepositoryError> {
+pub(crate) fn new_project_document(
+    owner_id: &str,
+    id: Uuid,
+    project: EditableProject,
+    calculation_revision: Option<CalculationRevision>,
+    timestamp: String,
+    etag: String,
+) -> Result<ProjectDocument, RepositoryError> {
+    let document = ProjectDocument {
+        id,
+        document_type: PROJECT_DOCUMENT_TYPE.to_owned(),
+        owner_id: owner_id.to_owned(),
+        name: project.name,
+        description: project.description,
+        settings: project.settings,
+        resources: project.resources,
+        aws_price_snapshot_id: project.aws_price_snapshot_id,
+        azure_price_snapshot_id: project.azure_price_snapshot_id,
+        latest_calculation_revision: calculation_revision,
+        formula_version: FORMULA_VERSION.to_owned(),
+        schema_version: SCHEMA_VERSION.to_owned(),
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+        etag,
+    };
+    enforce_document_size(&document)?;
+    Ok(document)
+}
+
+pub(crate) fn updated_project_document(
+    stored: &ProjectDocument,
+    project: EditableProject,
+    calculation_revision: Option<CalculationRevision>,
+    timestamp: String,
+    etag: String,
+) -> Result<ProjectDocument, RepositoryError> {
+    let latest_calculation_revision = if pricing_inputs_unchanged(stored, &project)? {
+        stored.latest_calculation_revision.clone()
+    } else {
+        calculation_revision
+    };
+    let document = ProjectDocument {
+        id: stored.id,
+        document_type: PROJECT_DOCUMENT_TYPE.to_owned(),
+        owner_id: stored.owner_id.clone(),
+        name: project.name,
+        description: project.description,
+        settings: project.settings,
+        resources: project.resources,
+        aws_price_snapshot_id: project.aws_price_snapshot_id,
+        azure_price_snapshot_id: project.azure_price_snapshot_id,
+        latest_calculation_revision,
+        formula_version: FORMULA_VERSION.to_owned(),
+        schema_version: SCHEMA_VERSION.to_owned(),
+        created_at: stored.created_at.clone(),
+        updated_at: timestamp,
+        etag,
+    };
+    enforce_document_size(&document)?;
+    Ok(document)
+}
+
+pub(crate) fn enforce_document_size(document: &ProjectDocument) -> Result<(), RepositoryError> {
     let size = serde_json::to_vec(document)
         .map_err(|_| RepositoryError::Unavailable)?
         .len();
@@ -233,6 +274,21 @@ fn enforce_document_size(document: &ProjectDocument) -> Result<(), RepositoryErr
         return Err(RepositoryError::PayloadTooLarge);
     }
     Ok(())
+}
+
+pub(crate) fn validate_stored_document(
+    document: &ProjectDocument,
+    owner_id: &str,
+    expected_id: Option<Uuid>,
+) -> Result<(), RepositoryError> {
+    if document.document_type != PROJECT_DOCUMENT_TYPE
+        || document.owner_id != owner_id
+        || expected_id.is_some_and(|id| document.id != id)
+        || document.etag.is_empty()
+    {
+        return Err(RepositoryError::Unavailable);
+    }
+    enforce_document_size(document)
 }
 
 pub(crate) fn pricing_inputs_unchanged(
@@ -415,6 +471,36 @@ mod tests {
 
         renamed.settings.default_annual_hours = DecimalValue(Decimal::from(4_000_u32));
         assert!(!pricing_inputs_unchanged(&stored, &renamed).expect("compare pricing edit"));
+    }
+
+    #[test]
+    fn cosmos_etag_is_read_but_not_persisted() {
+        let original = document(project("Cosmos ETag"));
+        let mut value = serde_json::to_value(&original).expect("serialize document");
+        let object = value.as_object_mut().expect("document object");
+        assert!(!object.contains_key("etag"));
+        assert!(!object.contains_key("_etag"));
+        object.insert("_etag".to_owned(), serde_json::json!("\"service-etag\""));
+
+        let round_trip: ProjectDocument =
+            serde_json::from_value(value).expect("deserialize Cosmos document");
+        assert_eq!(round_trip.etag, "\"service-etag\"");
+    }
+
+    #[test]
+    fn stored_documents_must_match_the_owner_and_id() {
+        let document = document(project("Owner scoped"));
+        assert!(
+            validate_stored_document(&document, "entra:tenant:user", Some(document.id)).is_ok()
+        );
+        assert!(matches!(
+            validate_stored_document(&document, "entra:other:user", Some(document.id)),
+            Err(RepositoryError::Unavailable)
+        ));
+        assert!(matches!(
+            validate_stored_document(&document, "entra:tenant:user", Some(Uuid::new_v4())),
+            Err(RepositoryError::Unavailable)
+        ));
     }
 
     fn document(project: EditableProject) -> ProjectDocument {

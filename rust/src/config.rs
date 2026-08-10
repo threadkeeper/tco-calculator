@@ -19,6 +19,7 @@ pub struct Config {
     pub bind_address: SocketAddr,
     pub environment: AppEnvironment,
     pub local_auth: Option<LocalAuthSettings>,
+    pub cosmos: Option<CosmosSettings>,
     pub web_asset_dir: PathBuf,
     pub guest_requests_per_minute: u32,
     pub provider_refreshes_per_hour: u32,
@@ -30,6 +31,12 @@ pub struct LocalAuthSettings {
     pub tenant_id: Uuid,
     pub object_id: Uuid,
     pub display_name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CosmosSettings {
+    pub endpoint: String,
+    pub application_region: String,
 }
 
 #[derive(Debug, Error)]
@@ -46,6 +53,14 @@ pub enum ConfigError {
     InvalidLocalAuthId,
     #[error("local authentication display name must contain 1 to 200 characters")]
     InvalidLocalAuthDisplayName,
+    #[error("Cosmos settings are required outside APP_ENV=local")]
+    MissingCosmosSettings,
+    #[error("Cosmos settings are not supported with APP_ENV=local")]
+    CosmosSettingsInLocalEnvironment,
+    #[error("COSMOSDB_ENDPOINT must be an HTTPS Azure Cosmos DB account endpoint")]
+    InvalidCosmosEndpoint,
+    #[error("AZURE_REGION must be a valid Azure region name")]
+    InvalidAzureRegion,
     #[error("request quota settings must be positive integers")]
     InvalidQuota,
 }
@@ -93,6 +108,11 @@ impl Config {
             .unwrap_or_else(|_| "0.0.0.0:8080".to_owned())
             .parse()
             .map_err(|_| ConfigError::InvalidBindAddress)?;
+        let cosmos = cosmos_settings(
+            environment,
+            env::var("COSMOSDB_ENDPOINT").ok(),
+            env::var("AZURE_REGION").ok(),
+        )?;
         let web_asset_dir = env::var_os("WEB_ASSET_DIR")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
@@ -105,12 +125,57 @@ impl Config {
             bind_address,
             environment,
             local_auth,
+            cosmos,
             web_asset_dir,
             guest_requests_per_minute,
             provider_refreshes_per_hour,
             calculation_concurrency,
         })
     }
+}
+
+fn cosmos_settings(
+    environment: AppEnvironment,
+    endpoint: Option<String>,
+    application_region: Option<String>,
+) -> Result<Option<CosmosSettings>, ConfigError> {
+    if environment == AppEnvironment::Local {
+        return if endpoint.is_none() && application_region.is_none() {
+            Ok(None)
+        } else {
+            Err(ConfigError::CosmosSettingsInLocalEnvironment)
+        };
+    }
+    let (endpoint, application_region) = match (endpoint, application_region) {
+        (Some(endpoint), Some(application_region)) => (endpoint, application_region),
+        _ => return Err(ConfigError::MissingCosmosSettings),
+    };
+    let parsed = reqwest::Url::parse(&endpoint).map_err(|_| ConfigError::InvalidCosmosEndpoint)?;
+    let valid_endpoint = parsed.scheme() == "https"
+        && parsed
+            .host_str()
+            .is_some_and(|host| host.ends_with(".documents.azure.com"))
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.port().is_none()
+        && parsed.path() == "/"
+        && parsed.query().is_none()
+        && parsed.fragment().is_none();
+    if !valid_endpoint {
+        return Err(ConfigError::InvalidCosmosEndpoint);
+    }
+    if application_region.is_empty()
+        || application_region.len() > 64
+        || !application_region
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == ' ')
+    {
+        return Err(ConfigError::InvalidAzureRegion);
+    }
+    Ok(Some(CosmosSettings {
+        endpoint,
+        application_region,
+    }))
 }
 
 fn positive_u32(name: &str, default: u32) -> Result<u32, ConfigError> {
@@ -122,5 +187,47 @@ fn positive_u32(name: &str, default: u32) -> Result<u32, ConfigError> {
             .ok_or(ConfigError::InvalidQuota),
         Err(env::VarError::NotPresent) => Ok(default),
         Err(env::VarError::NotUnicode(_)) => Err(ConfigError::InvalidQuota),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_local_mode_requires_an_allowlisted_cosmos_endpoint() {
+        assert!(matches!(
+            cosmos_settings(AppEnvironment::Development, None, None),
+            Err(ConfigError::MissingCosmosSettings)
+        ));
+        assert!(matches!(
+            cosmos_settings(
+                AppEnvironment::Development,
+                Some("https://example.invalid/".to_owned()),
+                Some("southafricanorth".to_owned()),
+            ),
+            Err(ConfigError::InvalidCosmosEndpoint)
+        ));
+
+        let settings = cosmos_settings(
+            AppEnvironment::Production,
+            Some("https://tco.documents.azure.com/".to_owned()),
+            Some("southafricanorth".to_owned()),
+        )
+        .expect("valid production Cosmos settings")
+        .expect("Cosmos settings");
+        assert_eq!(settings.application_region, "southafricanorth");
+    }
+
+    #[test]
+    fn local_mode_rejects_ignored_cosmos_settings() {
+        assert!(matches!(
+            cosmos_settings(
+                AppEnvironment::Local,
+                Some("https://tco.documents.azure.com/".to_owned()),
+                Some("southafricanorth".to_owned()),
+            ),
+            Err(ConfigError::CosmosSettingsInLocalEnvironment)
+        ));
     }
 }
