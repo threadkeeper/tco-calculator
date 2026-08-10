@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 const appVersion = readFileSync(new URL('../VERSION', import.meta.url), 'utf8').trim();
 

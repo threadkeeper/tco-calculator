@@ -182,6 +182,7 @@ dependencies = [
  "azure_data_cosmos",
  "azure_identity",
  "base64 0.23.1",
+ "futures",
  "reqwest",
  "rust_decimal",
  "serde",

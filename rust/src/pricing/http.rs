@@ -12,8 +12,9 @@ use crate::config::APP_VERSION;
 
 use super::provider::ProviderError;
 
-const ALLOWED_HOSTS: [&str; 4] = [
+const ALLOWED_HOSTS: [&str; 5] = [
     "calculator.aws",
+    "b0.p.awsstatic.com",
     "pricing.us-east-1.amazonaws.com",
     "prices.azure.com",
     "azure.microsoft.com",
@@ -220,6 +221,7 @@ mod tests {
     fn pricing_urls_are_limited_to_disclosed_https_hosts() {
         for url in [
             "https://calculator.aws/pricing/index.json",
+            "https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/ec2/USD/current/ebs-calculator.json",
             "https://pricing.us-east-1.amazonaws.com/offers/index.json",
             "https://prices.azure.com/api/retail/prices?$filter=test",
             "https://azure.microsoft.com/api/v3/pricing/test",

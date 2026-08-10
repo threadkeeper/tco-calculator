@@ -6,10 +6,20 @@ ARG RUNTIME_IMAGE
 FROM ${WEB_BUILD_IMAGE} AS web-build
 WORKDIR /src
 COPY VERSION ./VERSION
-COPY web/package.json web/pnpm-lock.yaml ./web/
-RUN pnpm --dir web install --frozen-lockfile
+COPY web/package.json web/package-lock.json ./web/
+COPY web/scripts ./web/scripts
+RUN test "$(node --version)" = "v24.19.0" \
+    && test "$(npm --version)" = "11.17.0" \
+    && npm run lockfile:check --prefix web \
+    && npm audit --prefix web --audit-level=high --registry=https://packagefeedproxy.microsoft.io/npm/ \
+    && npm ci --prefix web --registry=https://packagefeedproxy.microsoft.io/npm/
+COPY openapi ./openapi
 COPY web ./web
-RUN pnpm --dir web run check && pnpm --dir web run test && pnpm --dir web run build
+RUN npm run api:generate --prefix web \
+    && npm run lint --prefix web \
+    && npm run check --prefix web \
+    && npm run test --prefix web \
+    && npm run build --prefix web
 
 FROM ${RUST_BUILD_IMAGE} AS rust-build
 WORKDIR /src

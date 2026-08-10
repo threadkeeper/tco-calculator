@@ -67,7 +67,8 @@
       if (mode === 'authenticated') await loadProjects();
     } catch (error) {
       mode = 'offline';
-      if (!(error instanceof TypeError)) problem = messageFromError(error, 'The application session is unavailable.');
+      if (!(error instanceof TypeError))
+        problem = messageFromError(error, 'The application session is unavailable.');
     }
   }
 
@@ -151,7 +152,9 @@
   async function deleteProject() {
     if (!deleteTarget) return;
     try {
-      await requestJson(`/api/v1/projects/${encodeURIComponent(deleteTarget.id)}`, { method: 'DELETE' });
+      await requestJson(`/api/v1/projects/${encodeURIComponent(deleteTarget.id)}`, {
+        method: 'DELETE'
+      });
       deleteTarget = null;
       await loadProjects();
     } catch (error) {
@@ -185,11 +188,14 @@
 
   function formatDate(value: string): string {
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+    return Number.isNaN(date.getTime())
+      ? value
+      : new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
   }
 
   function messageFromError(error: unknown, fallback: string): string {
-    if (error instanceof ApiProblem && error.requestId) return `${error.message} Request ${error.requestId}`;
+    if (error instanceof ApiProblem && error.requestId)
+      return `${error.message} Request ${error.requestId}`;
     return error instanceof Error ? error.message : fallback;
   }
 </script>
@@ -220,33 +226,91 @@
     <main class="home">
       {#if problem}<ProblemBanner message={problem} ondismiss={() => (problem = null)} />{/if}
       {#if mode === 'offline'}
-        <aside class="offline-notice"><strong>API offline</strong><span>Draft inputs can still be stored in this browser. Price resolution and calculations require the local API.</span></aside>
+        <aside class="offline-notice">
+          <strong>API offline</strong><span
+            >Draft inputs can still be stored in this browser. Price resolution and calculations
+            require the local API.</span
+          >
+        </aside>
       {/if}
 
       {#if showSetup}
         <section class="setup" aria-labelledby="setup-heading">
           <div class="setup-heading">
-            <div><p class="eyebrow">New estimate</p><h1 id="setup-heading">Set the comparison scope</h1></div>
-            <button class="text-button" type="button" onclick={() => (showSetup = false)}>Cancel</button>
+            <div>
+              <p class="eyebrow">New estimate</p>
+              <h1 id="setup-heading">Set the comparison scope</h1>
+            </div>
+            <button class="text-button" type="button" onclick={() => (showSetup = false)}
+              >Cancel</button
+            >
           </div>
-          <form onsubmit={(event) => { event.preventDefault(); void createProject(); }}>
+          <form
+            onsubmit={(event) => {
+              event.preventDefault();
+              void createProject();
+            }}
+          >
             <fieldset>
               <legend>Source estate</legend>
               <div class="source-options">
-                <button type="button" class:selected={setupType === 'ec2'} onclick={() => (setupType = 'ec2')}><Cloud size={22} /><b>Amazon EC2</b><span>Windows SQL Server instances and EBS</span></button>
-                <button type="button" class:selected={setupType === 'rds'} onclick={() => (setupType = 'rds')}><Database size={22} /><b>Amazon RDS</b><span>Managed SQL Server instances and storage</span></button>
-                <button type="button" class:selected={setupType === 'on_prem'} onclick={() => (setupType = 'on_prem')}><Building2 size={22} /><b>On premises</b><span>Hardware, licensing, and electricity</span></button>
+                <button
+                  type="button"
+                  class:selected={setupType === 'ec2'}
+                  onclick={() => (setupType = 'ec2')}
+                  ><Cloud size={22} /><b>Amazon EC2</b><span
+                    >Windows SQL Server instances and EBS</span
+                  ></button
+                >
+                <button
+                  type="button"
+                  class:selected={setupType === 'rds'}
+                  onclick={() => (setupType = 'rds')}
+                  ><Database size={22} /><b>Amazon RDS</b><span
+                    >Managed SQL Server instances and storage</span
+                  ></button
+                >
+                <button
+                  type="button"
+                  class:selected={setupType === 'on_prem'}
+                  onclick={() => (setupType = 'on_prem')}
+                  ><Building2 size={22} /><b>On premises</b><span
+                    >Hardware, licensing, and electricity</span
+                  ></button
+                >
               </div>
             </fieldset>
             <div class="setup-fields">
-              <label><span>Project name</span><input required maxlength="120" bind:value={setupName} /></label>
-              <label><span>Description</span><input maxlength="500" bind:value={setupDescription} placeholder="Optional context" /></label>
-              {#if setupType !== 'on_prem'}<label><span>AWS region</span><input required bind:value={setupAwsRegion} /></label>{/if}
-              <label><span>Azure region</span><input required bind:value={setupAzureRegion} /></label>
+              <label
+                ><span>Project name</span><input
+                  required
+                  maxlength="120"
+                  bind:value={setupName}
+                /></label
+              >
+              <label
+                ><span>Description</span><input
+                  maxlength="500"
+                  bind:value={setupDescription}
+                  placeholder="Optional context"
+                /></label
+              >
+              {#if setupType !== 'on_prem'}<label
+                  ><span>AWS region</span><input required bind:value={setupAwsRegion} /></label
+                >{/if}
+              <label
+                ><span>Azure region</span><input required bind:value={setupAzureRegion} /></label
+              >
             </div>
             <div class="setup-actions">
-              <span>{mode === 'authenticated' ? 'This project will be saved to your account.' : 'This draft will stay in this browser.'}</span>
-              <button class="button primary" type="submit" disabled={creating}><Plus size={18} /> {creating ? 'Creating…' : 'Create project'}</button>
+              <span
+                >{mode === 'authenticated'
+                  ? 'This project will be saved to your account.'
+                  : 'This draft will stay in this browser.'}</span
+              >
+              <button class="button primary" type="submit" disabled={creating}
+                ><Plus size={18} /> {creating ? 'Creating…' : 'Create project'}</button
+              >
             </div>
           </form>
         </section>
@@ -260,23 +324,51 @@
         />
       {:else}
         <section class="title-band" aria-labelledby="draft-heading">
-          <div><p class="eyebrow">Browser workspace</p><h1 id="draft-heading">Local estimate</h1></div>
-          <button class="button primary" type="button" onclick={() => (showSetup = true)}><Plus size={18} /> New local estimate</button>
+          <div>
+            <p class="eyebrow">Browser workspace</p>
+            <h1 id="draft-heading">Local estimate</h1>
+          </div>
+          <button class="button primary" type="button" onclick={() => (showSetup = true)}
+            ><Plus size={18} /> New local estimate</button
+          >
         </section>
-        <aside class="guest-notice"><strong>Guest draft</strong><span>Inputs and the latest result stay in IndexedDB on this device until you clear them.</span></aside>
+        <aside class="guest-notice">
+          <strong>Guest draft</strong><span
+            >Inputs and the latest result stay in IndexedDB on this device until you clear them.</span
+          >
+        </aside>
         {#if availableGuestWorkspace}
           <section class="draft-row">
             <span class="draft-icon"><FileClock size={22} /></span>
-            <div><h2>{availableGuestWorkspace.project.name}</h2><p>{availableGuestWorkspace.project.settings.project_type.replace('_', ' ').toUpperCase()} · Updated {formatDate(availableGuestWorkspace.updated_at)}</p></div>
-            <button class="button open" type="button" onclick={() => (activeWorkspace = availableGuestWorkspace)}>Continue draft</button>
-            <button class="icon-delete" type="button" onclick={() => (clearLocalConfirm = true)} aria-label="Clear local draft" title="Clear local draft"><Trash2 size={17} /></button>
+            <div>
+              <h2>{availableGuestWorkspace.project.name}</h2>
+              <p>
+                {availableGuestWorkspace.project.settings.project_type
+                  .replace('_', ' ')
+                  .toUpperCase()} · Updated {formatDate(availableGuestWorkspace.updated_at)}
+              </p>
+            </div>
+            <button
+              class="button open"
+              type="button"
+              onclick={() => (activeWorkspace = availableGuestWorkspace)}>Continue draft</button
+            >
+            <button
+              class="icon-delete"
+              type="button"
+              onclick={() => (clearLocalConfirm = true)}
+              aria-label="Clear local draft"
+              title="Clear local draft"><Trash2 size={17} /></button
+            >
           </section>
         {:else}
           <section class="new-draft">
             <Database size={28} aria-hidden="true" />
             <h2>No local estimate</h2>
             <p>Create a source inventory to begin.</p>
-            <button class="button primary" type="button" onclick={() => (showSetup = true)}><Plus size={18} /> Create estimate</button>
+            <button class="button primary" type="button" onclick={() => (showSetup = true)}
+              ><Plus size={18} /> Create estimate</button
+            >
           </section>
         {/if}
       {/if}
@@ -302,37 +394,218 @@
 />
 
 <style>
-  .home { width: min(100% - 32px, 1540px); margin: 0 auto; padding: 26px 0 48px; }
-  .offline-notice { display: flex; gap: 12px; margin-bottom: 14px; padding: 11px 14px; color: #634800; background: #fff5d5; border: 1px solid #e2c15e; font-size: 0.86rem; }
-  .setup { max-width: 980px; margin: 0 auto; background: #fff; border: 1px solid var(--border); border-top: 4px solid var(--source); box-shadow: var(--shadow); }
-  .setup-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 19px 22px; border-bottom: 1px solid var(--border); }
-  .text-button { padding: 6px 8px; color: #496167; background: transparent; border: 0; font-weight: 700; cursor: pointer; }
-  form { padding: 22px; }
-  fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-  legend { margin-bottom: 10px; color: #40565a; font-size: 0.8rem; font-weight: 720; }
-  .source-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
-  .source-options button { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 9px; min-height: 90px; padding: 13px; color: #456068; background: #f8faf9; border: 1px solid #bac7c9; border-radius: 5px; text-align: left; cursor: pointer; }
-  .source-options button b { color: #223b40; font: 650 0.93rem/1.2 Bahnschrift, sans-serif; }
-  .source-options button span { grid-column: 2; color: #687a7e; font-size: 0.76rem; }
-  .source-options button.selected { color: #087f73; background: #e7f3f0; border: 2px solid #087f73; padding: 12px; }
-  .setup-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }
-  label { display: grid; gap: 6px; color: #374e53; font-size: 0.78rem; font-weight: 700; }
-  input { width: 100%; min-height: 40px; padding: 8px 10px; color: #162e33; background: #fff; border: 1px solid #96a7aa; border-radius: 4px; font: 400 0.92rem/1.3 Aptos, 'Trebuchet MS', sans-serif; }
-  input:focus { border-color: #087f73; outline: 2px solid #bae0d9; }
-  .setup-actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 22px; padding-top: 16px; border-top: 1px solid #dbe2e2; }
-  .setup-actions span { color: #627579; font-size: 0.8rem; }
-  .draft-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 14px; min-height: 82px; padding: 13px 15px; background: #fff; border: 1px solid var(--border); border-left: 4px solid #087f73; box-shadow: var(--shadow); }
-  .draft-icon { display: grid; width: 40px; height: 40px; place-items: center; color: #087f73; background: #e3f1ed; }
-  .draft-row h2, .new-draft h2 { margin: 0; color: #20383d; font: 650 1rem/1.2 Bahnschrift, sans-serif; }
-  .draft-row p, .new-draft p { margin: 4px 0 0; color: #687b7f; font-size: 0.8rem; }
-  .button.open { color: #075e54; background: #fff; border-color: #6d9d95; }
-  .icon-delete { display: grid; width: 34px; height: 34px; place-items: center; padding: 0; color: #a62a20; background: #fff; border: 1px solid #cda09b; border-radius: 4px; cursor: pointer; }
-  .new-draft { display: grid; min-height: 280px; place-content: center; justify-items: center; gap: 8px; color: #6d817e; background: #fff; border: 1px dashed #a9b9b7; }
+  .home {
+    width: min(100% - 32px, 1540px);
+    margin: 0 auto;
+    padding: 26px 0 48px;
+  }
+  .offline-notice {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding: 11px 14px;
+    color: #634800;
+    background: #fff5d5;
+    border: 1px solid #e2c15e;
+    font-size: 0.86rem;
+  }
+  .setup {
+    max-width: 980px;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-top: 4px solid var(--source);
+    box-shadow: var(--shadow);
+  }
+  .setup-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 19px 22px;
+    border-bottom: 1px solid var(--border);
+  }
+  .text-button {
+    padding: 6px 8px;
+    color: #496167;
+    background: transparent;
+    border: 0;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  form {
+    padding: 22px;
+  }
+  fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  legend {
+    margin-bottom: 10px;
+    color: #40565a;
+    font-size: 0.8rem;
+    font-weight: 720;
+  }
+  .source-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 9px;
+  }
+  .source-options button {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 3px 9px;
+    min-height: 90px;
+    padding: 13px;
+    color: #456068;
+    background: #f8faf9;
+    border: 1px solid #bac7c9;
+    border-radius: 5px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .source-options button b {
+    color: #223b40;
+    font:
+      650 0.93rem/1.2 Bahnschrift,
+      sans-serif;
+  }
+  .source-options button span {
+    grid-column: 2;
+    color: #687a7e;
+    font-size: 0.76rem;
+  }
+  .source-options button.selected {
+    color: #087f73;
+    background: #e7f3f0;
+    border: 2px solid #087f73;
+    padding: 12px;
+  }
+  .setup-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 20px;
+  }
+  label {
+    display: grid;
+    gap: 6px;
+    color: #374e53;
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+  input {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 10px;
+    color: #162e33;
+    background: #fff;
+    border: 1px solid #96a7aa;
+    border-radius: 4px;
+    font:
+      400 0.92rem/1.3 Aptos,
+      'Trebuchet MS',
+      sans-serif;
+  }
+  input:focus {
+    border-color: #087f73;
+    outline: 2px solid #bae0d9;
+  }
+  .setup-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-top: 22px;
+    padding-top: 16px;
+    border-top: 1px solid #dbe2e2;
+  }
+  .setup-actions span {
+    color: #627579;
+    font-size: 0.8rem;
+  }
+  .draft-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    align-items: center;
+    gap: 14px;
+    min-height: 82px;
+    padding: 13px 15px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-left: 4px solid #087f73;
+    box-shadow: var(--shadow);
+  }
+  .draft-icon {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    color: #087f73;
+    background: #e3f1ed;
+  }
+  .draft-row h2,
+  .new-draft h2 {
+    margin: 0;
+    color: #20383d;
+    font:
+      650 1rem/1.2 Bahnschrift,
+      sans-serif;
+  }
+  .draft-row p,
+  .new-draft p {
+    margin: 4px 0 0;
+    color: #687b7f;
+    font-size: 0.8rem;
+  }
+  .button.open {
+    color: #075e54;
+    background: #fff;
+    border-color: #6d9d95;
+  }
+  .icon-delete {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    padding: 0;
+    color: #a62a20;
+    background: #fff;
+    border: 1px solid #cda09b;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .new-draft {
+    display: grid;
+    min-height: 280px;
+    place-content: center;
+    justify-items: center;
+    gap: 8px;
+    color: #6d817e;
+    background: #fff;
+    border: 1px dashed #a9b9b7;
+  }
   @media (max-width: 700px) {
-    .home { width: min(100% - 24px, 1540px); padding-top: 20px; }
-    .source-options, .setup-fields { grid-template-columns: 1fr; }
-    .setup-actions { align-items: stretch; flex-direction: column; }
-    .draft-row { grid-template-columns: auto 1fr auto; }
-    .draft-row .button.open { grid-column: 1 / -1; }
+    .home {
+      width: min(100% - 24px, 1540px);
+      padding-top: 20px;
+    }
+    .source-options,
+    .setup-fields {
+      grid-template-columns: 1fr;
+    }
+    .setup-actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .draft-row {
+      grid-template-columns: auto 1fr auto;
+    }
+    .draft-row .button.open {
+      grid-column: 1 / -1;
+    }
   }
 </style>

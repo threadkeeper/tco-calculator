@@ -4,6 +4,16 @@ targetScope = 'resourceGroup'
 @maxLength(20)
 param namePrefix string
 param location string = 'southafricanorth'
+@description('Existing Container Apps managed environment resource ID from the foundation deployment.')
+param managedEnvironmentId string
+@description('Existing Azure Container Registry resource ID from the foundation deployment.')
+param registryId string
+@description('Existing Azure Container Registry login server from the foundation deployment.')
+param registryServer string
+@description('Existing Cosmos DB account resource ID from the foundation deployment.')
+param cosmosAccountId string
+@description('Existing HTTPS Cosmos DB account endpoint from the foundation deployment.')
+param cosmosEndpoint string
 param containerImage string
 @minLength(36)
 @maxLength(36)
@@ -11,6 +21,12 @@ param entraClientId string
 @secure()
 @minLength(1)
 param entraClientSecretUri string
+@description('Resource group containing the Key Vault referenced by entraClientSecretUri.')
+param authKeyVaultResourceGroup string
+@description('Key Vault name referenced by entraClientSecretUri.')
+param authKeyVaultName string
+@description('Apply the Key Vault-backed Container Apps Entra authentication configuration.')
+param configureAuthentication bool = true
 @minValue(1)
 param guestRequestsPerMinute int = 60
 @minValue(1)
@@ -26,69 +42,9 @@ param tags object = {
   managedBy: 'bicep'
 }
 
-var registryName = toLower(replace('${namePrefix}${uniqueString(resourceGroup().id)}', '-', ''))
-var cosmosAccountName = toLower(replace('${namePrefix}-${uniqueString(resourceGroup().id)}', '-', ''))
 var containerAppName = '${namePrefix}-app'
-
-module monitoring 'modules/monitoring.bicep' = {
-  name: 'monitoring'
-  params: {
-    location: location
-    namePrefix: namePrefix
-    tags: tags
-  }
-}
-
-module network 'modules/network.bicep' = {
-  name: 'network'
-  params: {
-    location: location
-    namePrefix: namePrefix
-    tags: tags
-  }
-}
-
-module registry 'modules/registry.bicep' = {
-  name: 'registry'
-  params: {
-    location: location
-    namePrefix: namePrefix
-    tags: tags
-  }
-}
-
-module cosmos 'modules/cosmos.bicep' = {
-  name: 'cosmos'
-  params: {
-    location: location
-    namePrefix: namePrefix
-    tags: tags
-  }
-}
-
-module cosmosPrivateEndpoint 'modules/cosmos-private-endpoint.bicep' = {
-  name: 'cosmos-private-endpoint'
-  params: {
-    cosmosAccountId: cosmos.outputs.id
-    location: location
-    namePrefix: namePrefix
-    privateEndpointSubnetId: network.outputs.privateEndpointSubnetId
-    tags: tags
-    virtualNetworkId: network.outputs.virtualNetworkId
-  }
-}
-
-module managedEnvironment 'modules/managed-environment.bicep' = {
-  name: 'managed-environment'
-  params: {
-    containerAppsSubnetId: network.outputs.containerAppsSubnetId
-    location: location
-    logAnalyticsCustomerId: monitoring.outputs.customerId
-    logAnalyticsSharedKey: monitoring.outputs.sharedKey
-    namePrefix: namePrefix
-    tags: tags
-  }
-}
+var registryName = last(split(registryId, '/'))
+var cosmosAccountName = last(split(cosmosAccountId, '/'))
 
 module containerApp 'modules/container-app.bicep' = {
   name: 'container-app'
@@ -96,16 +52,17 @@ module containerApp 'modules/container-app.bicep' = {
     applicationRegion: location
     containerImage: containerImage
     calculationConcurrency: calculationConcurrency
-    cosmosEndpoint: cosmos.outputs.endpoint
+    configureAuthentication: configureAuthentication
+    cosmosEndpoint: cosmosEndpoint
     entraClientId: entraClientId
     entraClientSecretUri: entraClientSecretUri
     guestRequestsPerMinute: guestRequestsPerMinute
     location: location
-    managedEnvironmentId: managedEnvironment.outputs.id
+    managedEnvironmentId: managedEnvironmentId
     namePrefix: namePrefix
     providerRefreshesPerHour: providerRefreshesPerHour
     providerMaxResponseBytes: providerMaxResponseBytes
-    registryServer: registry.outputs.loginServer
+    registryServer: registryServer
     tags: tags
   }
 }
@@ -134,11 +91,21 @@ resource cosmosDataContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAss
   properties: {
     principalId: containerApp.outputs.principalId
     roleDefinitionId: '${cosmosResource.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
-    scope: cosmosResource.id
+    scope: '${cosmosResource.id}/dbs/tco'
   }
 }
 
+module keyVaultAccess 'modules/key-vault-access.bicep' = {
+  name: 'key-vault-access'
+  scope: resourceGroup(authKeyVaultResourceGroup)
+  params: {
+    keyVaultName: authKeyVaultName
+    principalId: containerApp.outputs.principalId
+  }
+}
+
+output containerAppId string = containerApp.outputs.id
+output containerAppName string = containerApp.outputs.name
 output containerAppFqdn string = containerApp.outputs.fqdn
 output containerAppPrincipalId string = containerApp.outputs.principalId
-output cosmosEndpoint string = cosmos.outputs.endpoint
-output registryLoginServer string = registry.outputs.loginServer
+output containerImage string = containerImage

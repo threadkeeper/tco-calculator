@@ -21,6 +21,7 @@ param providerRefreshesPerHour int = 6
 param providerMaxResponseBytes int = 67108864
 @minValue(1)
 param calculationConcurrency int = 10
+param configureAuthentication bool = true
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: '${namePrefix}-app'
@@ -50,13 +51,13 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           server: registryServer
         }
       ]
-      secrets: [
+      secrets: configureAuthentication ? [
         {
           identity: 'system'
           keyVaultUrl: entraClientSecretUri
           name: 'entra-client-secret'
         }
-      ]
+      ] : []
     }
     environmentId: managedEnvironmentId
     template: {
@@ -100,23 +101,37 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'azure-sql-tco'
           probes: [
             {
+              failureThreshold: 30
               httpGet: {
                 path: '/healthz'
                 port: 8080
                 scheme: 'HTTP'
               }
-              initialDelaySeconds: 2
-              periodSeconds: 10
+              periodSeconds: 2
+              timeoutSeconds: 2
+              type: 'Startup'
+            }
+            {
+              failureThreshold: 3
+              httpGet: {
+                path: '/healthz'
+                port: 8080
+                scheme: 'HTTP'
+              }
+              periodSeconds: 20
+              timeoutSeconds: 5
               type: 'Liveness'
             }
             {
+              failureThreshold: 3
               httpGet: {
                 path: '/readyz'
                 port: 8080
                 scheme: 'HTTP'
               }
-              initialDelaySeconds: 3
               periodSeconds: 10
+              successThreshold: 1
+              timeoutSeconds: 5
               type: 'Readiness'
             }
           ]
@@ -144,7 +159,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-resource auth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
+resource auth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = if (configureAuthentication) {
   parent: app
   name: 'current'
   properties: {

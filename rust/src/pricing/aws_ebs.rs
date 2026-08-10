@@ -4,8 +4,9 @@ use std::{
 };
 
 use rust_decimal::Decimal;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
     calculation::cost::{EbsRate, IopsPriceTier},
@@ -15,10 +16,19 @@ use crate::{
 
 const GP3_INCLUDED_IOPS: u64 = 3_000;
 const GP3_INCLUDED_THROUGHPUT_MIBPS: u64 = 125;
+const MIBPS_PER_GIBPS: u64 = 1_024;
+const GP3_CAPACITY_METER: &str = "Storage General Purpose gp3 GB Mo";
+const GP3_IOPS_METER: &str = "Provisioned EBS IOPS gp3 Volumes per IOPS Mo";
+const GP3_THROUGHPUT_METER: &str = "Provisioned Throughput gp3 per GiBps mo";
+const IO2_CAPACITY_METER: &str = "Storage Provisioned IOPS io2 GB month";
+const IO2_TIER_1_METER: &str = "Provisioned EBS IOPS io2 Volumes per IOPS Mo";
+const IO2_TIER_2_METER: &str = "Provisioned EBS IOPS Tier 2 io2 Volumes per IOPS Mo";
+const IO2_TIER_3_METER: &str = "Provisioned EBS IOPS Tier 3 io2 Volumes per IOPS Mo";
 
 #[derive(Clone, Copy)]
 pub struct EbsNormalizationContext<'a> {
     pub region_code: &'a str,
+    pub location: &'a str,
 }
 
 #[derive(Clone, Copy)]
@@ -26,6 +36,12 @@ pub struct EbsLeafPayload<'a> {
     pub source_url: &'a str,
     pub source_version: Option<&'a str>,
     pub effective_at: Option<&'a str>,
+    pub body: &'a [u8],
+}
+
+#[derive(Clone, Copy)]
+pub struct EbsMeterMapPayload<'a> {
+    pub source_url: &'a str,
     pub body: &'a [u8],
 }
 
@@ -39,6 +55,12 @@ pub struct EbsNormalization {
 pub enum EbsNormalizationError {
     #[error("EBS selected price leaf JSON is malformed")]
     MalformedJson,
+    #[error("EBS meter map manifest is unsupported")]
+    UnsupportedMeterMap,
+    #[error("EBS meter map does not contain the requested location")]
+    MissingLocation,
+    #[error("EBS meter map is missing a required gp3 or io2 meter")]
+    MissingRequiredMeter,
     #[error("EBS selected price leaf has an unsupported offer code")]
     UnsupportedOffer,
     #[error("EBS price value or range is invalid")]
@@ -51,14 +73,14 @@ pub enum EbsNormalizationError {
     InvalidIopsTiers,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SelectedLeaf {
     source_offer_code: String,
     dimensions: Vec<RawDimension>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum ComponentKind {
     Capacity,
@@ -66,7 +88,7 @@ enum ComponentKind {
     Throughput,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawDimension {
     volume_type: String,
@@ -80,6 +102,115 @@ struct RawDimension {
     #[serde(default)]
     end_range: Option<u64>,
 }
+
+#[derive(Deserialize)]
+struct EbsMeterMap {
+    manifest: EbsMeterMapManifest,
+    regions: BTreeMap<String, BTreeMap<String, MappedMeter>>,
+}
+
+#[derive(Deserialize)]
+struct EbsMeterMapManifest {
+    #[serde(rename = "serviceId")]
+    service_id: String,
+    #[serde(rename = "accessType")]
+    access_type: String,
+    #[serde(rename = "esIndex")]
+    source_version: String,
+    #[serde(rename = "hawkFilePublicationDate")]
+    published_at: String,
+    #[serde(rename = "currencyCode")]
+    currency_code: String,
+    source: String,
+    #[serde(rename = "isMapped")]
+    is_mapped: String,
+}
+
+#[derive(Deserialize)]
+struct MappedMeter {
+    #[serde(rename = "rateCode")]
+    rate_code: String,
+    price: serde_json::Value,
+    #[serde(rename = "RegionlessRateCode")]
+    regionless_rate_code: String,
+}
+
+#[derive(Clone, Copy)]
+struct MeterProjection {
+    name: &'static str,
+    volume_type: &'static str,
+    component: ComponentKind,
+    unit: &'static str,
+    begin_range: Option<u64>,
+    end_range: Option<u64>,
+    price_divisor: Option<u64>,
+}
+
+const METER_PROJECTIONS: [MeterProjection; 7] = [
+    MeterProjection {
+        name: GP3_CAPACITY_METER,
+        volume_type: "gp3",
+        component: ComponentKind::Capacity,
+        unit: "GB-Mo",
+        begin_range: None,
+        end_range: None,
+        price_divisor: None,
+    },
+    MeterProjection {
+        name: GP3_IOPS_METER,
+        volume_type: "gp3",
+        component: ComponentKind::Iops,
+        unit: "IOPS-Mo",
+        begin_range: Some(GP3_INCLUDED_IOPS),
+        end_range: None,
+        price_divisor: None,
+    },
+    MeterProjection {
+        name: GP3_THROUGHPUT_METER,
+        volume_type: "gp3",
+        component: ComponentKind::Throughput,
+        unit: "MiBps-Mo",
+        begin_range: Some(GP3_INCLUDED_THROUGHPUT_MIBPS),
+        end_range: None,
+        price_divisor: Some(MIBPS_PER_GIBPS),
+    },
+    MeterProjection {
+        name: IO2_CAPACITY_METER,
+        volume_type: "io2",
+        component: ComponentKind::Capacity,
+        unit: "GB-Mo",
+        begin_range: None,
+        end_range: None,
+        price_divisor: None,
+    },
+    MeterProjection {
+        name: IO2_TIER_1_METER,
+        volume_type: "io2",
+        component: ComponentKind::Iops,
+        unit: "IOPS-Mo",
+        begin_range: Some(0),
+        end_range: Some(32_000),
+        price_divisor: None,
+    },
+    MeterProjection {
+        name: IO2_TIER_2_METER,
+        volume_type: "io2",
+        component: ComponentKind::Iops,
+        unit: "IOPS-Mo",
+        begin_range: Some(32_000),
+        end_range: Some(64_000),
+        price_divisor: None,
+    },
+    MeterProjection {
+        name: IO2_TIER_3_METER,
+        volume_type: "io2",
+        component: ComponentKind::Iops,
+        unit: "IOPS-Mo",
+        begin_range: Some(64_000),
+        end_range: None,
+        price_divisor: None,
+    },
+];
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum VolumeType {
@@ -128,7 +259,7 @@ pub fn normalize_ebs_leaves(
     context: EbsNormalizationContext<'_>,
     leaves: &[EbsLeafPayload<'_>],
 ) -> Result<EbsNormalization, EbsNormalizationError> {
-    if context.region_code.is_empty() {
+    if context.region_code.is_empty() || context.location.is_empty() {
         return Err(EbsNormalizationError::InvalidValue);
     }
 
@@ -183,6 +314,97 @@ pub fn normalize_ebs_leaves(
     warnings.sort();
     records.sort_by(|left, right| left.stable_key.cmp(&right.stable_key));
     Ok(EbsNormalization { records, warnings })
+}
+
+pub fn normalize_ebs_meter_map(
+    context: EbsNormalizationContext<'_>,
+    payload: EbsMeterMapPayload<'_>,
+) -> Result<EbsNormalization, EbsNormalizationError> {
+    if payload.source_url.is_empty() {
+        return Err(EbsNormalizationError::InvalidValue);
+    }
+    let projection = project_meter_map(context.location, payload.body)?;
+    normalize_ebs_leaves(
+        context,
+        &[EbsLeafPayload {
+            source_url: payload.source_url,
+            source_version: Some(&projection.source_version),
+            effective_at: Some(&projection.effective_at),
+            body: &projection.body,
+        }],
+    )
+}
+
+struct ProjectedMeterMap {
+    source_version: String,
+    effective_at: String,
+    body: Vec<u8>,
+}
+
+fn project_meter_map(
+    location: &str,
+    body: &[u8],
+) -> Result<ProjectedMeterMap, EbsNormalizationError> {
+    let meter_map: EbsMeterMap =
+        serde_json::from_slice(body).map_err(|_| EbsNormalizationError::MalformedJson)?;
+    validate_meter_map_manifest(&meter_map.manifest)?;
+    let meters = meter_map
+        .regions
+        .get(location)
+        .ok_or(EbsNormalizationError::MissingLocation)?;
+    let mut dimensions = Vec::with_capacity(METER_PROJECTIONS.len());
+    let mut rate_codes = BTreeSet::new();
+    for projection in METER_PROJECTIONS {
+        let meter = meters
+            .get(projection.name)
+            .ok_or(EbsNormalizationError::MissingRequiredMeter)?;
+        if meter.rate_code.is_empty()
+            || meter.regionless_rate_code.is_empty()
+            || !rate_codes.insert(meter.rate_code.clone())
+        {
+            return Err(EbsNormalizationError::InvalidValue);
+        }
+        let mut price = parse_nonnegative_decimal(&meter.price)?;
+        if let Some(divisor) = projection.price_divisor {
+            price /= Decimal::from(divisor);
+        }
+        dimensions.push(RawDimension {
+            volume_type: projection.volume_type.to_owned(),
+            component: projection.component,
+            term_type: "OnDemand".to_owned(),
+            rate_code: meter.rate_code.clone(),
+            unit: projection.unit.to_owned(),
+            price: serde_json::Value::String(price.to_string()),
+            begin_range: projection.begin_range,
+            end_range: projection.end_range,
+        });
+    }
+    let body = serde_json::to_vec(&SelectedLeaf {
+        source_offer_code: "AmazonEC2".to_owned(),
+        dimensions,
+    })
+    .map_err(|_| EbsNormalizationError::InvalidValue)?;
+    Ok(ProjectedMeterMap {
+        source_version: meter_map.manifest.source_version,
+        effective_at: meter_map.manifest.published_at,
+        body,
+    })
+}
+
+fn validate_meter_map_manifest(
+    manifest: &EbsMeterMapManifest,
+) -> Result<(), EbsNormalizationError> {
+    if manifest.service_id != "ec2"
+        || manifest.access_type != "publish"
+        || manifest.currency_code != "USD"
+        || manifest.source != "ebs-calculator"
+        || manifest.is_mapped != "true"
+        || manifest.source_version.is_empty()
+        || OffsetDateTime::parse(&manifest.published_at, &Rfc3339).is_err()
+    {
+        return Err(EbsNormalizationError::UnsupportedMeterMap);
+    }
+    Ok(())
 }
 
 fn add_dimension(
@@ -529,6 +751,89 @@ mod tests {
     }
 
     #[test]
+    fn projects_reviewed_meter_map_into_gp3_and_io2_rates() {
+        let body = meter_map(None);
+        let normalized = normalize_ebs_meter_map(
+            context(),
+            EbsMeterMapPayload {
+                source_url: "https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/ec2/USD/current/ebs-calculator.json",
+                body: &body,
+            },
+        )
+        .expect("normalize reviewed EBS meter map");
+
+        assert!(normalized.warnings.is_empty());
+        assert_eq!(normalized.records.len(), 2);
+        let gp3 = &normalized.records[0];
+        assert_eq!(gp3.rate.capacity_monthly_per_gb.to_string(), "0.088");
+        assert_eq!(
+            gp3.rate
+                .iops_monthly_per_unit
+                .expect("gp3 IOPS rate")
+                .to_string(),
+            "0.0055"
+        );
+        assert_eq!(
+            gp3.rate
+                .throughput_monthly_per_mibps
+                .expect("gp3 throughput rate")
+                .to_string(),
+            "0.044"
+        );
+        assert_eq!(
+            gp3.provenance.source_version.as_deref(),
+            Some("plc-ec2-usd-test")
+        );
+        assert_eq!(
+            gp3.provenance.effective_at.as_deref(),
+            Some("2026-08-10T11:35:09Z")
+        );
+        assert_eq!(gp3.provenance.meter_ids.len(), 3);
+
+        let io2 = &normalized.records[1];
+        assert_eq!(io2.rate.capacity_monthly_per_gb.to_string(), "0.138");
+        assert_eq!(io2.rate.iops_tiers[0].monthly_per_iops.to_string(), "0.072");
+        assert_eq!(
+            io2.rate.iops_tiers[1].monthly_per_iops.to_string(),
+            "0.0504"
+        );
+        assert_eq!(
+            io2.rate.iops_tiers[2].monthly_per_iops.to_string(),
+            "0.03528"
+        );
+        assert_eq!(io2.provenance.meter_ids.len(), 4);
+    }
+
+    #[test]
+    fn rejects_meter_map_when_a_required_alias_is_missing() {
+        let body = meter_map(Some(GP3_THROUGHPUT_METER));
+
+        assert!(matches!(
+            normalize_ebs_meter_map(
+                context(),
+                EbsMeterMapPayload {
+                    source_url: "https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/ec2/USD/current/ebs-calculator.json",
+                    body: &body,
+                }
+            ),
+            Err(EbsNormalizationError::MissingRequiredMeter)
+        ));
+    }
+
+    #[test]
+    fn rejects_unreviewed_meter_map_manifest() {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&meter_map(None)).expect("test meter map");
+        value["manifest"]["currencyCode"] = serde_json::json!("EUR");
+        let body = serde_json::to_vec(&value).expect("serialize test meter map");
+
+        assert!(matches!(
+            project_meter_map("EU (Ireland)", &body),
+            Err(EbsNormalizationError::UnsupportedMeterMap)
+        ));
+    }
+
+    #[test]
     fn rejects_shifted_io2_tier_boundaries() {
         let body = leaf(&[
             dimension("io2", "capacity", "GB-Mo", "0.125", None, None),
@@ -564,7 +869,49 @@ mod tests {
     fn context() -> EbsNormalizationContext<'static> {
         EbsNormalizationContext {
             region_code: "eu-west-1",
+            location: "EU (Ireland)",
         }
+    }
+
+    fn meter_map(omitted_meter: Option<&str>) -> Vec<u8> {
+        let mut meters = BTreeMap::new();
+        for (name, price, rate_code) in [
+            (GP3_CAPACITY_METER, "0.088", "gp3-capacity"),
+            (GP3_IOPS_METER, "0.0055", "gp3-iops"),
+            (GP3_THROUGHPUT_METER, "45.056", "gp3-throughput"),
+            (IO2_CAPACITY_METER, "0.138", "io2-capacity"),
+            (IO2_TIER_1_METER, "0.072", "io2-tier-1"),
+            (IO2_TIER_2_METER, "0.0504", "io2-tier-2"),
+            (IO2_TIER_3_METER, "0.03528", "io2-tier-3"),
+        ] {
+            if omitted_meter != Some(name) {
+                meters.insert(
+                    name,
+                    serde_json::json!({
+                        "rateCode": rate_code,
+                        "price": price,
+                        "RegionlessRateCode": format!("regionless-{rate_code}")
+                    }),
+                );
+            }
+        }
+        serde_json::to_vec(&serde_json::json!({
+            "manifest": {
+                "serviceId": "ec2",
+                "accessType": "publish",
+                "esIndex": "plc-ec2-usd-test",
+                "hawkFilePublicationDate": "2026-08-10T11:35:09Z",
+                "ETLIngestionTriggerDate": "2026-08-10T11:35:09Z",
+                "currencyCode": "USD",
+                "source": "ebs-calculator",
+                "isMapped": "true"
+            },
+            "sets": {},
+            "regions": {
+                "EU (Ireland)": meters
+            }
+        }))
+        .expect("serialize EBS meter map")
     }
 
     fn payload(body: &[u8]) -> EbsLeafPayload<'_> {

@@ -1,0 +1,469 @@
+name: Deploy Azure application
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Build and preview first; deploy requires that reviewed run.
+        required: true
+        default: build-preview
+        type: choice
+        options:
+          - build-preview
+          - deploy
+      preview_run_id:
+        description: Successful build-preview run ID for this exact commit (required for deploy).
+        required: false
+        type: string
+      confirmation:
+        description: For deploy, enter DEPLOY APP followed by a space and the resource-group name.
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-azure-application
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  application:
+    name: ${{ inputs.operation == 'deploy' && 'Deploy' || 'Build and preview' }} application
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: ${{ steps.verify.outputs.url }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_DEPLOYMENT_ENVIRONMENT: ${{ vars.AZURE_DEPLOYMENT_ENVIRONMENT }}
+      AZURE_NAME_PREFIX: ${{ vars.AZURE_NAME_PREFIX }}
+      AZURE_CONTAINER_APPS_ENVIRONMENT_ID: ${{ vars.AZURE_CONTAINER_APPS_ENVIRONMENT_ID }}
+      AZURE_CONTAINER_REGISTRY: ${{ vars.AZURE_CONTAINER_REGISTRY }}
+      AZURE_CONTAINER_REGISTRY_ID: ${{ vars.AZURE_CONTAINER_REGISTRY_ID }}
+      AZURE_CONTAINER_REGISTRY_NAME: ${{ vars.AZURE_CONTAINER_REGISTRY_NAME }}
+      AZURE_COSMOS_ACCOUNT_ID: ${{ vars.AZURE_COSMOS_ACCOUNT_ID }}
+      AZURE_COSMOS_ACCOUNT_NAME: ${{ vars.AZURE_COSMOS_ACCOUNT_NAME }}
+      COSMOSDB_ENDPOINT: ${{ vars.COSMOSDB_ENDPOINT }}
+      ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
+      ENTRA_CLIENT_SECRET_URI: ${{ secrets.ENTRA_CLIENT_SECRET_URI }}
+      WEB_BUILD_IMAGE: ${{ vars.WEB_BUILD_IMAGE }}
+      RUST_BUILD_IMAGE: ${{ vars.RUST_BUILD_IMAGE }}
+      RUNTIME_IMAGE: ${{ vars.RUNTIME_IMAGE }}
+      OPERATION: ${{ inputs.operation }}
+      PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
+      DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Validate application inputs
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+            throw 'Azure application deployment may run only from main.'
+          }
+
+          $required = @(
+            'AZURE_CLIENT_ID',
+            'AZURE_TENANT_ID',
+            'AZURE_SUBSCRIPTION_ID',
+            'AZURE_RESOURCE_GROUP',
+            'AZURE_LOCATION',
+            'AZURE_DEPLOYMENT_ENVIRONMENT',
+            'AZURE_NAME_PREFIX',
+            'AZURE_CONTAINER_APPS_ENVIRONMENT_ID',
+            'AZURE_CONTAINER_REGISTRY',
+            'AZURE_CONTAINER_REGISTRY_ID',
+            'AZURE_CONTAINER_REGISTRY_NAME',
+            'AZURE_COSMOS_ACCOUNT_ID',
+            'AZURE_COSMOS_ACCOUNT_NAME',
+            'COSMOSDB_ENDPOINT',
+            'ENTRA_CLIENT_ID',
+            'ENTRA_CLIENT_SECRET_URI',
+            'WEB_BUILD_IMAGE',
+            'RUST_BUILD_IMAGE',
+            'RUNTIME_IMAGE'
+          )
+          foreach ($name in $required) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              throw "GitHub environment dev is missing required application configuration: $name"
+            }
+          }
+
+          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'ENTRA_CLIENT_ID')) {
+            if ([Environment]::GetEnvironmentVariable($name) -notmatch '^[0-9a-fA-F-]{36}$') {
+              throw "$name must be a UUID."
+            }
+          }
+          if ($env:AZURE_DEPLOYMENT_ENVIRONMENT -ne 'dev') {
+            throw 'Only the approved dev environment may be deployed.'
+          }
+          if ($env:AZURE_LOCATION -ne 'southafricanorth') {
+            throw 'The approved application-hosting region is southafricanorth.'
+          }
+          if ($env:AZURE_NAME_PREFIX -notmatch '^[a-z0-9-]{3,20}$') {
+            throw 'AZURE_NAME_PREFIX must contain 3-20 lowercase letters, digits, or hyphens.'
+          }
+          if ($env:AZURE_CONTAINER_REGISTRY -notmatch '^[a-z0-9]+\.azurecr\.io$') {
+            throw 'AZURE_CONTAINER_REGISTRY must be an Azure Container Registry login server.'
+          }
+          if ($env:ENTRA_CLIENT_SECRET_URI -notmatch '^https://[^/]+\.vault\.azure\.net/secrets/[^/]+/[^/]+/?$') {
+            throw 'ENTRA_CLIENT_SECRET_URI must be a versioned HTTPS Azure Key Vault secret URI.'
+          }
+          foreach ($name in @('WEB_BUILD_IMAGE', 'RUST_BUILD_IMAGE', 'RUNTIME_IMAGE')) {
+            if ([Environment]::GetEnvironmentVariable($name) -notmatch '@sha256:[0-9a-fA-F]{64}$') {
+              throw "$name must use an approved sha256 digest."
+            }
+          }
+
+          $resourceGroupPrefix = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$env:AZURE_RESOURCE_GROUP/providers/"
+          foreach ($name in @('AZURE_CONTAINER_APPS_ENVIRONMENT_ID', 'AZURE_CONTAINER_REGISTRY_ID', 'AZURE_COSMOS_ACCOUNT_ID')) {
+            if (-not [Environment]::GetEnvironmentVariable($name).StartsWith($resourceGroupPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+              throw "$name must identify a foundation resource in the configured subscription and resource group."
+            }
+          }
+
+          if ($env:OPERATION -eq 'deploy') {
+            if ($env:PREVIEW_RUN_ID -notmatch '^\d+$') {
+              throw 'Deploy requires a numeric preview_run_id.'
+            }
+            if ($env:DEPLOY_CONFIRMATION -cne "DEPLOY APP $env:AZURE_RESOURCE_GROUP") {
+              throw "Deploy confirmation must exactly match: DEPLOY APP $env:AZURE_RESOURCE_GROUP"
+            }
+          }
+
+      - name: Verify successful application CI
+        shell: pwsh
+        run: |
+          $runs = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$env:GITHUB_SHA&branch=main&status=success&per_page=20" | ConvertFrom-Json
+          $matchingRun = $runs.workflow_runs |
+            Where-Object { $_.head_sha -eq $env:GITHUB_SHA -and $_.event -eq 'push' } |
+            Select-Object -First 1
+          if ($null -eq $matchingRun) {
+            throw 'This commit does not have a successful main-branch CI run.'
+          }
+
+      - name: Verify reviewed build-preview
+        if: inputs.operation == 'deploy'
+        shell: pwsh
+        run: |
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:PREVIEW_RUN_ID" | ConvertFrom-Json
+          if ($run.name -ne $env:GITHUB_WORKFLOW -or $run.event -ne 'workflow_dispatch') {
+            throw 'The supplied run is not a manual run of this application workflow.'
+          }
+          if ($run.conclusion -ne 'success' -or $run.head_sha -ne $env:GITHUB_SHA) {
+            throw 'The build-preview must have succeeded for this exact commit.'
+          }
+
+          $jobs = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:PREVIEW_RUN_ID/jobs?per_page=100" | ConvertFrom-Json
+          $buildStep = $jobs.jobs.steps | Where-Object name -eq 'Build or reuse immutable image' | Select-Object -First 1
+          $previewStep = $jobs.jobs.steps | Where-Object name -eq 'Preview application deployment' | Select-Object -First 1
+          $deployStep = $jobs.jobs.steps | Where-Object name -eq 'Deploy application' | Select-Object -First 1
+          if ($null -eq $buildStep -or $buildStep.conclusion -ne 'success') {
+            throw 'The supplied run did not build or verify the immutable application image.'
+          }
+          if ($null -eq $previewStep -or $previewStep.conclusion -ne 'success') {
+            throw 'The supplied run did not complete the application what-if successfully.'
+          }
+          if ($null -eq $deployStep -or $deployStep.conclusion -ne 'skipped') {
+            throw 'The supplied run was not build-preview only.'
+          }
+
+      # Priority 2 precedent: Gaia uses this exact Microsoft-published commit for OIDC login.
+      - name: Azure login with OIDC
+        uses: Azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify foundation and auth vault
+        shell: pwsh
+        run: |
+          az account set --subscription $env:AZURE_SUBSCRIPTION_ID
+          $account = az account show --query '{subscriptionId:id,tenantId:tenantId}' --output json | ConvertFrom-Json
+          if ($account.subscriptionId -ne $env:AZURE_SUBSCRIPTION_ID -or $account.tenantId -ne $env:AZURE_TENANT_ID) {
+            throw 'Azure CLI authenticated to an unexpected tenant or subscription.'
+          }
+          az group show --name $env:AZURE_RESOURCE_GROUP --only-show-errors --output none
+
+          $managedEnvironment = az resource show --ids $env:AZURE_CONTAINER_APPS_ENVIRONMENT_ID --api-version 2024-03-01 --only-show-errors --output json | ConvertFrom-Json
+          $registry = az resource show --ids $env:AZURE_CONTAINER_REGISTRY_ID --api-version 2023-07-01 --only-show-errors --output json | ConvertFrom-Json
+          $cosmos = az resource show --ids $env:AZURE_COSMOS_ACCOUNT_ID --api-version 2024-05-15 --only-show-errors --output json | ConvertFrom-Json
+          foreach ($resource in @($managedEnvironment, $registry, $cosmos)) {
+            if ($resource.location -ne $env:AZURE_LOCATION -or $resource.tags.application -ne 'tco-calculator' -or $resource.tags.environment -ne 'dev') {
+              throw "Foundation resource $($resource.id) has an unexpected location or ownership tag."
+            }
+          }
+          if ($registry.name -ne $env:AZURE_CONTAINER_REGISTRY_NAME -or $registry.properties.loginServer -ne $env:AZURE_CONTAINER_REGISTRY) {
+            throw 'Configured ACR identifiers do not describe the same foundation registry.'
+          }
+          if ($cosmos.name -ne $env:AZURE_COSMOS_ACCOUNT_NAME -or $cosmos.properties.documentEndpoint.TrimEnd('/') -ne $env:COSMOSDB_ENDPOINT.TrimEnd('/')) {
+            throw 'Configured Cosmos identifiers do not describe the same foundation account.'
+          }
+
+          $secretUri = [Uri]$env:ENTRA_CLIENT_SECRET_URI
+          if ($secretUri.Host -notmatch '^(?<vault>[a-z0-9-]+)\.vault\.azure\.net$') {
+            throw 'ENTRA_CLIENT_SECRET_URI does not identify an Azure Key Vault.'
+          }
+          $vault = az keyvault show --name $Matches.vault --only-show-errors --output json | ConvertFrom-Json
+          if (-not $vault.id.StartsWith("/subscriptions/$env:AZURE_SUBSCRIPTION_ID/", [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The authentication Key Vault must be in the configured subscription.'
+          }
+          if ($vault.properties.vaultUri.TrimEnd('/') -ne $secretUri.GetLeftPart([UriPartial]::Authority).TrimEnd('/')) {
+            throw 'ENTRA_CLIENT_SECRET_URI does not match the discovered Key Vault.'
+          }
+
+          "ENTRA_CLIENT_SECRET_KEY_VAULT_RESOURCE_GROUP=$($vault.resourceGroup)" >> $env:GITHUB_ENV
+          "ENTRA_CLIENT_SECRET_KEY_VAULT_NAME=$($vault.name)" >> $env:GITHUB_ENV
+          "ENTRA_CLIENT_SECRET_KEY_VAULT_ID=$($vault.id)" >> $env:GITHUB_ENV
+
+      - name: Compile application Bicep
+        shell: pwsh
+        run: |
+          az bicep build --file infra/main.bicep --stdout | Out-Null
+
+      - name: Build or reuse immutable image
+        if: inputs.operation == 'build-preview'
+        shell: pwsh
+        run: |
+          $image = "tco-calculator:$env:GITHUB_SHA"
+          $existingOutput = @(& az acr manifest show-metadata --registry $env:AZURE_CONTAINER_REGISTRY_NAME --name $image --only-show-errors --output json 2>$null)
+          $existingExitCode = $LASTEXITCODE
+          if ($existingExitCode -eq 0) {
+            $existing = ($existingOutput -join [Environment]::NewLine) | ConvertFrom-Json
+            if ($existing.changeableAttributes.writeEnabled -ne $false -or $existing.changeableAttributes.deleteEnabled -ne $false) {
+              throw 'The existing commit image is not immutable; use a new reviewed commit rather than overwriting it.'
+            }
+            Write-Host 'Reusing the existing locked image for this commit.'
+          } else {
+            az acr build `
+              --registry $env:AZURE_CONTAINER_REGISTRY_NAME `
+              --image $image `
+              --file Dockerfile `
+              --platform linux `
+              --build-arg "WEB_BUILD_IMAGE=$env:WEB_BUILD_IMAGE" `
+              --build-arg "RUST_BUILD_IMAGE=$env:RUST_BUILD_IMAGE" `
+              --build-arg "RUNTIME_IMAGE=$env:RUNTIME_IMAGE" `
+              --only-show-errors `
+              .
+            if ($LASTEXITCODE -ne 0) {
+              throw 'ACR image build failed.'
+            }
+            az acr repository update `
+              --name $env:AZURE_CONTAINER_REGISTRY_NAME `
+              --image $image `
+              --write-enabled false `
+              --delete-enabled false `
+              --only-show-errors `
+              --output none
+          }
+
+      - name: Resolve immutable image digest
+        shell: pwsh
+        run: |
+          $image = "tco-calculator:$env:GITHUB_SHA"
+          $metadata = az acr manifest show-metadata `
+            --registry $env:AZURE_CONTAINER_REGISTRY_NAME `
+            --name $image `
+            --only-show-errors `
+            --output json | ConvertFrom-Json
+          if ($metadata.digest -notmatch '^sha256:[0-9a-f]{64}$') {
+            throw 'ACR did not return a sha256 image digest.'
+          }
+          if ($metadata.changeableAttributes.writeEnabled -ne $false -or $metadata.changeableAttributes.deleteEnabled -ne $false) {
+            throw 'The commit image tag is not locked against overwrite and deletion.'
+          }
+          $containerImage = "$env:AZURE_CONTAINER_REGISTRY/tco-calculator@$($metadata.digest)"
+          "CONTAINER_IMAGE=$containerImage" >> $env:GITHUB_ENV
+          "IMAGE_DIGEST=$($metadata.digest)" >> $env:GITHUB_ENV
+
+      - name: Preview application deployment
+        shell: pwsh
+        run: |
+          az bicep build-params --file infra/parameters/dev.bicepparam --stdout | Out-Null
+          $planPath = Join-Path $env:RUNNER_TEMP 'application-plan.json'
+          az deployment group what-if `
+            --resource-group $env:AZURE_RESOURCE_GROUP `
+            --template-file infra/main.bicep `
+            --parameters infra/parameters/dev.bicepparam `
+            --result-format ResourceIdOnly `
+            --no-pretty-print `
+            --only-show-errors `
+            --output json > $planPath
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Azure application what-if failed.'
+          }
+
+          $plan = Get-Content $planPath -Raw | ConvertFrom-Json
+          $deletions = @($plan.changes | Where-Object changeType -eq 'Delete')
+          if ($deletions.Count -gt 0) {
+            throw 'Application what-if contains resource deletions; review and deploy manually.'
+          }
+          $foundationPatterns = @(
+            '/providers/Microsoft\.App/managedEnvironments/',
+            '/providers/Microsoft\.Network/',
+            '/providers/Microsoft\.OperationalInsights/workspaces/',
+            '/providers/Microsoft\.ContainerRegistry/registries/[^/]+$',
+            '/providers/Microsoft\.DocumentDB/databaseAccounts/[^/]+$'
+          )
+          $foundationChanges = @(
+            $plan.changes | Where-Object {
+              $resourceId = $_.resourceId
+              $foundationPatterns.Where({ $resourceId -match $_ }).Count -gt 0
+            }
+          )
+          if ($foundationChanges.Count -gt 0) {
+            throw 'Application what-if unexpectedly contains a foundation resource change.'
+          }
+
+          $plan.changes |
+            Sort-Object resourceId |
+            ForEach-Object { Write-Host "[$($_.changeType)] $($_.resourceId)" }
+          "### Azure application preview`n`nImage: ``$env:CONTAINER_IMAGE```n`n$($plan.changes.Count) app-layer changes; no foundation changes or deletions." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Deploy application
+        if: inputs.operation == 'deploy'
+        shell: pwsh
+        run: |
+          $bootstrapName = "tco-app-bootstrap-$env:GITHUB_RUN_ID"
+          az deployment group create `
+            --name $bootstrapName `
+            --resource-group $env:AZURE_RESOURCE_GROUP `
+            --template-file infra/main.bicep `
+            --parameters infra/parameters/dev.bicepparam 'configureAuthentication=false' `
+            --only-show-errors `
+            --output none
+
+          $principalId = az deployment group show `
+            --name $bootstrapName `
+            --resource-group $env:AZURE_RESOURCE_GROUP `
+            --query properties.outputs.containerAppPrincipalId.value `
+            --only-show-errors `
+            --output tsv
+          if ($principalId -notmatch '^[0-9a-fA-F-]{36}$') {
+            throw 'Bootstrap deployment did not return the system identity principal ID.'
+          }
+
+          $acrRoleId = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"
+          $keyVaultRoleId = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6"
+          $rolesReady = $false
+          for ($attempt = 1; $attempt -le 30; $attempt++) {
+            $acrAssignments = @(az role assignment list --scope $env:AZURE_CONTAINER_REGISTRY_ID --assignee-object-id $principalId --only-show-errors --output json | ConvertFrom-Json)
+            $vaultAssignments = @(az role assignment list --scope $env:ENTRA_CLIENT_SECRET_KEY_VAULT_ID --assignee-object-id $principalId --only-show-errors --output json | ConvertFrom-Json)
+            $cosmosOutput = @(& az cosmosdb sql role assignment list --account-name $env:AZURE_COSMOS_ACCOUNT_NAME --resource-group $env:AZURE_RESOURCE_GROUP --only-show-errors --output json 2>$null)
+            $cosmosAssignments = if ($LASTEXITCODE -eq 0) { @(($cosmosOutput -join [Environment]::NewLine) | ConvertFrom-Json) } else { @() }
+            $acrReady = $null -ne ($acrAssignments | Where-Object roleDefinitionId -eq $acrRoleId | Select-Object -First 1)
+            $vaultReady = $null -ne ($vaultAssignments | Where-Object roleDefinitionId -eq $keyVaultRoleId | Select-Object -First 1)
+            $cosmosReady = $null -ne ($cosmosAssignments | Where-Object {
+              $_.principalId -eq $principalId -and
+              $_.roleDefinitionId -match '/00000000-0000-0000-0000-000000000002$' -and
+              $_.scope -match '/dbs/tco$'
+            } | Select-Object -First 1)
+            if ($acrReady -and $vaultReady -and $cosmosReady) {
+              $rolesReady = $true
+              break
+            }
+            if ($attempt -lt 30) {
+              Start-Sleep -Seconds 10
+            }
+          }
+          if (-not $rolesReady) {
+            throw 'Runtime managed-identity assignments did not become visible within five minutes.'
+          }
+
+          az deployment group create `
+            --name "tco-application-$env:GITHUB_RUN_ID" `
+            --resource-group $env:AZURE_RESOURCE_GROUP `
+            --template-file infra/main.bicep `
+            --parameters infra/parameters/dev.bicepparam `
+            --only-show-errors `
+            --output none
+
+      - name: Verify deployed application
+        id: verify
+        if: inputs.operation == 'deploy'
+        shell: pwsh
+        run: |
+          $deploymentName = "tco-application-$env:GITHUB_RUN_ID"
+          $outputs = az deployment group show `
+            --name $deploymentName `
+            --resource-group $env:AZURE_RESOURCE_GROUP `
+            --query properties.outputs `
+            --only-show-errors `
+            --output json | ConvertFrom-Json
+          $appId = [string]$outputs.containerAppId.value
+          $fqdn = [string]$outputs.containerAppFqdn.value
+          $app = az resource show --ids $appId --api-version 2024-03-01 --only-show-errors --output json | ConvertFrom-Json
+          if ($app.identity.type -ne 'SystemAssigned' -or $app.identity.principalId -ne $outputs.containerAppPrincipalId.value) {
+            throw 'The deployed Container App does not have the expected system-assigned identity.'
+          }
+          if ($app.properties.environmentId -ne $env:AZURE_CONTAINER_APPS_ENVIRONMENT_ID) {
+            throw 'The deployed Container App does not use the foundation managed environment.'
+          }
+          if ($app.properties.template.containers[0].image -ne $env:CONTAINER_IMAGE) {
+            throw 'The deployed Container App does not use the reviewed immutable image digest.'
+          }
+          $auth = az resource show --ids "$appId/authConfigs/current" --api-version 2024-03-01 --only-show-errors --output json | ConvertFrom-Json
+          if ($auth.properties.platform.enabled -ne $true -or $auth.properties.globalValidation.unauthenticatedClientAction -ne 'AllowAnonymous') {
+            throw 'Container Apps built-in authentication is not enabled in guest-compatible mode.'
+          }
+          if ($auth.properties.identityProviders.azureActiveDirectory.registration.clientId -ne $env:ENTRA_CLIENT_ID -or $auth.properties.login.tokenStore.enabled -ne $false) {
+            throw 'Container Apps Entra authentication does not match the reviewed registration or token-store policy.'
+          }
+
+          $baseUri = "https://$fqdn"
+          $healthy = $false
+          for ($attempt = 1; $attempt -le 60; $attempt++) {
+            try {
+              $health = Invoke-RestMethod -Uri "$baseUri/healthz" -Method Get -TimeoutSec 10
+              if ($health.status -eq 'ok') {
+                $healthy = $true
+                break
+              }
+            } catch {
+            }
+            if ($attempt -lt 60) {
+              Start-Sleep -Seconds 5
+            }
+          }
+          if (-not $healthy) {
+            throw 'The deployed application did not become healthy within five minutes.'
+          }
+
+          $ready = $false
+          for ($attempt = 1; $attempt -le 60; $attempt++) {
+            try {
+              $readiness = Invoke-RestMethod -Uri "$baseUri/readyz" -Method Get -TimeoutSec 10
+              if ($readiness.status -eq 'ready' -and $readiness.persistence -eq 'cosmos_ready') {
+                $ready = $true
+                break
+              }
+            } catch {
+            }
+            if ($attempt -lt 60) {
+              Start-Sleep -Seconds 10
+            }
+          }
+          if (-not $ready) {
+            throw 'The deployed application did not become ready with Cosmos persistence within ten minutes.'
+          }
+
+          $version = Invoke-RestMethod -Uri "$baseUri/version" -Method Get -TimeoutSec 10
+          $expectedVersion = (Get-Content VERSION -Raw).Trim()
+          if ($version.version -ne $expectedVersion) {
+            throw 'The deployed application version does not match the reviewed commit.'
+          }
+
+          "url=$baseUri" >> $env:GITHUB_OUTPUT
+          "### Azure application deployed`n`n$baseUri`n`nImage digest: ``$env:IMAGE_DIGEST```n`nHealth, Cosmos readiness, Entra configuration, identity, and version checks passed." >> $env:GITHUB_STEP_SUMMARY

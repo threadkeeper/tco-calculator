@@ -39,23 +39,48 @@ jobs:
         shell: pwsh
         run: |
           $manifest = Get-Content web/package.json -Raw | ConvertFrom-Json
-          if ($manifest.packageManager -ne 'pnpm@11.20.0') { throw 'Unexpected package manager version.' }
+          if ($manifest.packageManager -ne 'npm@11.17.0') { throw 'Unexpected package manager version.' }
           $versions = @($manifest.dependencies.psobject.Properties.Value) + @($manifest.devDependencies.psobject.Properties.Value)
           if ($versions.Where({ $_ -match '[~^*]|latest|next' }).Count -ne 0) { throw 'Frontend dependencies must use exact stable versions.' }
-      - name: Compile Bicep
+          if (-not (Test-Path web/package-lock.json)) { throw 'The reviewed npm lockfile is required.' }
+      - name: Compile foundation Bicep
+        run: az bicep build --file infra/foundation.bicep --stdout > /dev/null
+      - name: Compile application Bicep
         run: az bicep build --file infra/main.bicep --stdout > /dev/null
 
-  frontend-deferred:
-    name: Frontend build handoff
+  frontend:
+    name: Frontend quality
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Require reviewed lockfile before enabling frontend build
-        shell: pwsh
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - name: Install pinned npm
+        run: npm install --global npm@11.17.0 --ignore-scripts --registry=https://packagefeedproxy.microsoft.io/npm/
+      - name: Verify frontend toolchain
+        shell: bash
         run: |
-          if (Test-Path web/pnpm-lock.yaml) {
-            Write-Output 'Reviewed frontend lockfile is present; enable executable frontend gates in pass 2.'
-          } else {
-            Write-Output 'Frontend restore is deferred to docs/NON-IT-BUILD-HANDOFF.md.'
-          }
+          test "$(node --version)" = "v24.19.0"
+          test "$(npm --version)" = "11.17.0"
+      - name: Verify reviewed dependency graph
+        run: npm run lockfile:check --prefix web
+      - name: Audit frontend dependencies
+        run: npm audit --prefix web --audit-level=high --registry=https://packagefeedproxy.microsoft.io/npm/
+      - name: Restore frontend dependencies
+        run: npm ci --prefix web --registry=https://packagefeedproxy.microsoft.io/npm/
+      - name: Verify generated API contract
+        run: |
+          npm run api:generate --prefix web
+          git diff --exit-code -- web/src/lib/api/generated.ts
+      - name: Check frontend
+        run: npm run check --prefix web
+      - name: Lint frontend
+        run: npm run lint --prefix web
+      - name: Test frontend
+        run: npm run test --prefix web
+      - name: Build frontend
+        run: npm run build --prefix web

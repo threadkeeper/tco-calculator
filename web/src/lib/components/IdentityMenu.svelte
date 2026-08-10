@@ -14,7 +14,12 @@
 <div class="identity-actions">
   {#if mode === 'authenticated'}
     <span class="identity-state">{displayName ?? 'Signed in'}</span>
-    <a class="button secondary" href="/.auth/logout?post_logout_redirect_uri=/">
+    <a
+      class="button secondary"
+      href="/.auth/logout?post_logout_redirect_uri=/"
+      rel="external"
+      data-sveltekit-reload
+    >
       <LogOut size={17} aria-hidden="true" />
       <span>Sign out</span>
     </a>
@@ -22,7 +27,12 @@
     <span class="identity-state">Checking session…</span>
   {:else}
     <span class="identity-state">{mode === 'offline' ? 'Offline draft' : text.guest}</span>
-    <a class="button secondary" href="/.auth/login/aad?post_login_redirect_uri=/">
+    <a
+      class="button secondary"
+      href="/.auth/login/aad?post_login_redirect_uri=/"
+      rel="external"
+      data-sveltekit-reload
+    >
       <LogIn size={17} aria-hidden="true" />
       <span>{text.signIn}</span>
     </a>
