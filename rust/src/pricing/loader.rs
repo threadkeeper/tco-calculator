@@ -1,8 +1,12 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
-use serde::Deserialize;
+use serde::{Deserialize, de::IgnoredAny};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
+use crate::calculation::target_selector::CapabilityCatalog;
 use crate::pricing::{
     aws_ebs::{
         EbsMeterMapPayload, EbsNormalization, EbsNormalizationContext, EbsNormalizationError,
@@ -16,14 +20,20 @@ use crate::pricing::{
         RdsLeafPayload, RdsNormalization, RdsNormalizationContext, RdsNormalizationError,
         normalize_rds_leaves,
     },
+    azure_sql_mi::{
+        AzureMiConfiguration, AzureRetailPagePayload, AzureSqlMiNormalization,
+        AzureSqlMiNormalizationContext, AzureSqlMiNormalizationError, normalize_azure_sql_mi,
+    },
     http::{PricingHttpClient, PricingSource},
     live::{
-        AwsRegionScope, aws_region_index_url, aws_region_offer_url, aws_region_scope,
-        ebs_meter_map_url, ec2_leaf_url, ec2_metadata_url, ec2_selector_url,
+        AZURE_RETAIL_MAX_PAGES, AwsRegionScope, aws_region_index_url, aws_region_offer_url,
+        aws_region_scope, azure_calculator_url, azure_region_scope, azure_retail_continuation_url,
+        azure_retail_url, ebs_meter_map_url, ec2_leaf_url, ec2_metadata_url, ec2_selector_url,
     },
     provider::ProviderError,
 };
 
+const AZURE_RETAIL_PAGE_SIZE: usize = 1_000;
 const EC2_SOFTWARE_BRANCHES: [&str; 3] = ["NA", "SQL Std", "SQL Ent"];
 
 #[derive(Deserialize)]
@@ -108,6 +118,18 @@ struct AwsRegionIndexEntry {
     region_code: String,
     #[serde(rename = "currentVersionUrl")]
     current_version_url: String,
+}
+
+#[derive(Deserialize)]
+struct AzureRetailPageEnvelope {
+    #[serde(rename = "BillingCurrency")]
+    billing_currency: String,
+    #[serde(rename = "Items")]
+    items: Vec<IgnoredAny>,
+    #[serde(rename = "NextPageLink")]
+    next_page_link: serde_json::Value,
+    #[serde(rename = "Count")]
+    count: usize,
 }
 
 #[derive(Clone)]
@@ -268,6 +290,98 @@ impl LivePricingLoader {
             return Err(ProviderError::NotFound);
         }
         Ok(normalized)
+    }
+
+    pub async fn load_azure_sql_mi(
+        &self,
+        target_region: &str,
+        capabilities: &CapabilityCatalog,
+    ) -> Result<AzureSqlMiNormalization, ProviderError> {
+        let scope = azure_region_scope(target_region)?;
+        let configurations = capabilities
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.azure_region == scope.arm_name)
+            .map(|candidate| AzureMiConfiguration {
+                configuration_key: &candidate.configuration_key,
+                service_tier: candidate.service_tier,
+                hardware_family: &candidate.hardware_family,
+                vcores: candidate.vcores,
+                zone_redundant: candidate.zone_redundant,
+            })
+            .collect::<Vec<_>>();
+        if configurations.is_empty() {
+            return Err(ProviderError::NotFound);
+        }
+
+        let calculator_url = azure_calculator_url()?;
+        let retail_url = azure_retail_url(scope, "USD")?;
+        let (calculator, first_retail_page) = tokio::try_join!(
+            self.source.fetch(&calculator_url),
+            self.source.fetch(&retail_url),
+        )?;
+
+        let mut next_url = project_azure_retail_page(&first_retail_page.body, scope, "USD")?;
+        let mut seen_urls = BTreeSet::from([retail_url.to_string()]);
+        let mut retail_pages = vec![first_retail_page];
+        while let Some(url) = next_url {
+            if retail_pages.len() >= AZURE_RETAIL_MAX_PAGES || !seen_urls.insert(url.to_string()) {
+                return Err(ProviderError::SchemaChanged);
+            }
+            let page = self.source.fetch(&url).await?;
+            next_url = project_azure_retail_page(&page.body, scope, "USD")?;
+            retail_pages.push(page);
+        }
+
+        let retail_payloads = retail_pages
+            .iter()
+            .map(|page| AzureRetailPagePayload {
+                source_url: &page.source_url,
+                body: &page.body,
+            })
+            .collect::<Vec<_>>();
+        let normalized = normalize_azure_sql_mi(
+            AzureSqlMiNormalizationContext {
+                target_region: scope.arm_name,
+                calculator_region_slug: scope.calculator_slug,
+                currency: "USD",
+                calculator_source_url: &calculator.source_url,
+                calculator_source_version: calculator.source_version.as_deref(),
+                effective_at: calculator.effective_at.as_deref(),
+            },
+            &configurations,
+            &calculator.body,
+            &retail_payloads,
+        )
+        .map_err(map_azure_sql_mi_error)?;
+        if normalized.records.is_empty() {
+            return Err(ProviderError::NotFound);
+        }
+        Ok(normalized)
+    }
+}
+
+fn project_azure_retail_page(
+    body: &[u8],
+    scope: crate::pricing::live::AzureRegionScope,
+    currency: &str,
+) -> Result<Option<reqwest::Url>, ProviderError> {
+    let page: AzureRetailPageEnvelope =
+        serde_json::from_slice(body).map_err(|_| ProviderError::SchemaChanged)?;
+    if page.billing_currency != currency
+        || page.count != page.items.len()
+        || page.count > AZURE_RETAIL_PAGE_SIZE
+    {
+        return Err(ProviderError::SchemaChanged);
+    }
+    match page.next_page_link {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(next_page_link) if page.count > 0 => {
+            azure_retail_continuation_url(scope, currency, &next_page_link)
+                .map(Some)
+                .map_err(|_| ProviderError::SchemaChanged)
+        }
+        _ => Err(ProviderError::SchemaChanged),
     }
 }
 
@@ -430,6 +544,21 @@ fn map_rds_error(error: RdsNormalizationError) -> ProviderError {
         | RdsNormalizationError::UnsupportedUnit
         | RdsNormalizationError::InvalidCommercialTerm
         | RdsNormalizationError::ConflictingComponent => ProviderError::SchemaChanged,
+    }
+}
+
+fn map_azure_sql_mi_error(error: AzureSqlMiNormalizationError) -> ProviderError {
+    match error {
+        AzureSqlMiNormalizationError::InvalidScope => ProviderError::Unsupported,
+        AzureSqlMiNormalizationError::MissingConfiguration
+        | AzureSqlMiNormalizationError::MissingRegionPrice => ProviderError::NotFound,
+        AzureSqlMiNormalizationError::MalformedJson
+        | AzureSqlMiNormalizationError::DuplicateConfiguration
+        | AzureSqlMiNormalizationError::MissingPurchaseOption
+        | AzureSqlMiNormalizationError::InvalidReference
+        | AzureSqlMiNormalizationError::MissingOffer
+        | AzureSqlMiNormalizationError::InvalidValue
+        | AzureSqlMiNormalizationError::ConflictingRetailRate => ProviderError::SchemaChanged,
     }
 }
 
@@ -603,6 +732,132 @@ mod tests {
         assert_eq!(
             record.provenance.source_version.as_deref(),
             Some("20260806022930")
+        );
+    }
+
+    #[tokio::test]
+    async fn loads_paginated_azure_sql_mi_prices_without_network() {
+        let scope = azure_region_scope("swedencentral").expect("Azure scope");
+        let calculator_url = azure_calculator_url().expect("calculator URL");
+        let retail_url = azure_retail_url(scope, "USD").expect("Retail Prices URL");
+        let next_page_link = "https://prices.azure.com:443/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27SQL%20Managed%20Instance%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=1000";
+        let next_url = azure_retail_continuation_url(scope, "USD", next_page_link)
+            .expect("Retail Prices continuation URL");
+        let mut payloads = BTreeMap::new();
+        insert_payload(
+            &mut payloads,
+            calculator_url.clone(),
+            azure_calculator_payload(),
+        );
+        let calculator_payload = payloads
+            .get_mut(calculator_url.as_str())
+            .expect("calculator payload");
+        calculator_payload.source_version = Some("calculator-etag".to_owned());
+        calculator_payload.effective_at = Some("Sun, 10 Aug 2026 11:35:09 GMT".to_owned());
+        insert_payload(
+            &mut payloads,
+            retail_url,
+            azure_retail_page(vec![azure_storage_item()], Some(next_page_link)),
+        );
+        insert_payload(
+            &mut payloads,
+            next_url,
+            azure_retail_page(vec![azure_memory_item()], None),
+        );
+        let loader = LivePricingLoader::with_source(Arc::new(RecordedSource { payloads }));
+
+        let normalized = loader
+            .load_azure_sql_mi("swedencentral", &azure_capabilities())
+            .await
+            .expect("load Azure SQL MI prices");
+
+        assert_eq!(normalized.records.len(), 8);
+        assert_eq!(normalized.warnings.len(), 1);
+        let record = &normalized.records[0];
+        assert_eq!(record.rate.compute_hourly.to_string(), "5.632");
+        assert_eq!(record.rate.storage_monthly_per_gb.to_string(), "0.13685");
+        assert_eq!(
+            record.rate.additional_memory_per_gb_hourly.to_string(),
+            "0.011663"
+        );
+        assert_eq!(
+            record.provenance.source_version.as_deref(),
+            Some("calculator-etag")
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_an_azure_retail_pagination_cycle() {
+        let scope = azure_region_scope("swedencentral").expect("Azure scope");
+        let calculator_url = azure_calculator_url().expect("calculator URL");
+        let retail_url = azure_retail_url(scope, "USD").expect("Retail Prices URL");
+        let next_page_link = "https://prices.azure.com:443/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27SQL%20Managed%20Instance%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=1000";
+        let next_url = azure_retail_continuation_url(scope, "USD", next_page_link)
+            .expect("Retail Prices continuation URL");
+        let mut payloads = BTreeMap::new();
+        insert_payload(&mut payloads, calculator_url, azure_calculator_payload());
+        insert_payload(
+            &mut payloads,
+            retail_url,
+            azure_retail_page(vec![azure_storage_item()], Some(next_page_link)),
+        );
+        insert_payload(
+            &mut payloads,
+            next_url,
+            azure_retail_page(vec![azure_memory_item()], Some(next_page_link)),
+        );
+        let loader = LivePricingLoader::with_source(Arc::new(RecordedSource { payloads }));
+
+        assert_eq!(
+            loader
+                .load_azure_sql_mi("swedencentral", &azure_capabilities())
+                .await
+                .expect_err("pagination cycle must fail"),
+            ProviderError::SchemaChanged
+        );
+    }
+
+    #[tokio::test]
+    async fn requires_a_reviewed_azure_configuration_before_fetching() {
+        let loader = LivePricingLoader::with_source(Arc::new(RecordedSource {
+            payloads: BTreeMap::new(),
+        }));
+        let mut capabilities = azure_capabilities();
+        capabilities.candidates[0].azure_region = "eastus".to_owned();
+
+        assert_eq!(
+            loader
+                .load_azure_sql_mi("swedencentral", &capabilities)
+                .await
+                .expect_err("unreviewed target must fail"),
+            ProviderError::NotFound
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_azure_retail_page_metadata() {
+        let scope = azure_region_scope("swedencentral").expect("Azure scope");
+        let malformed_count = serde_json::to_vec(&serde_json::json!({
+            "BillingCurrency": "USD",
+            "Items": [],
+            "NextPageLink": null,
+            "Count": 1
+        }))
+        .expect("serialize malformed count page");
+        assert_eq!(
+            project_azure_retail_page(&malformed_count, scope, "USD"),
+            Err(ProviderError::SchemaChanged)
+        );
+
+        let scope_drift = azure_retail_page(
+            vec![azure_storage_item()],
+            Some(
+                "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27SQL%20Managed%20Instance%27%20and%20armRegionName%20eq%20%27eastus%27&$skip=1000",
+            ),
+        );
+        assert_eq!(
+            project_azure_retail_page(&scope_drift, scope, "USD"),
+            Err(ProviderError::SchemaChanged)
         );
     }
 
@@ -859,6 +1114,105 @@ mod tests {
                 },
                 "termAttributes": {}
             }
+        })
+    }
+
+    fn azure_capabilities() -> CapabilityCatalog {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": "1.0.0",
+            "candidates": [{
+                "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-32",
+                "azure_region": "swedencentral",
+                "service_tier": "next_generation_general_purpose",
+                "hardware_family": "Premium Series",
+                "vcores": 32,
+                "zone_redundant": false,
+                "included_memory_gb": "224",
+                "supported_memory_gb": ["224", "256"],
+                "storage_architecture": "Remote LRS",
+                "maximum_storage_gb": "16384",
+                "source_url": "https://learn.microsoft.com/azure/azure-sql/managed-instance/resource-limits",
+                "reviewed_date": "2026-07-31"
+            }]
+        }))
+        .expect("deserialize Azure capability fixture")
+    }
+
+    fn azure_calculator_payload() -> Vec<u8> {
+        let references = serde_json::json!({
+            "payg": ["compute--rate", "software--rate"],
+            "ahb": "compute--rate",
+            "one-year": ["compute--rate", "software--rate"],
+            "ahbone-year": "compute--rate",
+            "three-year": ["compute--rate", "software--rate"],
+            "ahbthree-year": "compute--rate",
+            "sv-one-year": ["compute--rate", "software--rate"],
+            "ahbsv-one-year": "compute--rate"
+        });
+        serde_json::to_vec(&serde_json::json!({
+            "skus": {
+                "managed-vcore-next-gen-general-purpose-premium-series-32": references
+            },
+            "offers": {
+                "compute": {
+                    "offerType": "compute",
+                    "prices": {
+                        "rate": { "sweden-central": { "value": "5.632" } }
+                    }
+                },
+                "software": {
+                    "offerType": "software",
+                    "prices": {
+                        "rate": { "sweden-central": { "value": "3.198912" } }
+                    }
+                }
+            }
+        }))
+        .expect("serialize Azure calculator payload")
+    }
+
+    fn azure_retail_page(items: Vec<serde_json::Value>, next_page_link: Option<&str>) -> Vec<u8> {
+        let count = items.len();
+        serde_json::to_vec(&serde_json::json!({
+            "BillingCurrency": "USD",
+            "CustomerEntityId": "Default",
+            "CustomerEntityType": "Retail",
+            "Items": items,
+            "NextPageLink": next_page_link,
+            "Count": count
+        }))
+        .expect("serialize Azure Retail Prices page")
+    }
+
+    fn azure_storage_item() -> serde_json::Value {
+        serde_json::json!({
+            "serviceName": "SQL Managed Instance",
+            "armRegionName": "swedencentral",
+            "currencyCode": "USD",
+            "productName": "SQL Managed Instance General Purpose Storage",
+            "skuName": "Data Stored",
+            "meterName": "Data Stored",
+            "unitOfMeasure": "1 GB/Month",
+            "type": "Consumption",
+            "retailPrice": "0.13685",
+            "effectiveStartDate": "2026-01-01T00:00:00Z",
+            "meterId": "storage-meter"
+        })
+    }
+
+    fn azure_memory_item() -> serde_json::Value {
+        serde_json::json!({
+            "serviceName": "SQL Managed Instance",
+            "armRegionName": "swedencentral",
+            "currencyCode": "USD",
+            "productName": "SQL Managed Instance General Purpose Compute Premium Series",
+            "skuName": "vCore",
+            "meterName": "Additional Memory",
+            "unitOfMeasure": "1 GB/Hour",
+            "type": "Consumption",
+            "retailPrice": "0.011663",
+            "effectiveStartDate": "2026-01-01T00:00:00Z",
+            "meterId": "memory-meter"
         })
     }
 

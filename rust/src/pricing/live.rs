@@ -12,6 +12,9 @@ const AWS_PRICING_BASE: &str = "https://pricing.us-east-1.amazonaws.com/";
 const AZURE_RETAIL_BASE: &str = "https://prices.azure.com/api/retail/prices";
 const AZURE_CALCULATOR_URL: &str =
     "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca";
+const AZURE_RETAIL_PAGE_SIZE: u64 = 1_000;
+pub(crate) const AZURE_RETAIL_MAX_PAGES: usize = 32;
+const AZURE_RETAIL_MAX_SKIP: u64 = (AZURE_RETAIL_MAX_PAGES as u64 - 1) * AZURE_RETAIL_PAGE_SIZE;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AwsRegionScope {
@@ -151,18 +154,69 @@ pub fn azure_retail_url(scope: AzureRegionScope, currency: &str) -> Result<Url, 
         return Err(ProviderError::Unsupported);
     }
     let mut url = Url::parse(AZURE_RETAIL_BASE).map_err(|_| ProviderError::Unsupported)?;
-    let filter = format!(
-        "serviceName eq 'SQL Managed Instance' and armRegionName eq '{}'",
-        scope.arm_name
-    );
+    let filter = azure_retail_filter(scope);
     url.query_pairs_mut()
         .append_pair("currencyCode", currency)
         .append_pair("$filter", &filter);
     Ok(url)
 }
 
+pub fn azure_retail_continuation_url(
+    scope: AzureRegionScope,
+    currency: &str,
+    source_url: &str,
+) -> Result<Url, ProviderError> {
+    if currency != "USD" {
+        return Err(ProviderError::Unsupported);
+    }
+    let url = Url::parse(source_url).map_err(|_| ProviderError::Unsupported)?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("prices.azure.com")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some_and(|port| port != 443)
+        || url.path() != "/api/retail/prices"
+        || url.fragment().is_some()
+    {
+        return Err(ProviderError::Unsupported);
+    }
+
+    let expected_filter = azure_retail_filter(scope);
+    let mut currency_count = 0_usize;
+    let mut filter_count = 0_usize;
+    let mut skip_count = 0_usize;
+    for (name, value) in url.query_pairs() {
+        match name.as_ref() {
+            "currencyCode" if value == currency => currency_count += 1,
+            "$filter" if value == expected_filter => filter_count += 1,
+            "$skip"
+                if !value.is_empty()
+                    && value.chars().all(|character| character.is_ascii_digit())
+                    && value.parse::<u64>().is_ok_and(|skip| {
+                        (AZURE_RETAIL_PAGE_SIZE..=AZURE_RETAIL_MAX_SKIP).contains(&skip)
+                            && skip % AZURE_RETAIL_PAGE_SIZE == 0
+                    }) =>
+            {
+                skip_count += 1;
+            }
+            _ => return Err(ProviderError::Unsupported),
+        }
+    }
+    if (currency_count, filter_count, skip_count) != (1, 1, 1) {
+        return Err(ProviderError::Unsupported);
+    }
+    Ok(url)
+}
+
 pub fn azure_calculator_url() -> Result<Url, ProviderError> {
     Url::parse(AZURE_CALCULATOR_URL).map_err(|_| ProviderError::Unsupported)
+}
+
+fn azure_retail_filter(scope: AzureRegionScope) -> String {
+    format!(
+        "serviceName eq 'SQL Managed Instance' and armRegionName eq '{}'",
+        scope.arm_name
+    )
 }
 
 fn provider_url(base: &str, segments: &[&str]) -> Result<Url, ProviderError> {
@@ -272,5 +326,32 @@ mod tests {
                     .to_owned()
             )
         );
+
+        let continuation = azure_retail_continuation_url(
+            azure,
+            "USD",
+            "https://prices.azure.com:443/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27SQL%20Managed%20Instance%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=1000",
+        )
+        .expect("Azure Retail continuation URL");
+        assert_eq!(continuation.host_str(), Some("prices.azure.com"));
+        assert_eq!(
+            continuation
+                .query_pairs()
+                .find(|(name, _)| name == "$skip")
+                .map(|(_, value)| value.into_owned()),
+            Some("1000".to_owned())
+        );
+        for invalid in [
+            "https://example.invalid/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27SQL%20Managed%20Instance%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=1000",
+            "https://prices.azure.com:444/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27SQL%20Managed%20Instance%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=1000",
+            "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27SQL%20Managed%20Instance%27%20and%20armRegionName%20eq%20%27eastus%27&$skip=1000",
+            "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27SQL%20Managed%20Instance%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=0",
+            "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27SQL%20Managed%20Instance%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=32000",
+        ] {
+            assert_eq!(
+                azure_retail_continuation_url(azure, "USD", invalid),
+                Err(ProviderError::Unsupported)
+            );
+        }
     }
 }
