@@ -330,6 +330,16 @@ jobs:
             throw 'Application what-if unexpectedly contains a foundation resource change.'
           }
 
+          $acrRoleAssignmentPattern = "^$([regex]::Escape($env:AZURE_CONTAINER_REGISTRY_ID))/providers/Microsoft\.Authorization/roleAssignments/(?<name>[0-9a-fA-F-]{36})$"
+          $acrRoleAssignments = @(
+            $plan.changes | Where-Object resourceId -Match $acrRoleAssignmentPattern
+          )
+          if ($acrRoleAssignments.Count -ne 1) {
+            throw 'Application what-if must contain exactly one ACR role assignment.'
+          }
+          $acrRoleAssignmentName = [regex]::Match($acrRoleAssignments[0].resourceId, $acrRoleAssignmentPattern).Groups['name'].Value
+          "ACR_PULL_ROLE_ASSIGNMENT_NAME=$acrRoleAssignmentName" >> $env:GITHUB_ENV
+
           $plan.changes |
             Sort-Object resourceId |
             ForEach-Object { Write-Host "[$($_.changeType)] $($_.resourceId)" }
@@ -340,25 +350,92 @@ jobs:
         shell: pwsh
         run: |
           $bootstrapName = "tco-app-bootstrap-$env:GITHUB_RUN_ID"
+          $containerAppName = "$env:AZURE_NAME_PREFIX-app"
+          $acrRoleId = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"
           az deployment group create `
             --name $bootstrapName `
             --resource-group $env:AZURE_RESOURCE_GROUP `
             --template-file infra/main.bicep `
             --parameters infra/parameters/dev.bicepparam 'configureAuthentication=false' `
+            --no-wait `
             --only-show-errors `
             --output none
-
-          $principalId = az deployment group show `
-            --name $bootstrapName `
-            --resource-group $env:AZURE_RESOURCE_GROUP `
-            --query properties.outputs.containerAppPrincipalId.value `
-            --only-show-errors `
-            --output tsv
-          if ($principalId -notmatch '^[0-9a-fA-F-]{36}$') {
-            throw 'Bootstrap deployment did not return the system identity principal ID.'
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not start the bootstrap application deployment.'
           }
 
-          $acrRoleId = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"
+          $principalId = ''
+          for ($attempt = 1; $attempt -le 60; $attempt++) {
+            $principalOutput = @(& az containerapp show `
+              --name $containerAppName `
+              --resource-group $env:AZURE_RESOURCE_GROUP `
+              --query identity.principalId `
+              --only-show-errors `
+              --output tsv 2>$null)
+            if ($LASTEXITCODE -eq 0) {
+              $principalId = [string]($principalOutput -join '')
+            }
+            if ($principalId -match '^[0-9a-fA-F-]{36}$') {
+              break
+            }
+            if ($attempt -lt 60) {
+              Start-Sleep -Seconds 5
+            }
+          }
+          if ($principalId -notmatch '^[0-9a-fA-F-]{36}$') {
+            throw 'Bootstrap deployment did not create a system identity within five minutes.'
+          }
+
+          if ($env:ACR_PULL_ROLE_ASSIGNMENT_NAME -notmatch '^[0-9a-fA-F-]{36}$') {
+            throw 'Preview did not resolve the deterministic ACR role-assignment name.'
+          }
+          $existingAcrAssignment = az role assignment list `
+            --scope $env:AZURE_CONTAINER_REGISTRY_ID `
+            --query "[?name=='$env:ACR_PULL_ROLE_ASSIGNMENT_NAME'] | [0]" `
+            --only-show-errors `
+            --output json | ConvertFrom-Json
+          if ($null -eq $existingAcrAssignment) {
+            az role assignment create `
+              --name $env:ACR_PULL_ROLE_ASSIGNMENT_NAME `
+              --assignee-object-id $principalId `
+              --assignee-principal-type ServicePrincipal `
+              --role $acrRoleId `
+              --scope $env:AZURE_CONTAINER_REGISTRY_ID `
+              --only-show-errors `
+              --output none
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Could not create the bootstrap AcrPull assignment.'
+            }
+          } elseif (
+            $existingAcrAssignment.principalId -ne $principalId -or
+            $existingAcrAssignment.roleDefinitionId -ne $acrRoleId -or
+            $existingAcrAssignment.scope -ne $env:AZURE_CONTAINER_REGISTRY_ID
+          ) {
+            throw 'The deterministic bootstrap AcrPull assignment has unexpected properties.'
+          }
+
+          $bootstrapSucceeded = $false
+          for ($attempt = 1; $attempt -le 180; $attempt++) {
+            $bootstrap = az deployment group show `
+              --name $bootstrapName `
+              --resource-group $env:AZURE_RESOURCE_GROUP `
+              --only-show-errors `
+              --output json | ConvertFrom-Json
+            if ($bootstrap.properties.provisioningState -eq 'Succeeded') {
+              $bootstrapSucceeded = $true
+              break
+            }
+            if ($bootstrap.properties.provisioningState -in @('Failed', 'Canceled')) {
+              throw "Bootstrap application deployment ended in state $($bootstrap.properties.provisioningState)."
+            }
+            if ($attempt -lt 180) {
+              Start-Sleep -Seconds 10
+            }
+          }
+          if (-not $bootstrapSucceeded) {
+            throw 'Bootstrap application deployment did not finish within thirty minutes.'
+          }
+
           $keyVaultRoleId = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6"
           $rolesReady = $false
           for ($attempt = 1; $attempt -le 30; $attempt++) {
