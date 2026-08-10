@@ -1,58 +1,87 @@
 # Azure SQL TCO
 
-**A simple way to compare the estimated yearly cost of running SQL Server today with running it on Azure SQL Managed Instance.**
+Azure SQL TCO is an operational calculator for comparing estimated annual AWS EC2, AWS RDS, or on-premises SQL Server costs with Azure SQL Managed Instance. Results are planning estimates, not quotes, licensing advice, or migration-readiness assessments.
 
-TCO means **total cost of ownership**: the wider cost of running something, not just its purchase price.
+## Status
 
-> **Project status:** The application specification is complete and ready to scaffold with GitHub Copilot agents. The working web application has not been built yet.
+Pass 1 establishes the executable Rust service boundary, OpenAPI contract, Svelte source structure, secure Azure development topology, and container layout. Pricing adapters, calculations, persistence, authentication, and resource workflows are intentionally explicit stubs until later passes.
 
-## What will it do?
+JavaScript dependency operations are blocked on the current Microsoft-managed workstation. The Svelte dependency restore and executable frontend checks must run on the approved non-managed build machine described in [docs/NON-IT-BUILD-HANDOFF.md](docs/NON-IT-BUILD-HANDOFF.md).
 
-Azure SQL TCO will help people build a clear, side-by-side cost estimate without having to understand a large spreadsheet.
+## Architecture
 
-It will support three kinds of projects:
+- One Rust process built with Axum and Tokio serves `/api/v1`, health endpoints, and static web assets.
+- Financial and target-selection behavior belongs only in the pure Rust calculation layer.
+- The Svelte 5 frontend is a static same-origin client and never owns rates, totals, formulas, explanations, owner IDs, or revisions.
+- Guest drafts remain in browser-local storage. Authenticated projects are owner-scoped by both Entra tenant ID and object ID.
+- Azure Cosmos DB stores projects and normalized pricing snapshots. Production access uses only the Container App system-assigned managed identity.
+- One OCI image runs as non-root UID `10001` in one Azure Container App.
 
-- **Amazon EC2:** SQL Server running on an AWS virtual machine.
-- **Amazon RDS:** SQL Server running on Amazon's managed database service.
-- **On-premises:** SQL Server running on hardware owned by the organization.
+## Repository Layout
 
-Each project covers one current environment and one chosen Azure location.
+- `app/catalogs/`: reviewed SQL MI capability catalogs.
+- `openapi/`: API contract used to generate frontend types.
+- `rust/`: backend, domain, pricing, calculation, and persistence code.
+- `web/`: SvelteKit static frontend source.
+- `infra/`: modular Bicep for the development environment.
+- `research/`: legacy workbook-generation tools and ignored frozen source data.
 
-## How will it work?
+## Prerequisites
 
-1. **Create a project** and choose EC2, RDS, or On-premises.
-2. **Enter the current setup,** such as computing power, memory, storage needs, licensing, discounts, and operating hours.
-3. **Run the estimate.** The application gathers public AWS and Azure prices where needed.
-4. **Review the comparison.** It shows the current estimated yearly cost, the Azure estimate, the difference, and the suggested Azure SQL Managed Instance size.
+- Stable Rust 1.97.1 with `rustfmt` and Clippy.
+- A C/C++ linker. On Windows, install the official Visual Studio Build Tools C++ workload; VS Code alone does not include `link.exe`.
+- Node.js 24 and pnpm 11.20.0 on an approved build machine for frontend work.
+- Azure CLI with Bicep for infrastructure validation.
+- Docker BuildKit for image validation.
 
-Every result will include a plain explanation of why an Azure option was selected. If no suitable option exists, the application will say `NO MAPPING` instead of showing misleading savings.
+Do not use `npm` or `npx` in this repository. Follow [.github/copilot-instructions.md](.github/copilot-instructions.md) for workstation and package-source restrictions.
 
-## What will the result show?
+## Local Backend
 
-- Estimated yearly cost of the current environment.
-- Estimated yearly Azure SQL Managed Instance cost.
-- Estimated saving or additional cost.
-- The suggested Azure setup and size.
-- The age and source of the prices used.
-- Warnings for stale prices, licensing assumptions, or workloads that do not fit.
+```powershell
+cargo run --locked --manifest-path rust/Cargo.toml
+```
 
-## Is it a quote?
+The service listens on `http://localhost:8080` by default:
 
-No. Results are **planning estimates**, not invoices, contractual quotes, licensing advice, tax advice, or guarantees of savings.
+- `GET /healthz`: cheap process liveness.
+- `GET /readyz`: dependency readiness.
+- `GET /version`: application, formula, and schema versions.
+- `GET /api/v1/session`: current guest or authenticated session summary.
 
-Actual prices and licensing rights depend on the organization's agreements and circumstances. Any special licensing benefits must be checked with an appropriate licensing specialist. The application estimates cost and size only; it does not prove that a database is ready to move.
+Optional local values belong in ignored `.env` files. Local mock identity is permitted only with `APP_ENV=local`; startup must fail if local-auth settings appear in another environment.
 
-## Privacy and access
+## Quality Gates
 
-- Guests will be able to calculate without signing in. Their draft stays in their own browser and is not saved to the service.
-- Signed-in users will be able to save private projects that only they can access.
-- Project information is treated as confidential business data.
-- Workload names and server identifiers must not be written to normal application logs.
+Backend:
 
-## Where are we now?
+```powershell
+cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
+cargo test --manifest-path rust/Cargo.toml --all-features
+```
 
-The product behavior, calculations, security approach, user experience, and Azure development environment have been designed and agreed.
+Frontend, on the approved non-managed build machine:
 
-The next step is to scaffold the application with GitHub Copilot agents, then build and test the calculation engine, web interface, live pricing connections, private project storage, and Azure deployment.
+```powershell
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web run lint
+pnpm --dir web run check
+pnpm --dir web run test
+pnpm --dir web run build
+```
 
-For the detailed blueprint, see [research/Azure Specification.md](research/Azure%20Specification.md). For the recorded product decisions, see [research/design clarificaitons.md](research/design%20clarificaitons.md).
+Infrastructure:
+
+```powershell
+az bicep build --file infra/main.bicep
+az deployment group what-if --resource-group <resource-group> --parameters infra/parameters/dev.bicepparam
+```
+
+No Azure deployment is performed by local validation.
+
+## Security and Privacy
+
+Project settings, workload names, infrastructure details, and commercial assumptions are confidential business data. The service must not log workload names, server identifiers, raw identity headers, credentials, or complete project payloads. Browser, API, provider, identity-header, file, and environment input is untrusted.
+
+See [THIRD-PARTY-DATA-EGRESS.md](THIRD-PARTY-DATA-EGRESS.md) for external data flows and [research/Azure Specification.md](research/Azure%20Specification.md) for the normative product and security requirements.

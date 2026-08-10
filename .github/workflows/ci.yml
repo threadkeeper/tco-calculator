@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - name: Check formatting
+        run: cargo +1.97.1 fmt --manifest-path rust/Cargo.toml --all -- --check
+      - name: Run Clippy
+        run: cargo +1.97.1 clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
+      - name: Run tests
+        run: cargo +1.97.1 test --locked --manifest-path rust/Cargo.toml --all-features
+
+  contracts-and-infrastructure:
+    name: Contracts and infrastructure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify pinned frontend manifest
+        shell: pwsh
+        run: |
+          $manifest = Get-Content web/package.json -Raw | ConvertFrom-Json
+          if ($manifest.packageManager -ne 'pnpm@11.20.0') { throw 'Unexpected package manager version.' }
+          $versions = @($manifest.dependencies.psobject.Properties.Value) + @($manifest.devDependencies.psobject.Properties.Value)
+          if ($versions.Where({ $_ -match '[~^*]|latest|next' }).Count -ne 0) { throw 'Frontend dependencies must use exact stable versions.' }
+      - name: Compile Bicep
+        run: az bicep build --file infra/main.bicep --stdout > /dev/null
+
+  frontend-deferred:
+    name: Frontend build handoff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Require reviewed lockfile before enabling frontend build
+        shell: pwsh
+        run: |
+          if (Test-Path web/pnpm-lock.yaml) {
+            Write-Output 'Reviewed frontend lockfile is present; enable executable frontend gates in pass 2.'
+          } else {
+            Write-Output 'Frontend restore is deferred to docs/NON-IT-BUILD-HANDOFF.md.'
+          }

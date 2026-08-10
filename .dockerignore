@@ -1,0 +1,13 @@
+.git
+.github
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+**/.svelte-kit
+**/build
+**/target
+**/coverage
+research
+test-results
+playwright-report

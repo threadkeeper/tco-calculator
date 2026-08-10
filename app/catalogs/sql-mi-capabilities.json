@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0-scaffold",
+  "status": "incomplete_scaffold",
+  "source_url": "https://learn.microsoft.com/azure/azure-sql/managed-instance/resource-limits",
+  "candidates": [
+    {
+      "configuration_key": "swedencentral-nggp-premium-32-scaffold",
+      "azure_region": "swedencentral",
+      "service_tier": "next_generation_general_purpose",
+      "hardware_family": "Premium Series",
+      "vcores": 32,
+      "zone_redundant": false,
+      "included_memory_gb": "224",
+      "supported_memory_gb": ["224", "256"],
+      "storage_architecture": "Remote LRS",
+      "maximum_storage_gb": null
+    }
+  ],
+  "warnings": [
+    "Pass 1 contains only the explicit workbook-parity anchor from the specification. Do not use this incomplete catalog for production sizing."
+  ]
+}

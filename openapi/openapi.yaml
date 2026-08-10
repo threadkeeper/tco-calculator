@@ -1,0 +1,766 @@
+openapi: 3.1.0
+info:
+  title: Azure SQL TCO API
+  version: 0.1.0
+  description: >-
+    Server-authoritative API for estimating AWS and on-premises SQL Server costs
+    against Azure SQL Managed Instance. Results are estimates, not quotes.
+servers:
+  - url: /api/v1
+tags:
+  - name: Session
+  - name: Catalogs
+  - name: Pricing
+  - name: Calculations
+  - name: Projects
+paths:
+  /session:
+    get:
+      operationId: getSession
+      tags: [Session]
+      responses:
+        '200':
+          description: Current guest or authenticated principal summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+  /catalog/aws/regions:
+    get:
+      operationId: listAwsRegions
+      tags: [Catalogs]
+      responses:
+        '200':
+          description: Supported AWS source regions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegionCatalog'
+  /catalog/aws/ec2/instances:
+    get:
+      operationId: listEc2Instances
+      tags: [Catalogs]
+      parameters:
+        - $ref: '#/components/parameters/AwsRegion'
+      responses:
+        '200':
+          $ref: '#/components/responses/ScaffoldCatalog'
+  /catalog/aws/rds/instances:
+    get:
+      operationId: listRdsInstances
+      tags: [Catalogs]
+      parameters:
+        - $ref: '#/components/parameters/AwsRegion'
+      responses:
+        '200':
+          $ref: '#/components/responses/ScaffoldCatalog'
+  /catalog/aws/rds/options:
+    get:
+      operationId: listRdsOptions
+      tags: [Catalogs]
+      parameters:
+        - $ref: '#/components/parameters/AwsRegion'
+        - name: instance_type
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: deployment
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [single_az, multi_az]
+      responses:
+        '200':
+          $ref: '#/components/responses/ScaffoldCatalog'
+  /catalog/aws/ebs/types:
+    get:
+      operationId: listEbsTypes
+      tags: [Catalogs]
+      parameters:
+        - $ref: '#/components/parameters/AwsRegion'
+      responses:
+        '200':
+          $ref: '#/components/responses/ScaffoldCatalog'
+  /catalog/azure/mi/purchase-options:
+    get:
+      operationId: listPurchaseOptions
+      tags: [Catalogs]
+      responses:
+        '200':
+          description: Supported Azure SQL MI purchase options.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseOptionCatalog'
+  /pricing/aws/resolve:
+    post:
+      operationId: resolveAwsPrices
+      tags: [Pricing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceResolutionRequest'
+      responses:
+        '200':
+          description: AWS snapshot status, including normal unavailable outcomes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceResolution'
+        default:
+          $ref: '#/components/responses/Problem'
+  /pricing/aws/refresh:
+    post:
+      operationId: refreshAwsPrices
+      tags: [Pricing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceResolutionRequest'
+      responses:
+        '200':
+          description: Forced AWS live-resolution outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceResolution'
+        default:
+          $ref: '#/components/responses/Problem'
+  /pricing/azure/resolve:
+    post:
+      operationId: resolveAzurePrices
+      tags: [Pricing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceResolutionRequest'
+      responses:
+        '200':
+          description: Azure snapshot status, including normal unavailable outcomes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceResolution'
+        default:
+          $ref: '#/components/responses/Problem'
+  /pricing/azure/refresh:
+    post:
+      operationId: refreshAzurePrices
+      tags: [Pricing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceResolutionRequest'
+      responses:
+        '200':
+          description: Forced Azure live-resolution outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceResolution'
+        default:
+          $ref: '#/components/responses/Problem'
+  /calculations:
+    post:
+      operationId: calculateProject
+      tags: [Calculations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalculationRequest'
+      responses:
+        '200':
+          description: Server-owned calculation revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalculationRevision'
+        default:
+          $ref: '#/components/responses/Problem'
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [Projects]
+      security:
+        - containerAppsAuth: []
+      responses:
+        '200':
+          description: Projects owned by the current principal.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProjectSummary'
+        default:
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: createProject
+      tags: [Projects]
+      security:
+        - containerAppsAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditableProject'
+      responses:
+        '201':
+          description: Created owner-scoped project.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        default:
+          $ref: '#/components/responses/Problem'
+  /projects/{project_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      operationId: getProject
+      tags: [Projects]
+      security:
+        - containerAppsAuth: []
+      responses:
+        '200':
+          description: Owner-scoped project.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        default:
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: updateProject
+      tags: [Projects]
+      security:
+        - containerAppsAuth: []
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditableProject'
+      responses:
+        '200':
+          description: Updated owner-scoped project.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        default:
+          $ref: '#/components/responses/Problem'
+    delete:
+      operationId: deleteProject
+      tags: [Projects]
+      security:
+        - containerAppsAuth: []
+      responses:
+        '204':
+          description: Project deleted immediately.
+        default:
+          $ref: '#/components/responses/Problem'
+components:
+  securitySchemes:
+    containerAppsAuth:
+      type: openIdConnect
+      openIdConnectUrl: https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration
+      description: Authentication is enforced by Azure Container Apps built-in authentication.
+  parameters:
+    AwsRegion:
+      name: region
+      in: query
+      required: true
+      schema:
+        type: string
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Problem:
+      description: RFC 9457 Problem Details response.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ScaffoldCatalog:
+      description: Catalog response. The pass-one implementation may return an empty scaffold list.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GenericCatalog'
+  schemas:
+    Decimal:
+      type: string
+      pattern: '^-?(0|[1-9][0-9]*)(\.[0-9]+)?$'
+      examples: ['8760', '0.10', '12345.67']
+    Session:
+      type: object
+      required: [mode, display_name]
+      properties:
+        mode:
+          type: string
+          enum: [guest, authenticated]
+        display_name:
+          type: [string, 'null']
+    Region:
+      type: object
+      required: [code, label]
+      properties:
+        code:
+          type: string
+        label:
+          type: string
+    RegionCatalog:
+      type: object
+      required: [status, currency, items]
+      properties:
+        status:
+          type: string
+        currency:
+          type: string
+          const: USD
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Region'
+    GenericCatalog:
+      type: object
+      required: [status, currency, items]
+      properties:
+        status:
+          type: string
+        currency:
+          type: string
+          const: USD
+        items:
+          type: array
+          items: {}
+    PurchaseOption:
+      type: object
+      required: [key, label, ahb]
+      properties:
+        key:
+          $ref: '#/components/schemas/PurchaseOptionKey'
+        label:
+          type: string
+        ahb:
+          type: boolean
+    PurchaseOptionCatalog:
+      type: object
+      required: [status, currency, items]
+      properties:
+        status:
+          type: string
+        currency:
+          type: string
+          const: USD
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PurchaseOption'
+    PurchaseOptionKey:
+      type: string
+      enum: [payg, ahb, one-year, ahbone-year, three-year, ahbthree-year, sv-one-year, ahbsv-one-year]
+    PriceResolutionRequest:
+      type: object
+      additionalProperties: false
+      required: [currency, azure_region, resources]
+      properties:
+        currency:
+          type: string
+          const: USD
+        aws_region:
+          type: [string, 'null']
+        azure_region:
+          type: string
+        resources:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Resource'
+    PriceResolution:
+      type: object
+      required: [provider, status, snapshot_id, warnings]
+      properties:
+        provider:
+          type: string
+          enum: [aws, azure]
+        status:
+          type: string
+          enum: [fresh, cached, stale, unavailable]
+        snapshot_id:
+          type: [string, 'null']
+        retrieved_at:
+          type: [string, 'null']
+          format: date-time
+        warnings:
+          type: array
+          items:
+            type: string
+    CalculationRequest:
+      allOf:
+        - $ref: '#/components/schemas/EditableProject'
+        - type: object
+          properties:
+            expected_formula_version:
+              type: [string, 'null']
+    CalculationRevision:
+      type: object
+      required: [formula_version, resource_results, portfolio_totals, warnings]
+      properties:
+        formula_version:
+          type: string
+        resource_results:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        portfolio_totals:
+          type: object
+          additionalProperties: true
+        warnings:
+          type: array
+          items:
+            type: string
+    EditableProject:
+      type: object
+      additionalProperties: false
+      required: [name, settings, resources, aws_price_snapshot_id, azure_price_snapshot_id]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: [string, 'null']
+          maxLength: 500
+        settings:
+          $ref: '#/components/schemas/ProjectSettings'
+        resources:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Resource'
+        aws_price_snapshot_id:
+          type: [string, 'null']
+        azure_price_snapshot_id:
+          type: [string, 'null']
+    ProjectSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - project_type
+        - aws_region
+        - azure_region
+        - currency
+        - source_compute_discount
+        - source_license_discount
+        - source_storage_discount
+        - azure_compute_discount
+        - azure_license_discount
+        - azure_storage_discount
+        - selected_parity_adjustment
+        - default_annual_hours
+        - default_mi_purchase_option
+      properties:
+        project_type:
+          type: string
+          enum: [ec2, rds, on_prem]
+        aws_region:
+          type: [string, 'null']
+        azure_region:
+          type: string
+        currency:
+          type: string
+          const: USD
+        source_compute_discount:
+          $ref: '#/components/schemas/Decimal'
+        source_license_discount:
+          $ref: '#/components/schemas/Decimal'
+        source_storage_discount:
+          $ref: '#/components/schemas/Decimal'
+        azure_compute_discount:
+          $ref: '#/components/schemas/Decimal'
+        azure_license_discount:
+          $ref: '#/components/schemas/Decimal'
+        azure_storage_discount:
+          $ref: '#/components/schemas/Decimal'
+        selected_parity_adjustment:
+          $ref: '#/components/schemas/Decimal'
+        default_annual_hours:
+          $ref: '#/components/schemas/Decimal'
+        default_mi_purchase_option:
+          $ref: '#/components/schemas/PurchaseOptionKey'
+        enterprise_license_sa_usd_per_two_core_pack:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+        standard_license_sa_usd_per_two_core_pack:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+        remaining_coverage_months:
+          type: [integer, 'null']
+          enum: [12, 24, 36, null]
+        electricity_rate_usd_per_kwh:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+    Resource:
+      oneOf:
+        - $ref: '#/components/schemas/Ec2Resource'
+        - $ref: '#/components/schemas/RdsResource'
+        - $ref: '#/components/schemas/OnPremResource'
+      discriminator:
+        propertyName: source_type
+    SharedResourceProperties:
+      type: object
+      required:
+        - id
+        - workload_name
+        - quantity
+        - sql_edition
+        - license_basis
+        - sql_data_gb_per_instance
+        - source_ram_gb_per_instance
+        - annual_hours_per_instance
+        - mi_purchase_option
+      properties:
+        id:
+          type: string
+          format: uuid
+        workload_name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        sql_edition:
+          type: string
+          enum: [standard, enterprise]
+        license_basis:
+          type: string
+          enum: [license_included, byol]
+        sql_data_gb_per_instance:
+          $ref: '#/components/schemas/Decimal'
+        source_ram_gb_per_instance:
+          $ref: '#/components/schemas/Decimal'
+        annual_hours_per_instance:
+          $ref: '#/components/schemas/Decimal'
+        mi_purchase_option:
+          $ref: '#/components/schemas/PurchaseOptionKey'
+    Ec2Resource:
+      allOf:
+        - $ref: '#/components/schemas/SharedResourceProperties'
+        - type: object
+          required: [source_type, instance_type, volumes]
+          properties:
+            source_type:
+              type: string
+              const: ec2
+            instance_type:
+              type: string
+            volumes:
+              type: array
+              minItems: 1
+              maxItems: 50
+              items:
+                $ref: '#/components/schemas/EbsVolume'
+    EbsVolume:
+      type: object
+      required: [id, label, aws_volume_id, volume_type, capacity_gb, provisioned_iops, throughput_mibps]
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          minLength: 1
+          maxLength: 80
+        aws_volume_id:
+          type: [string, 'null']
+          maxLength: 128
+        volume_type:
+          type: string
+          enum: [gp3, io2, ephemeral]
+        capacity_gb:
+          $ref: '#/components/schemas/Decimal'
+        provisioned_iops:
+          type: [integer, 'null']
+          minimum: 0
+        throughput_mibps:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+    RdsResource:
+      allOf:
+        - $ref: '#/components/schemas/SharedResourceProperties'
+        - type: object
+          required: [source_type, instance_type, deployment, commercial_term, storage_class, source_max_iops]
+          properties:
+            source_type:
+              type: string
+              const: rds
+            instance_type:
+              type: string
+            deployment:
+              type: string
+              enum: [single_az, multi_az]
+            commercial_term:
+              type: string
+            storage_class:
+              type: string
+            source_max_iops:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+    OnPremResource:
+      allOf:
+        - $ref: '#/components/schemas/SharedResourceProperties'
+        - type: object
+          required: [source_type, source_vcpu, licensable_cores, source_max_iops, hardware_capex_usd, depreciation_years]
+          properties:
+            source_type:
+              type: string
+              const: on_prem
+            source_vcpu:
+              type: integer
+              minimum: 1
+              maximum: 100000
+            licensable_cores:
+              type: integer
+              minimum: 1
+              maximum: 100000
+            source_max_iops:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+            hardware_capex_usd:
+              $ref: '#/components/schemas/Decimal'
+            depreciation_years:
+              $ref: '#/components/schemas/Decimal'
+            average_power_kw_override:
+              oneOf:
+                - $ref: '#/components/schemas/Decimal'
+                - type: 'null'
+    Project:
+      allOf:
+        - $ref: '#/components/schemas/EditableProject'
+        - type: object
+          required: [id, created_at, updated_at, formula_version, schema_version]
+          properties:
+            id:
+              type: string
+              format: uuid
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+            formula_version:
+              type: string
+            schema_version:
+              type: string
+            latest_calculation_revision:
+              oneOf:
+                - $ref: '#/components/schemas/CalculationRevision'
+                - type: 'null'
+    ProjectSummary:
+      type: object
+      required: [id, name, project_type, modified_at, source_region, azure_region, resource_count, source_annual_total, azure_annual_total]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        project_type:
+          type: string
+          enum: [ec2, rds, on_prem]
+        modified_at:
+          type: string
+          format: date-time
+        source_region:
+          type: [string, 'null']
+        azure_region:
+          type: string
+        resource_count:
+          type: integer
+        source_annual_total:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+        azure_annual_total:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+    Problem:
+      type: object
+      required: [type, title, status, detail, instance, request_id]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+        request_id:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            required: [pointer, code, message]
+            properties:
+              pointer:
+                type: string
+              code:
+                type: string
+              message:
+                type: string

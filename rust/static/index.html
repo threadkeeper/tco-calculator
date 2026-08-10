@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Azure SQL TCO</title>
+    <style>
+      :root { font-family: Aptos, "Segoe UI", sans-serif; color: #182428; background: #eef2f3; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; }
+      header { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px clamp(16px, 3vw, 44px); color: #f7fbfc; background: #17353d; border-bottom: 3px solid #007b91; }
+      .brand { font-weight: 700; }
+      .version { margin-left: 8px; color: #b9cbd0; font-size: 12px; font-weight: 400; }
+      .identity { color: #c9d7da; font-size: 14px; }
+      main { width: min(100% - 32px, 1500px); margin: 0 auto; padding: 28px 0; }
+      .title { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      h1 { margin: 0; font-size: 30px; letter-spacing: 0; }
+      button { min-height: 38px; padding: 8px 14px; color: white; background: #006f86; border: 1px solid #005366; border-radius: 5px; font: inherit; }
+      .notice { margin: 18px 0 14px; padding: 11px 14px; color: #593b0c; background: #fff7df; border: 1px solid #e5c66b; border-radius: 5px; }
+      .table { min-height: 280px; background: white; border: 1px solid #cad4d7; }
+      .head { display: grid; grid-template-columns: 2fr repeat(5, 1fr); gap: 12px; min-width: 760px; padding: 11px 14px; color: #43565b; background: #f7f9f9; border-bottom: 1px solid #cad4d7; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+      .scroll { overflow-x: auto; }
+      .empty { min-height: 230px; display: grid; place-content: center; text-align: center; color: #5c6d72; }
+      .empty strong { color: #182428; }
+      footer { margin-top: 16px; color: #5c6d72; font-size: 13px; }
+      a { color: #006f86; }
+      a:focus-visible, button:focus-visible { outline: 3px solid #5ca9e6; outline-offset: 2px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">Azure SQL TCO <span class="version">pass 1 scaffold</span></div>
+      <div class="identity">Guest</div>
+    </header>
+    <main>
+      <section class="title">
+        <h1>Projects</h1>
+        <button type="button" disabled>New project</button>
+      </section>
+      <aside class="notice"><strong>Guest draft:</strong> temporary projects stay only on this device and cannot be saved.</aside>
+      <section class="table scroll" aria-label="Projects">
+        <div class="head" aria-hidden="true"><span>Name</span><span>Type</span><span>Modified</span><span>Source region</span><span>Azure region</span><span>Resources</span></div>
+        <div class="empty"><strong>Application scaffold ready</strong><span>Domain functionality arrives in pass 2.</span></div>
+      </section>
+      <footer>API checks: <a href="/healthz">health</a> · <a href="/readyz">readiness</a> · <a href="/version">version</a></footer>
+    </main>
+  </body>
+</html>

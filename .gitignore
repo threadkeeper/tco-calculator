@@ -120,3 +120,12 @@ appsettings.*.local.json
 *.temp
 /tmp/
 /temp/
+
+# Build and dependency artifacts
+/rust/target/
+/web/node_modules/
+/web/.svelte-kit/
+/web/build/
+/web/coverage/
+/test-results/
+/playwright-report/
