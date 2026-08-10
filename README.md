@@ -4,6 +4,10 @@ Azure SQL TCO is an operational calculator for comparing estimated annual AWS EC
 
 ## Status
 
+[![Deploy Azure foundation](https://aka.ms/deploytoazurebutton)](https://github.com/threadkeeper/tco-calculator/actions/workflows/deploy.yml)
+
+The button opens a guarded manual workflow for the approved development foundation. Run `preview` first, review its Azure `what-if`, then choose `deploy` with that preview run ID and the requested resource-group confirmation. It provisions networking, monitoring, ACR, Cosmos DB, private connectivity, and the Container Apps managed environment. It does **not** build or push an image, deploy application code, create a Container App, configure Entra application authentication, or grant runtime identity roles. Those belong to the separate application CI/CD workflow described in [infra/README.md](infra/README.md).
+
 The current source implements the pure Rust calculation and target-selection workflows, strict OpenAPI request/response contract, owner-scoped project APIs, immutable pricing snapshots, transport-neutral AWS/Azure price normalization, local frozen-price resolution, in-memory persistence, request quotas, security headers, and the complete Svelte project/resource/results workflow.
 
 Local mode is intentionally self-contained: it uses synthetic/frozen public-price data and in-memory persistence. It does not call live pricing providers or Cosmos DB. Non-local readiness fails closed until the production HTTPS and Cosmos adapters pass the review in [docs/PRODUCTION-ADAPTER-READINESS.md](docs/PRODUCTION-ADAPTER-READINESS.md).

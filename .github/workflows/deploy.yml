@@ -1,0 +1,215 @@
+name: Deploy Azure foundation
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Preview first; deploy requires a reviewed successful preview run.
+        required: true
+        default: preview
+        type: choice
+        options:
+          - preview
+          - deploy
+      preview_run_id:
+        description: Successful preview run ID for this exact commit (required for deploy).
+        required: false
+        type: string
+      confirmation:
+        description: For deploy, enter DEPLOY followed by a space and the resource-group name.
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-azure-foundation
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    name: ${{ inputs.operation == 'deploy' && 'Deploy' || 'Preview' }} foundation
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_DEPLOYMENT_ENVIRONMENT: ${{ vars.AZURE_DEPLOYMENT_ENVIRONMENT }}
+      AZURE_NAME_PREFIX: ${{ vars.AZURE_NAME_PREFIX }}
+      AZURE_MONTHLY_BUDGET_USD: ${{ vars.AZURE_MONTHLY_BUDGET_USD }}
+      OPERATION: ${{ inputs.operation }}
+      PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
+      DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Validate foundation inputs
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+            throw 'Azure foundation deployment may run only from main.'
+          }
+
+          $required = @(
+            'AZURE_CLIENT_ID',
+            'AZURE_TENANT_ID',
+            'AZURE_SUBSCRIPTION_ID',
+            'AZURE_RESOURCE_GROUP',
+            'AZURE_LOCATION',
+            'AZURE_DEPLOYMENT_ENVIRONMENT',
+            'AZURE_NAME_PREFIX',
+            'AZURE_MONTHLY_BUDGET_USD'
+          )
+          foreach ($name in $required) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              throw "GitHub environment dev is missing required configuration: $name"
+            }
+          }
+
+          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID')) {
+            if ([Environment]::GetEnvironmentVariable($name) -notmatch '^[0-9a-fA-F-]{36}$') {
+              throw "$name must be a UUID."
+            }
+          }
+          if ($env:AZURE_DEPLOYMENT_ENVIRONMENT -ne 'dev') {
+            throw 'Only the approved dev environment may be deployed.'
+          }
+          if ($env:AZURE_LOCATION -ne 'southafricanorth') {
+            throw 'The approved application-hosting region is southafricanorth.'
+          }
+          if ($env:AZURE_NAME_PREFIX -notmatch '^[a-z0-9-]{3,20}$') {
+            throw 'AZURE_NAME_PREFIX must contain 3-20 lowercase letters, digits, or hyphens.'
+          }
+          if ($env:AZURE_MONTHLY_BUDGET_USD -notmatch '^\d+$') {
+            throw 'AZURE_MONTHLY_BUDGET_USD must be a positive whole number.'
+          }
+
+          if ($env:OPERATION -eq 'deploy') {
+            if ($env:PREVIEW_RUN_ID -notmatch '^\d+$') {
+              throw 'Deploy requires a numeric preview_run_id.'
+            }
+            if ($env:DEPLOY_CONFIRMATION -cne "DEPLOY $env:AZURE_RESOURCE_GROUP") {
+              throw "Deploy confirmation must exactly match: DEPLOY $env:AZURE_RESOURCE_GROUP"
+            }
+          }
+
+      - name: Verify reviewed preview
+        if: inputs.operation == 'deploy'
+        shell: pwsh
+        run: |
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:PREVIEW_RUN_ID" | ConvertFrom-Json
+          if ($run.name -ne $env:GITHUB_WORKFLOW -or $run.event -ne 'workflow_dispatch') {
+            throw 'The supplied run is not a manual run of this foundation workflow.'
+          }
+          if ($run.conclusion -ne 'success' -or $run.head_sha -ne $env:GITHUB_SHA) {
+            throw 'The preview must have succeeded for this exact commit.'
+          }
+
+          $jobs = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:PREVIEW_RUN_ID/jobs?per_page=100" | ConvertFrom-Json
+          $previewStep = $jobs.jobs.steps | Where-Object name -eq 'Preview Azure foundation' | Select-Object -First 1
+          $deployStep = $jobs.jobs.steps | Where-Object name -eq 'Deploy Azure foundation' | Select-Object -First 1
+          if ($null -eq $previewStep -or $previewStep.conclusion -ne 'success') {
+            throw 'The supplied run did not complete the foundation what-if successfully.'
+          }
+          if ($null -eq $deployStep -or $deployStep.conclusion -ne 'skipped') {
+            throw 'The supplied run was not preview-only.'
+          }
+
+      # Priority 2 precedent: Gaia configure-production.yml uses this exact
+      # Microsoft-published Azure/login commit for federated OIDC login.
+      - name: Azure login with OIDC
+        uses: Azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify Azure target
+        shell: pwsh
+        run: |
+          az account set --subscription $env:AZURE_SUBSCRIPTION_ID
+          $account = az account show --query '{subscriptionId:id,tenantId:tenantId}' --output json | ConvertFrom-Json
+          if ($account.subscriptionId -ne $env:AZURE_SUBSCRIPTION_ID -or $account.tenantId -ne $env:AZURE_TENANT_ID) {
+            throw 'Azure CLI authenticated to an unexpected tenant or subscription.'
+          }
+          az group show --name $env:AZURE_RESOURCE_GROUP --only-show-errors --output none
+
+      - name: Compile foundation Bicep
+        shell: pwsh
+        run: |
+          az bicep build --file infra/foundation.bicep --stdout | Out-Null
+
+      - name: Preview Azure foundation
+        shell: pwsh
+        run: |
+          $planPath = Join-Path $env:RUNNER_TEMP 'foundation-plan.json'
+          az deployment group what-if `
+            --resource-group $env:AZURE_RESOURCE_GROUP `
+            --template-file infra/foundation.bicep `
+            --parameters infra/parameters/foundation-dev.bicepparam `
+            --result-format ResourceIdOnly `
+            --no-pretty-print `
+            --only-show-errors `
+            --output json > $planPath
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Azure foundation what-if failed.'
+          }
+
+          $plan = Get-Content $planPath -Raw | ConvertFrom-Json
+          $deletions = @($plan.changes | Where-Object changeType -eq 'Delete')
+          if ($deletions.Count -gt 0) {
+            throw 'Foundation what-if contains resource deletions; review and deploy manually.'
+          }
+          $applicationChanges = @(
+            $plan.changes |
+              Where-Object resourceId -Match '/providers/Microsoft\.App/containerApps/'
+          )
+          if ($applicationChanges.Count -gt 0) {
+            throw 'Foundation what-if unexpectedly contains a Container App application resource.'
+          }
+
+          $plan.changes |
+            Sort-Object resourceId |
+            ForEach-Object { Write-Host "[$($_.changeType)] $($_.resourceId)" }
+          "### Azure foundation preview`n`n$($plan.changes.Count) resource changes; no application image or Container App is included." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Deploy Azure foundation
+        if: inputs.operation == 'deploy'
+        shell: pwsh
+        run: |
+          az deployment group create `
+            --name "tco-foundation-$env:GITHUB_RUN_ID" `
+            --resource-group $env:AZURE_RESOURCE_GROUP `
+            --template-file infra/foundation.bicep `
+            --parameters infra/parameters/foundation-dev.bicepparam `
+            --only-show-errors `
+            --output none
+
+      - name: Verify foundation identifiers
+        if: inputs.operation == 'deploy'
+        shell: pwsh
+        run: |
+          $outputPath = Join-Path $env:RUNNER_TEMP 'foundation.env'
+          ./infra/getkeys.ps1 `
+            -ResourceGroup $env:AZURE_RESOURCE_GROUP `
+            -DeploymentEnvironment $env:AZURE_DEPLOYMENT_ENVIRONMENT `
+            -DeploymentClientId $env:AZURE_CLIENT_ID `
+            -GitHubRepository $env:GITHUB_REPOSITORY `
+            -OutputPath $outputPath
+
+          $identifierNames = Get-Content -LiteralPath $outputPath |
+            Where-Object { $_ -and -not $_.StartsWith('#') } |
+            ForEach-Object { ($_ -split '=', 2)[0] }
+          Remove-Item -LiteralPath $outputPath -Force
+          "### Azure foundation deployed`n`nValidated $($identifierNames.Count) identifier fields with infra/getkeys.ps1. No application code or image was deployed." >> $env:GITHUB_STEP_SUMMARY

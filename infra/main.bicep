@@ -78,11 +78,22 @@ module cosmosPrivateEndpoint 'modules/cosmos-private-endpoint.bicep' = {
   }
 }
 
+module managedEnvironment 'modules/managed-environment.bicep' = {
+  name: 'managed-environment'
+  params: {
+    containerAppsSubnetId: network.outputs.containerAppsSubnetId
+    location: location
+    logAnalyticsCustomerId: monitoring.outputs.customerId
+    logAnalyticsSharedKey: monitoring.outputs.sharedKey
+    namePrefix: namePrefix
+    tags: tags
+  }
+}
+
 module containerApp 'modules/container-app.bicep' = {
   name: 'container-app'
   params: {
     applicationRegion: location
-    containerAppsSubnetId: network.outputs.containerAppsSubnetId
     containerImage: containerImage
     calculationConcurrency: calculationConcurrency
     cosmosEndpoint: cosmos.outputs.endpoint
@@ -90,8 +101,7 @@ module containerApp 'modules/container-app.bicep' = {
     entraClientSecretUri: entraClientSecretUri
     guestRequestsPerMinute: guestRequestsPerMinute
     location: location
-    logAnalyticsCustomerId: monitoring.outputs.customerId
-    logAnalyticsSharedKey: monitoring.outputs.sharedKey
+    managedEnvironmentId: managedEnvironment.outputs.id
     namePrefix: namePrefix
     providerRefreshesPerHour: providerRefreshesPerHour
     providerMaxResponseBytes: providerMaxResponseBytes

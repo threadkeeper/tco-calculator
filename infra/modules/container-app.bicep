@@ -2,10 +2,7 @@ param namePrefix string
 param location string
 param tags object
 param applicationRegion string
-param containerAppsSubnetId string
-param logAnalyticsCustomerId string
-@secure()
-param logAnalyticsSharedKey string
+param managedEnvironmentId string
 param registryServer string
 param containerImage string
 param cosmosEndpoint string
@@ -24,26 +21,6 @@ param providerRefreshesPerHour int = 6
 param providerMaxResponseBytes int = 67108864
 @minValue(1)
 param calculationConcurrency int = 10
-
-resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: '${namePrefix}-cae'
-  location: location
-  tags: tags
-  properties: {
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: {
-        customerId: logAnalyticsCustomerId
-        sharedKey: logAnalyticsSharedKey
-      }
-    }
-    vnetConfiguration: {
-      infrastructureSubnetId: containerAppsSubnetId
-      internal: false
-    }
-    zoneRedundant: false
-  }
-}
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: '${namePrefix}-app'
@@ -81,7 +58,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
     }
-    environmentId: environment.id
+    environmentId: managedEnvironmentId
     template: {
       containers: [
         {

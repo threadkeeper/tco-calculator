@@ -62,3 +62,4 @@ resource dnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2
 }
 
 output privateEndpointId string = privateEndpoint.id
+output privateDnsZoneId string = privateDnsZone.id
