@@ -53,7 +53,7 @@ pub(crate) struct ProjectSummary {
     azure_annual_total: Option<DecimalValue>,
 }
 
-pub async fn list(
+pub(crate) async fn list(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<ProjectSummary>>, Problem> {
