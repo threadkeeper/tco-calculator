@@ -1,5 +1,9 @@
-use std::time::{Duration, Instant};
+use std::{
+    io::{Cursor, Read},
+    time::{Duration, Instant},
+};
 
+use async_trait::async_trait;
 use reqwest::{
     Client, StatusCode, Url,
     header::{ETAG, HeaderMap, LAST_MODIFIED, RETRY_AFTER},
@@ -7,10 +11,14 @@ use reqwest::{
 };
 use sha2::{Digest, Sha256};
 use time::{OffsetDateTime, format_description::well_known::Rfc2822};
+use tokio::sync::mpsc;
 
 use crate::config::APP_VERSION;
 
-use super::provider::ProviderError;
+use super::{
+    aws_rds::{RdsProjectionError, project_rds_offer},
+    provider::ProviderError,
+};
 
 const ALLOWED_HOSTS: [&str; 5] = [
     "calculator.aws",
@@ -36,6 +44,33 @@ pub struct HttpPayload {
 pub struct PricingHttpClient {
     client: Client,
     max_response_bytes: usize,
+}
+
+#[async_trait]
+pub trait PricingSource: Send + Sync {
+    async fn fetch(&self, source_url: &Url) -> Result<HttpPayload, ProviderError>;
+
+    async fn fetch_rds_offer(
+        &self,
+        source_url: &Url,
+        expected_offer_code: &str,
+    ) -> Result<HttpPayload, ProviderError> {
+        let payload = self.fetch(source_url).await?;
+        let source_url = payload.source_url;
+        let expected_offer_code = expected_offer_code.to_owned();
+        let projected = tokio::task::spawn_blocking(move || {
+            project_rds_offer(Cursor::new(payload.body), &expected_offer_code)
+        })
+        .await
+        .map_err(|_| ProviderError::SchemaChanged)?
+        .map_err(map_rds_projection_error)?;
+        Ok(HttpPayload {
+            source_url,
+            source_version: Some(projected.source_version),
+            effective_at: Some(projected.effective_at),
+            body: projected.body,
+        })
+    }
 }
 
 enum AttemptFailure {
@@ -96,6 +131,52 @@ impl PricingHttpClient {
         Err(ProviderError::TemporarilyUnavailable)
     }
 
+    pub async fn get_rds_offer(
+        &self,
+        source_url: &str,
+        expected_offer_code: &str,
+    ) -> Result<HttpPayload, ProviderError> {
+        let url = validate_url(source_url)?;
+        if !matches!(
+            expected_offer_code,
+            "AmazonRDS" | "AmazonRDSOCPULicenseFees"
+        ) {
+            return Err(ProviderError::Unsupported);
+        }
+        let started_at = Instant::now();
+        for attempt in 1..=MAX_ATTEMPTS {
+            let remaining = RESOLUTION_BUDGET
+                .checked_sub(started_at.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or(ProviderError::TemporarilyUnavailable)?;
+            match self
+                .send_rds_once(
+                    url.clone(),
+                    expected_offer_code,
+                    remaining.min(REQUEST_TIMEOUT),
+                )
+                .await
+            {
+                Ok(payload) => return Ok(payload),
+                Err(AttemptFailure::Terminal(error)) => return Err(error),
+                Err(AttemptFailure::Temporary(retry_after)) if attempt < MAX_ATTEMPTS => {
+                    let remaining = RESOLUTION_BUDGET
+                        .checked_sub(started_at.elapsed())
+                        .ok_or(ProviderError::TemporarilyUnavailable)?;
+                    let delay = retry_after.unwrap_or_else(|| retry_delay(&url, attempt));
+                    if delay >= remaining {
+                        return Err(ProviderError::TemporarilyUnavailable);
+                    }
+                    tokio::time::sleep(delay).await;
+                }
+                Err(AttemptFailure::Temporary(_)) => {
+                    return Err(ProviderError::TemporarilyUnavailable);
+                }
+            }
+        }
+        Err(ProviderError::TemporarilyUnavailable)
+    }
+
     async fn send_once(
         &self,
         url: Url,
@@ -141,6 +222,122 @@ impl PricingHttpClient {
             effective_at,
             body,
         })
+    }
+
+    async fn send_rds_once(
+        &self,
+        url: Url,
+        expected_offer_code: &str,
+        request_timeout: Duration,
+    ) -> Result<HttpPayload, AttemptFailure> {
+        let mut response = self
+            .client
+            .get(url.clone())
+            .timeout(request_timeout)
+            .send()
+            .await
+            .map_err(|_| AttemptFailure::Temporary(None))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(classify_status(status, response.headers()));
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > self.max_response_bytes as u64)
+        {
+            return Err(AttemptFailure::Terminal(ProviderError::SchemaChanged));
+        }
+
+        let (sender, receiver) = mpsc::channel::<Vec<u8>>(2);
+        let offer_code = expected_offer_code.to_owned();
+        let projector = tokio::task::spawn_blocking(move || {
+            project_rds_offer(ChunkReader::new(receiver), &offer_code)
+        });
+        let mut received = 0_usize;
+        while let Some(chunk) = match response.chunk().await {
+            Ok(chunk) => chunk,
+            Err(_) => {
+                drop(sender);
+                let _ = projector.await;
+                return Err(AttemptFailure::Temporary(None));
+            }
+        } {
+            received = received
+                .checked_add(chunk.len())
+                .ok_or_else(|| AttemptFailure::Terminal(ProviderError::SchemaChanged))?;
+            if received > self.max_response_bytes {
+                drop(sender);
+                let _ = projector.await;
+                return Err(AttemptFailure::Terminal(ProviderError::SchemaChanged));
+            }
+            if sender.send(chunk.to_vec()).await.is_err() {
+                break;
+            }
+        }
+        drop(sender);
+        let projected = projector
+            .await
+            .map_err(|_| AttemptFailure::Terminal(ProviderError::SchemaChanged))?
+            .map_err(|error| AttemptFailure::Terminal(map_rds_projection_error(error)))?;
+        Ok(HttpPayload {
+            source_url: url.to_string(),
+            source_version: Some(projected.source_version),
+            effective_at: Some(projected.effective_at),
+            body: projected.body,
+        })
+    }
+}
+
+#[async_trait]
+impl PricingSource for PricingHttpClient {
+    async fn fetch(&self, source_url: &Url) -> Result<HttpPayload, ProviderError> {
+        Self::get(self, source_url.as_str()).await
+    }
+
+    async fn fetch_rds_offer(
+        &self,
+        source_url: &Url,
+        expected_offer_code: &str,
+    ) -> Result<HttpPayload, ProviderError> {
+        Self::get_rds_offer(self, source_url.as_str(), expected_offer_code).await
+    }
+}
+
+struct ChunkReader {
+    receiver: mpsc::Receiver<Vec<u8>>,
+    current: Cursor<Vec<u8>>,
+}
+
+impl ChunkReader {
+    fn new(receiver: mpsc::Receiver<Vec<u8>>) -> Self {
+        Self {
+            receiver,
+            current: Cursor::new(Vec::new()),
+        }
+    }
+}
+
+impl Read for ChunkReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let read = self.current.read(buffer)?;
+            if read > 0 {
+                return Ok(read);
+            }
+            let Some(chunk) = self.receiver.blocking_recv() else {
+                return Ok(0);
+            };
+            self.current = Cursor::new(chunk);
+        }
+    }
+}
+
+fn map_rds_projection_error(error: RdsProjectionError) -> ProviderError {
+    match error {
+        RdsProjectionError::UnsupportedOffer => ProviderError::Unsupported,
+        RdsProjectionError::MalformedJson | RdsProjectionError::InvalidManifest => {
+            ProviderError::SchemaChanged
+        }
     }
 }
 

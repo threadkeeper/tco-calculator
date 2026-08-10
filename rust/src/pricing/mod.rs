@@ -4,6 +4,7 @@ pub mod aws_rds;
 pub mod azure_sql_mi;
 pub mod http;
 pub mod live;
+pub mod loader;
 pub mod local_fixture;
 pub mod provider;
 pub mod repository;

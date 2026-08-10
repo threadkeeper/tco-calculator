@@ -74,6 +74,28 @@ pub fn ec2_selector_url(scope: AwsRegionScope) -> Result<Url, ProviderError> {
     )
 }
 
+pub fn ec2_leaf_url(
+    scope: AwsRegionScope,
+    preinstalled_software: &str,
+) -> Result<Url, ProviderError> {
+    if !matches!(preinstalled_software, "NA" | "SQL Std" | "SQL Ent") {
+        return Err(ProviderError::Unsupported);
+    }
+    provider_url(
+        EC2_CALCULATOR_BASE,
+        &[
+            scope.location,
+            "OnDemand",
+            "Shared",
+            "Windows",
+            preinstalled_software,
+            "No License required",
+            "Yes",
+            "index.json",
+        ],
+    )
+}
+
 pub fn ebs_meter_map_url() -> Result<Url, ProviderError> {
     provider_url(EBS_METER_MAP_BASE, &["ebs-calculator.json"])
 }
@@ -96,6 +118,32 @@ pub fn aws_region_index_url(offer_code: &str) -> Result<Url, ProviderError> {
             "region_index.json",
         ],
     )
+}
+
+pub fn aws_region_offer_url(
+    scope: AwsRegionScope,
+    offer_code: &str,
+    current_version_url: &str,
+) -> Result<Url, ProviderError> {
+    if !matches!(offer_code, "AmazonRDS" | "AmazonRDSOCPULicenseFees")
+        || !current_version_url.starts_with('/')
+        || current_version_url.contains(['?', '#'])
+    {
+        return Err(ProviderError::Unsupported);
+    }
+    let segments = current_version_url[1..].split('/').collect::<Vec<_>>();
+    let valid = matches!(
+        segments.as_slice(),
+        ["offers", "v1.0", "aws", path_offer, version, path_region, "index.json"]
+            if *path_offer == offer_code
+                && *path_region == scope.code
+                && version.len() == 14
+                && version.chars().all(|character| character.is_ascii_digit())
+    );
+    if !valid {
+        return Err(ProviderError::Unsupported);
+    }
+    provider_url(AWS_PRICING_BASE, &segments)
 }
 
 pub fn azure_retail_url(scope: AzureRegionScope, currency: &str) -> Result<Url, ProviderError> {
@@ -164,6 +212,22 @@ mod tests {
             "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/primary-selector-aggregations.json"
         );
         assert_eq!(
+            ec2_leaf_url(aws, "NA")
+                .expect("EC2 compute leaf URL")
+                .as_str(),
+            "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json"
+        );
+        assert_eq!(
+            ec2_leaf_url(aws, "SQL Std")
+                .expect("EC2 SQL Standard leaf URL")
+                .as_str(),
+            "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/SQL%20Std/No%20License%20required/Yes/index.json"
+        );
+        assert_eq!(
+            ec2_leaf_url(aws, "SQL Web"),
+            Err(ProviderError::Unsupported)
+        );
+        assert_eq!(
             ebs_meter_map_url().expect("EBS meter map URL").as_str(),
             "https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/ec2/USD/current/ebs-calculator.json"
         );
@@ -173,6 +237,27 @@ mod tests {
                 .as_str(),
             "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/region_index.json"
         );
+        assert_eq!(
+            aws_region_offer_url(
+                aws,
+                "AmazonRDS",
+                "/offers/v1.0/aws/AmazonRDS/20260806022930/eu-west-1/index.json"
+            )
+            .expect("RDS regional offer URL")
+            .as_str(),
+            "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/20260806022930/eu-west-1/index.json"
+        );
+        for invalid in [
+            "//example.invalid/offers/v1.0/aws/AmazonRDS/index.json",
+            "/offers/v1.0/aws/AmazonRDS/not-a-version/eu-west-1/index.json",
+            "/offers/v1.0/aws/AmazonRDS/20260806022930/us-east-1/index.json",
+            "/offers/v1.0/aws/AmazonRDS/20260806022930/eu-west-1/index.json?next=1",
+        ] {
+            assert_eq!(
+                aws_region_offer_url(aws, "AmazonRDS", invalid),
+                Err(ProviderError::Unsupported)
+            );
+        }
 
         let azure = azure_region_scope("swedencentral").expect("Azure scope");
         let retail = azure_retail_url(azure, "USD").expect("Azure Retail URL");

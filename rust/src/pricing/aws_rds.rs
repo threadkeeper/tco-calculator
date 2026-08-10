@@ -1,11 +1,17 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
+    io::Read,
     str::FromStr,
 };
 
 use rust_decimal::Decimal;
-use serde::Deserialize;
+use serde::{
+    Deserialize, Serialize,
+    de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, Visitor},
+};
 use thiserror::Error;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
     calculation::cost::RdsRate,
@@ -51,14 +57,30 @@ pub enum RdsNormalizationError {
     ConflictingComponent,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum RdsProjectionError {
+    #[error("RDS offer code is unsupported")]
+    UnsupportedOffer,
+    #[error("RDS offer JSON is malformed")]
+    MalformedJson,
+    #[error("RDS offer manifest is invalid")]
+    InvalidManifest,
+}
+
+pub struct ProjectedRdsOffer {
+    pub source_version: String,
+    pub effective_at: String,
+    pub body: Vec<u8>,
+}
+
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SelectedLeaf {
     source_offer_code: String,
     dimensions: Vec<RawDimension>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawDimension {
     sku: String,
@@ -96,6 +118,450 @@ struct RawDimension {
     rate_code: String,
     unit: String,
     price: serde_json::Value,
+}
+
+struct RawOfferProjection {
+    format_version: String,
+    offer_code: String,
+    source_version: String,
+    published_at: String,
+    dimensions: Vec<RawDimension>,
+}
+
+struct OfferProjectionSeed<'a> {
+    expected_offer_code: &'a str,
+}
+
+impl<'de> DeserializeSeed<'de> for OfferProjectionSeed<'_> {
+    type Value = RawOfferProjection;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(OfferProjectionVisitor {
+            expected_offer_code: self.expected_offer_code,
+        })
+    }
+}
+
+struct OfferProjectionVisitor<'a> {
+    expected_offer_code: &'a str,
+}
+
+impl<'de> Visitor<'de> for OfferProjectionVisitor<'_> {
+    type Value = RawOfferProjection;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an AWS regional offer document")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut format_version = None;
+        let mut offer_code = None;
+        let mut source_version = None;
+        let mut published_at = None;
+        let mut products = None;
+        let mut dimensions = None;
+        while let Some(field) = map.next_key::<String>()? {
+            match field.as_str() {
+                "formatVersion" => {
+                    set_once(&mut format_version, map.next_value()?, &field)?;
+                }
+                "offerCode" => {
+                    set_once(&mut offer_code, map.next_value()?, &field)?;
+                }
+                "version" => {
+                    set_once(&mut source_version, map.next_value()?, &field)?;
+                }
+                "publicationDate" => {
+                    set_once(&mut published_at, map.next_value()?, &field)?;
+                }
+                "products" => {
+                    if products.is_some() {
+                        return Err(A::Error::duplicate_field("products"));
+                    }
+                    products = Some(map.next_value_seed(ProductsSeed {
+                        expected_offer_code: self.expected_offer_code,
+                    })?);
+                }
+                "terms" => {
+                    if dimensions.is_some() {
+                        return Err(A::Error::duplicate_field("terms"));
+                    }
+                    let products = products.as_ref().ok_or_else(|| {
+                        A::Error::custom("RDS products must precede terms for streaming projection")
+                    })?;
+                    dimensions = Some(map.next_value_seed(TermsSeed { products })?);
+                }
+                _ => {
+                    map.next_value::<IgnoredAny>()?;
+                }
+            }
+        }
+        Ok(RawOfferProjection {
+            format_version: required_field(format_version, "formatVersion")?,
+            offer_code: required_field(offer_code, "offerCode")?,
+            source_version: required_field(source_version, "version")?,
+            published_at: required_field(published_at, "publicationDate")?,
+            dimensions: required_field(dimensions, "terms")?,
+        })
+    }
+}
+
+fn set_once<E: serde::de::Error>(
+    slot: &mut Option<String>,
+    value: String,
+    field: &'static str,
+) -> Result<(), E> {
+    if slot.replace(value).is_some() {
+        return Err(E::duplicate_field(field));
+    }
+    Ok(())
+}
+
+fn required_field<T, E: serde::de::Error>(value: Option<T>, field: &'static str) -> Result<T, E> {
+    value.ok_or_else(|| E::missing_field(field))
+}
+
+#[derive(Clone)]
+struct ProjectedProduct {
+    sku: String,
+    product_family: String,
+    attributes: ProductAttributes,
+}
+
+#[derive(Deserialize)]
+struct RawProduct {
+    sku: String,
+    #[serde(rename = "productFamily")]
+    product_family: String,
+    attributes: ProductAttributes,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct ProductAttributes {
+    #[serde(rename = "databaseEngine")]
+    database_engine: Option<String>,
+    #[serde(rename = "databaseEdition")]
+    database_edition: Option<String>,
+    #[serde(rename = "licenseModel")]
+    license_model: Option<String>,
+    #[serde(rename = "licenseType")]
+    license_type: Option<String>,
+    #[serde(rename = "deploymentModel")]
+    deployment_model: Option<String>,
+    #[serde(rename = "deploymentOption")]
+    deployment_option: Option<String>,
+    #[serde(rename = "instanceType")]
+    instance_type: Option<String>,
+    memory: Option<String>,
+    vcpu: Option<String>,
+    #[serde(rename = "volumeName")]
+    volume_name: Option<String>,
+    #[serde(rename = "volumeType")]
+    volume_type: Option<String>,
+}
+
+struct ProductsSeed<'a> {
+    expected_offer_code: &'a str,
+}
+
+impl<'de> DeserializeSeed<'de> for ProductsSeed<'_> {
+    type Value = BTreeMap<String, ProjectedProduct>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(ProductsVisitor {
+            expected_offer_code: self.expected_offer_code,
+        })
+    }
+}
+
+struct ProductsVisitor<'a> {
+    expected_offer_code: &'a str,
+}
+
+impl<'de> Visitor<'de> for ProductsVisitor<'_> {
+    type Value = BTreeMap<String, ProjectedProduct>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an AWS offer product map")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut products = BTreeMap::new();
+        while let Some(sku) = map.next_key::<String>()? {
+            let product = map.next_value::<RawProduct>()?;
+            if product.sku != sku {
+                return Err(A::Error::custom(
+                    "RDS product SKU does not match its map key",
+                ));
+            }
+            if is_selected_product(self.expected_offer_code, &product) {
+                products.insert(
+                    sku,
+                    ProjectedProduct {
+                        sku: product.sku,
+                        product_family: product.product_family,
+                        attributes: product.attributes,
+                    },
+                );
+            }
+        }
+        Ok(products)
+    }
+}
+
+fn is_selected_product(offer_code: &str, product: &RawProduct) -> bool {
+    match offer_code {
+        "AmazonRDS" => {
+            product.attributes.database_engine.as_deref() == Some("SQL Server")
+                && matches!(
+                    product.attributes.database_edition.as_deref(),
+                    Some("Standard" | "Enterprise")
+                )
+                && match product.product_family.as_str() {
+                    "Database Instance" => {
+                        product.attributes.deployment_model.as_deref() == Some("Custom")
+                            || product.attributes.license_model.as_deref()
+                                == Some("Bring your own media")
+                    }
+                    "Database Storage" => true,
+                    _ => false,
+                }
+        }
+        "AmazonRDSOCPULicenseFees" => {
+            product.product_family == "Optimized License"
+                && product.attributes.license_type.as_deref() == Some("SQLServer")
+                && matches!(
+                    product.attributes.database_edition.as_deref(),
+                    Some("Standard" | "Enterprise")
+                )
+        }
+        _ => false,
+    }
+}
+
+struct TermsSeed<'a> {
+    products: &'a BTreeMap<String, ProjectedProduct>,
+}
+
+impl<'de> DeserializeSeed<'de> for TermsSeed<'_> {
+    type Value = Vec<RawDimension>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(TermsVisitor {
+            products: self.products,
+        })
+    }
+}
+
+struct TermsVisitor<'a> {
+    products: &'a BTreeMap<String, ProjectedProduct>,
+}
+
+impl<'de> Visitor<'de> for TermsVisitor<'_> {
+    type Value = Vec<RawDimension>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an AWS offer terms map")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut dimensions = Vec::new();
+        while let Some(term_type) = map.next_key::<String>()? {
+            if matches!(term_type.as_str(), "OnDemand" | "Reserved") {
+                dimensions.extend(map.next_value_seed(SkuTermsSeed {
+                    term_type: &term_type,
+                    products: self.products,
+                })?);
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        Ok(dimensions)
+    }
+}
+
+struct SkuTermsSeed<'a> {
+    term_type: &'a str,
+    products: &'a BTreeMap<String, ProjectedProduct>,
+}
+
+impl<'de> DeserializeSeed<'de> for SkuTermsSeed<'_> {
+    type Value = Vec<RawDimension>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(SkuTermsVisitor {
+            term_type: self.term_type,
+            products: self.products,
+        })
+    }
+}
+
+struct SkuTermsVisitor<'a> {
+    term_type: &'a str,
+    products: &'a BTreeMap<String, ProjectedProduct>,
+}
+
+impl<'de> Visitor<'de> for SkuTermsVisitor<'_> {
+    type Value = Vec<RawDimension>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an AWS offer SKU terms map")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut dimensions = Vec::new();
+        while let Some(sku) = map.next_key::<String>()? {
+            let Some(product) = self.products.get(&sku) else {
+                map.next_value::<IgnoredAny>()?;
+                continue;
+            };
+            let terms = map.next_value::<BTreeMap<String, RawOfferTerm>>()?;
+            for term in terms.into_values() {
+                if term.sku != sku {
+                    return Err(A::Error::custom("RDS term SKU does not match its map key"));
+                }
+                for dimension in term.price_dimensions.into_values() {
+                    let price = dimension
+                        .price_per_unit
+                        .get("USD")
+                        .cloned()
+                        .ok_or_else(|| A::Error::custom("RDS price dimension has no USD rate"))?;
+                    dimensions.push(project_dimension(
+                        self.term_type,
+                        product,
+                        &term,
+                        dimension,
+                        price,
+                    ));
+                }
+            }
+        }
+        Ok(dimensions)
+    }
+}
+
+#[derive(Deserialize)]
+struct RawOfferTerm {
+    #[serde(rename = "offerTermCode")]
+    offer_term_code: String,
+    sku: String,
+    #[serde(rename = "priceDimensions")]
+    price_dimensions: BTreeMap<String, RawPriceDimension>,
+    #[serde(default, rename = "termAttributes")]
+    term_attributes: RawTermAttributes,
+}
+
+#[derive(Default, Deserialize)]
+struct RawTermAttributes {
+    #[serde(rename = "LeaseContractLength")]
+    lease_contract_length: Option<String>,
+    #[serde(rename = "PurchaseOption")]
+    purchase_option: Option<String>,
+    #[serde(rename = "OfferingClass")]
+    offering_class: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawPriceDimension {
+    #[serde(rename = "rateCode")]
+    rate_code: String,
+    unit: String,
+    #[serde(rename = "pricePerUnit")]
+    price_per_unit: BTreeMap<String, serde_json::Value>,
+}
+
+fn project_dimension(
+    term_type: &str,
+    product: &ProjectedProduct,
+    term: &RawOfferTerm,
+    dimension: RawPriceDimension,
+    price: serde_json::Value,
+) -> RawDimension {
+    RawDimension {
+        sku: product.sku.clone(),
+        product_family: product.product_family.clone(),
+        database_engine: product.attributes.database_engine.clone(),
+        database_edition: product.attributes.database_edition.clone(),
+        license_model: product.attributes.license_model.clone(),
+        license_type: product.attributes.license_type.clone(),
+        deployment_model: product.attributes.deployment_model.clone(),
+        deployment_option: product.attributes.deployment_option.clone(),
+        instance_type: product.attributes.instance_type.clone(),
+        memory: product.attributes.memory.clone(),
+        vcpu: product.attributes.vcpu.clone(),
+        volume_name: product.attributes.volume_name.clone(),
+        volume_type: product.attributes.volume_type.clone(),
+        term_type: term_type.to_owned(),
+        offer_term_code: term.offer_term_code.clone(),
+        lease_contract_length: term.term_attributes.lease_contract_length.clone(),
+        purchase_option: term.term_attributes.purchase_option.clone(),
+        offering_class: term.term_attributes.offering_class.clone(),
+        rate_code: dimension.rate_code,
+        unit: dimension.unit,
+        price,
+    }
+}
+
+pub fn project_rds_offer(
+    reader: impl Read,
+    expected_offer_code: &str,
+) -> Result<ProjectedRdsOffer, RdsProjectionError> {
+    if !matches!(
+        expected_offer_code,
+        "AmazonRDS" | "AmazonRDSOCPULicenseFees"
+    ) {
+        return Err(RdsProjectionError::UnsupportedOffer);
+    }
+    let mut deserializer = serde_json::Deserializer::from_reader(reader);
+    let projection = OfferProjectionSeed {
+        expected_offer_code,
+    }
+    .deserialize(&mut deserializer)
+    .map_err(|_| RdsProjectionError::MalformedJson)?;
+    deserializer
+        .end()
+        .map_err(|_| RdsProjectionError::MalformedJson)?;
+    if projection.format_version != "v1.0"
+        || projection.offer_code != expected_offer_code
+        || projection.source_version.is_empty()
+        || OffsetDateTime::parse(&projection.published_at, &Rfc3339).is_err()
+    {
+        return Err(RdsProjectionError::InvalidManifest);
+    }
+    let body = serde_json::to_vec(&SelectedLeaf {
+        source_offer_code: projection.offer_code,
+        dimensions: projection.dimensions,
+    })
+    .map_err(|_| RdsProjectionError::MalformedJson)?;
+    Ok(ProjectedRdsOffer {
+        source_version: projection.source_version,
+        effective_at: projection.published_at,
+        body,
+    })
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -596,6 +1062,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn streams_raw_offer_into_selected_sql_server_dimensions() {
+        let projected = project_rds_offer(std::io::Cursor::new(raw_rds_offer()), "AmazonRDS")
+            .expect("project raw RDS offer");
+
+        assert_eq!(projected.source_version, "20260806022930");
+        assert_eq!(projected.effective_at, "2026-08-06T02:29:30Z");
+        let normalized = normalize_rds_leaves(
+            context(),
+            &[RdsLeafPayload {
+                source_url: "https://pricing.us-east-1.amazonaws.com/rds.json",
+                source_version: Some(&projected.source_version),
+                effective_at: Some(&projected.effective_at),
+                body: &projected.body,
+            }],
+        )
+        .expect("normalize projected RDS offer");
+
+        assert_eq!(normalized.records.len(), 1);
+        assert_eq!(normalized.warnings.len(), 2);
+        assert_eq!(
+            normalized.records[0]
+                .rate
+                .effective_compute_hourly
+                .to_string(),
+            "5.104"
+        );
+        assert_eq!(
+            normalized.records[0]
+                .rate
+                .storage_monthly_per_gb
+                .to_string(),
+            "0.127"
+        );
+        assert_eq!(normalized.records[0].provenance.meter_ids.len(), 2);
+    }
+
+    #[test]
     fn normalizes_byom_compute_storage_and_ocpu_license_rates() {
         let rds = leaf(
             "AmazonRDS",
@@ -797,5 +1300,96 @@ mod tests {
             "unit": "vCPU-Hour",
             "price": price
         })
+    }
+
+    fn raw_rds_offer() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "formatVersion": "v1.0",
+            "disclaimer": "synthetic public-pricing fixture",
+            "offerCode": "AmazonRDS",
+            "version": "20260806022930",
+            "publicationDate": "2026-08-06T02:29:30Z",
+            "products": {
+                "compute-sku": {
+                    "sku": "compute-sku",
+                    "productFamily": "Database Instance",
+                    "attributes": {
+                        "databaseEngine": "SQL Server",
+                        "databaseEdition": "Standard",
+                        "licenseModel": "NA",
+                        "deploymentModel": "Custom",
+                        "deploymentOption": "Single-AZ",
+                        "instanceType": "db.m6i.8xlarge",
+                        "memory": "128 GiB",
+                        "vcpu": "32"
+                    }
+                },
+                "storage-sku": {
+                    "sku": "storage-sku",
+                    "productFamily": "Database Storage",
+                    "attributes": {
+                        "databaseEngine": "SQL Server",
+                        "databaseEdition": "Standard",
+                        "deploymentOption": "Single-AZ",
+                        "volumeName": "gp3",
+                        "volumeType": "General Purpose-GP3"
+                    }
+                },
+                "ignored-sku": {
+                    "sku": "ignored-sku",
+                    "productFamily": "Database Instance",
+                    "attributes": {
+                        "databaseEngine": "MySQL"
+                    }
+                }
+            },
+            "terms": {
+                "OnDemand": {
+                    "compute-sku": {
+                        "compute-offer": {
+                            "offerTermCode": "JRTCKXETXF",
+                            "sku": "compute-sku",
+                            "effectiveDate": "2026-08-01T00:00:00Z",
+                            "priceDimensions": {
+                                "compute.offer.dimension": {
+                                    "rateCode": "compute.offer.dimension",
+                                    "description": "synthetic compute",
+                                    "beginRange": "0",
+                                    "endRange": "Inf",
+                                    "unit": "Hrs",
+                                    "pricePerUnit": { "USD": "5.104" },
+                                    "appliesTo": []
+                                }
+                            },
+                            "termAttributes": {}
+                        }
+                    },
+                    "storage-sku": {
+                        "storage-offer": {
+                            "offerTermCode": "JRTCKXETXF",
+                            "sku": "storage-sku",
+                            "effectiveDate": "2026-08-01T00:00:00Z",
+                            "priceDimensions": {
+                                "storage.offer.dimension": {
+                                    "rateCode": "storage.offer.dimension",
+                                    "description": "synthetic storage",
+                                    "beginRange": "0",
+                                    "endRange": "Inf",
+                                    "unit": "GB-Mo",
+                                    "pricePerUnit": { "USD": "0.127" },
+                                    "appliesTo": []
+                                }
+                            },
+                            "termAttributes": {}
+                        }
+                    },
+                    "ignored-sku": {
+                        "this": "subtree is skipped without deserialization"
+                    }
+                }
+            },
+            "attributesList": []
+        }))
+        .expect("serialize raw RDS offer")
     }
 }
