@@ -200,8 +200,10 @@ jobs:
           $managedEnvironment = az resource show --ids $env:AZURE_CONTAINER_APPS_ENVIRONMENT_ID --api-version 2024-03-01 --only-show-errors --output json | ConvertFrom-Json
           $registry = az resource show --ids $env:AZURE_CONTAINER_REGISTRY_ID --api-version 2023-07-01 --only-show-errors --output json | ConvertFrom-Json
           $cosmos = az resource show --ids $env:AZURE_COSMOS_ACCOUNT_ID --api-version 2024-05-15 --only-show-errors --output json | ConvertFrom-Json
+          $expectedLocation = $env:AZURE_LOCATION -replace '\s', ''
           foreach ($resource in @($managedEnvironment, $registry, $cosmos)) {
-            if ($resource.location -ne $env:AZURE_LOCATION -or $resource.tags.application -ne 'tco-calculator' -or $resource.tags.environment -ne 'dev') {
+            $resourceLocation = [string]$resource.location -replace '\s', ''
+            if ($resourceLocation -ine $expectedLocation -or $resource.tags.application -ne 'tco-calculator' -or $resource.tags.environment -ne 'dev') {
               throw "Foundation resource $($resource.id) has an unexpected location or ownership tag."
             }
           }
