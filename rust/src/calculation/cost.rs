@@ -613,12 +613,19 @@ mod tests {
         let result = calculate_on_prem_source(&resource, &settings).expect("on-prem costs");
 
         assert_eq!(result.explanation.license_pack_count, 3);
-        assert_eq!(result.explanation.estimated_power_kw, decimal("0.17875"));
+        assert_eq!(
+            result.explanation.estimated_power_kw,
+            decimal("0.1569765625")
+        );
         assert_eq!(result.costs.hardware_annual, decimal("3000"));
         assert_eq!(result.costs.license_net, decimal("950"));
-        assert_eq!(result.explanation.annual_kwh, decimal("1565.85"));
-        assert_eq!(result.costs.electricity_annual, decimal("313.1700"));
-        assert_eq!(result.costs.total, decimal("4263.1700"));
+        assert_eq!(result.explanation.annual_kwh, decimal("1375.1146875"));
+        assert_eq!(
+            result.explanation.electricity_monthly_average,
+            decimal("22.918578125")
+        );
+        assert_eq!(result.costs.electricity_annual, decimal("275.0229375"));
+        assert_eq!(result.costs.total, decimal("4225.0229375"));
     }
 
     #[test]
@@ -658,8 +665,8 @@ mod tests {
         .expect("Azure costs");
 
         assert_eq!(azure.additional_ram_gb, decimal("32"));
-        assert_eq!(azure.additional_ram_gross, decimal("6538.13760"));
-        assert_eq!(azure.compute_plus_ram_net, decimal("21688.323840"));
+        assert_eq!(azure.additional_ram_gross, decimal("6538.744320"));
+        assert_eq!(azure.compute_plus_ram_net, decimal("21652.869888"));
     }
 
     #[test]
