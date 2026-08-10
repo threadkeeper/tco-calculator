@@ -340,6 +340,16 @@ jobs:
           $acrRoleAssignmentName = [regex]::Match($acrRoleAssignments[0].resourceId, $acrRoleAssignmentPattern).Groups['name'].Value
           "ACR_PULL_ROLE_ASSIGNMENT_NAME=$acrRoleAssignmentName" >> $env:GITHUB_ENV
 
+          $cosmosRoleAssignmentPattern = "^$([regex]::Escape($env:AZURE_COSMOS_ACCOUNT_ID))/sqlRoleAssignments/(?<name>[0-9a-fA-F-]{36})$"
+          $cosmosRoleAssignments = @(
+            $plan.changes | Where-Object resourceId -Match $cosmosRoleAssignmentPattern
+          )
+          if ($cosmosRoleAssignments.Count -ne 1) {
+            throw 'Application what-if must contain exactly one Cosmos SQL role assignment.'
+          }
+          $cosmosRoleAssignmentName = [regex]::Match($cosmosRoleAssignments[0].resourceId, $cosmosRoleAssignmentPattern).Groups['name'].Value
+          "COSMOS_DATA_ROLE_ASSIGNMENT_NAME=$cosmosRoleAssignmentName" >> $env:GITHUB_ENV
+
           $plan.changes |
             Sort-Object resourceId |
             ForEach-Object { Write-Host "[$($_.changeType)] $($_.resourceId)" }
@@ -352,11 +362,13 @@ jobs:
           $bootstrapName = "tco-app-bootstrap-$env:GITHUB_RUN_ID"
           $containerAppName = "$env:AZURE_NAME_PREFIX-app"
           $acrRoleId = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"
+          $cosmosRoleId = "$env:AZURE_COSMOS_ACCOUNT_ID/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+          $cosmosScope = "$env:AZURE_COSMOS_ACCOUNT_ID/dbs/tco"
           az deployment group create `
             --name $bootstrapName `
             --resource-group $env:AZURE_RESOURCE_GROUP `
             --template-file infra/main.bicep `
-            --parameters infra/parameters/dev.bicepparam 'configureAuthentication=false' `
+            --parameters infra/parameters/dev.bicepparam 'configureAuthentication=false' 'minimumReplicas=1' `
             --no-wait `
             --only-show-errors `
             --output none
@@ -412,6 +424,41 @@ jobs:
             $existingAcrAssignment.scope -ne $env:AZURE_CONTAINER_REGISTRY_ID
           ) {
             throw 'The deterministic bootstrap AcrPull assignment has unexpected properties.'
+          }
+
+          if ($env:COSMOS_DATA_ROLE_ASSIGNMENT_NAME -notmatch '^[0-9a-fA-F-]{36}$') {
+            throw 'Preview did not resolve the deterministic Cosmos role-assignment name.'
+          }
+          $existingCosmosOutput = @(& az cosmosdb sql role assignment show `
+            --account-name $env:AZURE_COSMOS_ACCOUNT_NAME `
+            --resource-group $env:AZURE_RESOURCE_GROUP `
+            --role-assignment-id $env:COSMOS_DATA_ROLE_ASSIGNMENT_NAME `
+            --only-show-errors `
+            --output json 2>$null)
+          $existingCosmosAssignment = if ($LASTEXITCODE -eq 0) {
+            ($existingCosmosOutput -join [Environment]::NewLine) | ConvertFrom-Json
+          } else {
+            $null
+          }
+          if ($null -eq $existingCosmosAssignment) {
+            az cosmosdb sql role assignment create `
+              --account-name $env:AZURE_COSMOS_ACCOUNT_NAME `
+              --resource-group $env:AZURE_RESOURCE_GROUP `
+              --role-assignment-id $env:COSMOS_DATA_ROLE_ASSIGNMENT_NAME `
+              --role-definition-id $cosmosRoleId `
+              --scope $cosmosScope `
+              --principal-id $principalId `
+              --only-show-errors `
+              --output none
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Could not create the bootstrap Cosmos data assignment.'
+            }
+          } elseif (
+            $existingCosmosAssignment.principalId -ne $principalId -or
+            $existingCosmosAssignment.roleDefinitionId -ne $cosmosRoleId -or
+            $existingCosmosAssignment.scope -ne $cosmosScope
+          ) {
+            throw 'The deterministic bootstrap Cosmos assignment has unexpected properties.'
           }
 
           $bootstrapSucceeded = $false

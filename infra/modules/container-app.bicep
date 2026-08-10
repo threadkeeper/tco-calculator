@@ -22,6 +22,9 @@ param providerMaxResponseBytes int = 67108864
 @minValue(1)
 param calculationConcurrency int = 10
 param configureAuthentication bool = true
+@minValue(0)
+@maxValue(3)
+param minimumReplicas int = 0
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: '${namePrefix}-app'
@@ -143,7 +146,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       scale: {
         maxReplicas: 3
-        minReplicas: 0
+        minReplicas: minimumReplicas
         rules: [
           {
             http: {

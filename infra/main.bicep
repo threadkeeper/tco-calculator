@@ -27,6 +27,10 @@ param authKeyVaultResourceGroup string
 param authKeyVaultName string
 @description('Apply the Key Vault-backed Container Apps Entra authentication configuration.')
 param configureAuthentication bool = true
+@minValue(0)
+@maxValue(3)
+@description('Minimum application replicas. Deployment bootstrap uses one; steady state uses zero.')
+param minimumReplicas int = 0
 @minValue(1)
 param guestRequestsPerMinute int = 60
 @minValue(1)
@@ -59,6 +63,7 @@ module containerApp 'modules/container-app.bicep' = {
     guestRequestsPerMinute: guestRequestsPerMinute
     location: location
     managedEnvironmentId: managedEnvironmentId
+    minimumReplicas: minimumReplicas
     namePrefix: namePrefix
     providerRefreshesPerHour: providerRefreshesPerHour
     providerMaxResponseBytes: providerMaxResponseBytes
