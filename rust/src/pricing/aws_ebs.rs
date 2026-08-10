@@ -94,13 +94,6 @@ impl VolumeType {
             Self::Io2 => "io2",
         }
     }
-
-    fn as_domain(self) -> EbsVolumeType {
-        match self {
-            Self::Gp3 => EbsVolumeType::Gp3,
-            Self::Io2 => EbsVolumeType::Io2,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

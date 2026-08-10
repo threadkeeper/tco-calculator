@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
 use async_trait::async_trait;
@@ -60,7 +60,7 @@ pub trait ProjectRepository: Send + Sync {
 
 #[derive(Clone, Default)]
 pub struct InMemoryProjectRepository {
-    projects: Arc<RwLock<HashMap<(String, Uuid), StoredProject>>>,
+    projects: Arc<RwLock<ProjectMap>>,
 }
 
 #[derive(Clone)]
@@ -69,28 +69,20 @@ struct StoredProject {
     version: u64,
 }
 
+type ProjectMap = HashMap<(String, Uuid), StoredProject>;
+
 impl InMemoryProjectRepository {
     pub fn new() -> Self {
         Self::default()
     }
 
-    fn read_projects(
-        &self,
-    ) -> Result<
-        std::sync::RwLockReadGuard<'_, HashMap<(String, Uuid), StoredProject>>,
-        RepositoryError,
-    > {
+    fn read_projects(&self) -> Result<RwLockReadGuard<'_, ProjectMap>, RepositoryError> {
         self.projects
             .read()
             .map_err(|_| RepositoryError::Unavailable)
     }
 
-    fn write_projects(
-        &self,
-    ) -> Result<
-        std::sync::RwLockWriteGuard<'_, HashMap<(String, Uuid), StoredProject>>,
-        RepositoryError,
-    > {
+    fn write_projects(&self) -> Result<RwLockWriteGuard<'_, ProjectMap>, RepositoryError> {
         self.projects
             .write()
             .map_err(|_| RepositoryError::Unavailable)

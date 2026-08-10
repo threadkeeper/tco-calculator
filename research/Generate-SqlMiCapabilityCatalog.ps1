@@ -107,7 +107,7 @@ $catalog = [ordered]@{
     candidates = $candidates
 }
 
-$json = $catalog | ConvertTo-Json -Depth 10
+$json = ($catalog | ConvertTo-Json -Depth 10).Replace("`r`n", "`n").Replace("`r", "`n")
 $fullOutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 $outputDirectory = [System.IO.Path]::GetDirectoryName($fullOutputPath)
 [System.IO.Directory]::CreateDirectory($outputDirectory) | Out-Null

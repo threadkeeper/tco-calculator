@@ -41,7 +41,7 @@ struct ProjectResponse {
 }
 
 #[derive(Serialize)]
-struct ProjectSummary {
+pub(crate) struct ProjectSummary {
     id: Uuid,
     name: String,
     project_type: ProjectType,

@@ -22,10 +22,14 @@ pub struct ProblemDetail {
     current_etag: Option<String>,
 }
 
-pub struct Problem {
+struct ProblemResponse {
     status: StatusCode,
     detail: ProblemDetail,
     headers: HeaderMap,
+}
+
+pub struct Problem {
+    response: Box<ProblemResponse>,
 }
 
 impl Problem {
@@ -67,7 +71,7 @@ impl Problem {
             instance,
             "One or more request fields are invalid.",
         );
-        problem.detail.errors = Some(errors);
+        problem.response.detail.errors = Some(errors);
         problem
     }
 
@@ -90,9 +94,9 @@ impl Problem {
             "The project has changed; reload it before saving again.",
         );
         if let Some(current_etag) = current_etag {
-            problem.detail.current_etag = Some(current_etag.to_owned());
+            problem.response.detail.current_etag = Some(current_etag.to_owned());
             if let Ok(value) = HeaderValue::from_str(current_etag) {
-                problem.headers.insert(header::ETAG, value);
+                problem.response.headers.insert(header::ETAG, value);
             }
         }
         problem
@@ -137,7 +141,7 @@ impl Problem {
             "The request quota has been exceeded. Retry after the indicated delay.",
         );
         if let Ok(value) = HeaderValue::from_str(&retry_after_seconds.to_string()) {
-            problem.headers.insert(header::RETRY_AFTER, value);
+            problem.response.headers.insert(header::RETRY_AFTER, value);
         }
         problem
     }
@@ -170,31 +174,38 @@ impl Problem {
         detail: &str,
     ) -> Self {
         Self {
-            status,
-            detail: ProblemDetail {
-                problem_type,
-                title,
-                status: status.as_u16(),
-                detail: detail.to_owned(),
-                instance: instance.to_owned(),
-                request_id: request_context::request_id(),
-                errors: None,
-                current_etag: None,
-            },
-            headers: HeaderMap::new(),
+            response: Box::new(ProblemResponse {
+                status,
+                detail: ProblemDetail {
+                    problem_type,
+                    title,
+                    status: status.as_u16(),
+                    detail: detail.to_owned(),
+                    instance: instance.to_owned(),
+                    request_id: request_context::request_id(),
+                    errors: None,
+                    current_etag: None,
+                },
+                headers: HeaderMap::new(),
+            }),
         }
     }
 }
 
 impl IntoResponse for Problem {
     fn into_response(self) -> axum::response::Response {
+        let ProblemResponse {
+            status,
+            detail,
+            headers,
+        } = *self.response;
         let mut response = (
-            self.status,
+            status,
             [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
-            Json(self.detail),
+            Json(detail),
         )
             .into_response();
-        response.headers_mut().extend(self.headers);
+        response.headers_mut().extend(headers);
         response
     }
 }

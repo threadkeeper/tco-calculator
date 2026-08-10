@@ -37,6 +37,9 @@ struct BucketEntry {
     updated_at: Instant,
 }
 
+#[derive(Debug)]
+struct TokenBucketError;
+
 impl TokenBucket {
     pub fn new(capacity: u32, period: Duration) -> Self {
         Self {
@@ -47,10 +50,10 @@ impl TokenBucket {
         }
     }
 
-    pub fn check(&self, key: &str) -> Result<Option<u64>, ()> {
+    fn check(&self, key: &str) -> Result<Option<u64>, TokenBucketError> {
         let digest: [u8; 32] = Sha256::digest(key.as_bytes()).into();
         let now = Instant::now();
-        let mut entries = self.entries.lock().map_err(|_| ())?;
+        let mut entries = self.entries.lock().map_err(|_| TokenBucketError)?;
         if !entries.contains_key(&digest) && entries.len() >= MAX_TRACKED_KEYS {
             entries.retain(|_, entry| now.duration_since(entry.updated_at) <= self.stale_after);
             if entries.len() >= MAX_TRACKED_KEYS {
@@ -90,7 +93,9 @@ pub async fn enforce_guest_quota(
             Ok(Some(retry_after)) => {
                 return Problem::rate_limited(request.uri().path(), retry_after).into_response();
             }
-            Err(()) => return Problem::internal(request.uri().path()).into_response(),
+            Err(TokenBucketError) => {
+                return Problem::internal(request.uri().path()).into_response();
+            }
             Ok(None) => {}
         }
     }
@@ -111,7 +116,7 @@ pub async fn enforce_refresh_quota(
         Ok(Some(retry_after)) => {
             Problem::rate_limited(request.uri().path(), retry_after).into_response()
         }
-        Err(()) => Problem::internal(request.uri().path()).into_response(),
+        Err(TokenBucketError) => Problem::internal(request.uri().path()).into_response(),
         Ok(None) => next.run(request).await,
     }
 }
