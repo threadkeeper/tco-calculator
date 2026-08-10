@@ -19,6 +19,9 @@ param entraClientSecretUri string
 param guestRequestsPerMinute int = 60
 @minValue(1)
 param providerRefreshesPerHour int = 6
+@minValue(1048576)
+@maxValue(268435456)
+param providerMaxResponseBytes int = 67108864
 @minValue(1)
 param calculationConcurrency int = 10
 
@@ -106,6 +109,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'PROVIDER_REFRESHES_PER_HOUR'
               value: string(providerRefreshesPerHour)
+            }
+            {
+              name: 'PROVIDER_MAX_RESPONSE_BYTES'
+              value: string(providerMaxResponseBytes)
             }
             {
               name: 'CALCULATION_CONCURRENCY'

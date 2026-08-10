@@ -14,7 +14,9 @@ This record separates implemented source behavior from production dependencies t
 
 ## Live HTTPS Provider Adapter
 
-No production HTTPS transport is implemented or approved. Rust's standard library does not provide the required HTTPS client, certificate validation, bounded redirects, decompression limits, timeouts, retry policy, or connection pooling.
+The shared production HTTPS transport is implemented but is not yet wired to AWS or Azure provider orchestration. It permits only the four disclosed pricing hosts over HTTPS, refuses redirects and environment proxies, uses platform certificate validation, sends `azure-sql-tco/{version}`, applies a 10-second connect timeout and 30-second per-request timeout, streams responses through a configurable 1-256 MiB cap, and limits transient retries to three attempts within a 120-second overall budget. HTTP 404, unsupported 4xx/redirects, transient 408/429/5xx, and response/schema failures remain distinct provider outcomes.
+
+Live provider resolution, snapshot cache fallback, single-flight refresh, Cosmos refresh leases, and distributed refresh quotas are not yet implemented. No production pricing egress occurs until those adapters are constructed in non-local application state.
 
 ### Dependency Approval and Pending Acceptance
 

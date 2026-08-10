@@ -23,6 +23,7 @@ pub struct Config {
     pub web_asset_dir: PathBuf,
     pub guest_requests_per_minute: u32,
     pub provider_refreshes_per_hour: u32,
+    pub provider_max_response_bytes: usize,
     pub calculation_concurrency: usize,
 }
 
@@ -63,6 +64,8 @@ pub enum ConfigError {
     InvalidAzureRegion,
     #[error("request quota settings must be positive integers")]
     InvalidQuota,
+    #[error("PROVIDER_MAX_RESPONSE_BYTES must be between 1 MiB and 256 MiB")]
+    InvalidProviderResponseLimit,
 }
 
 impl Config {
@@ -119,6 +122,8 @@ impl Config {
             .unwrap_or_else(|| PathBuf::from("rust/static"));
         let guest_requests_per_minute = positive_u32("GUEST_REQUESTS_PER_MINUTE", 60)?;
         let provider_refreshes_per_hour = positive_u32("PROVIDER_REFRESHES_PER_HOUR", 6)?;
+        let provider_max_response_bytes =
+            provider_response_limit(env::var("PROVIDER_MAX_RESPONSE_BYTES").ok().as_deref())?;
         let calculation_concurrency = positive_u32("CALCULATION_CONCURRENCY", 10)? as usize;
 
         Ok(Self {
@@ -129,6 +134,7 @@ impl Config {
             web_asset_dir,
             guest_requests_per_minute,
             provider_refreshes_per_hour,
+            provider_max_response_bytes,
             calculation_concurrency,
         })
     }
@@ -190,6 +196,16 @@ fn positive_u32(name: &str, default: u32) -> Result<u32, ConfigError> {
     }
 }
 
+fn provider_response_limit(value: Option<&str>) -> Result<usize, ConfigError> {
+    const MIB: usize = 1024 * 1024;
+    let value = value.unwrap_or("67108864");
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|value| (MIB..=256 * MIB).contains(value))
+        .ok_or(ConfigError::InvalidProviderResponseLimit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +244,20 @@ mod tests {
                 Some("southafricanorth".to_owned()),
             ),
             Err(ConfigError::CosmosSettingsInLocalEnvironment)
+        ));
+    }
+
+    #[test]
+    fn provider_response_limit_is_bounded() {
+        assert_eq!(provider_response_limit(None), Ok(64 * 1024 * 1024));
+        assert_eq!(provider_response_limit(Some("1048576")), Ok(1024 * 1024));
+        assert!(matches!(
+            provider_response_limit(Some("1048575")),
+            Err(ConfigError::InvalidProviderResponseLimit)
+        ));
+        assert!(matches!(
+            provider_response_limit(Some("268435457")),
+            Err(ConfigError::InvalidProviderResponseLimit)
         ));
     }
 }

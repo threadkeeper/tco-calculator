@@ -2,7 +2,7 @@
 
 Azure SQL TCO sends only public catalog selectors required to resolve prices. It never sends project names, workload names, quantities, customer inventories, totals, tenant identifiers, subscription identifiers, or commercial agreements to pricing providers.
 
-As of 2026-08-10, local mode performs no pricing-provider egress. It loads a frozen reviewed public-price fixture. The source contains pure provider-response normalizers, but the production HTTPS transport remains blocked pending the dependency review in [docs/PRODUCTION-ADAPTER-READINESS.md](docs/PRODUCTION-ADAPTER-READINESS.md).
+As of 2026-08-10, local mode performs no pricing-provider egress. It loads a frozen reviewed public-price fixture. The source contains pure provider-response normalizers and a host-allowlisted bounded HTTPS transport, but live provider orchestration is not yet constructed in application state. See [docs/PRODUCTION-ADAPTER-READINESS.md](docs/PRODUCTION-ADAPTER-READINESS.md).
 
 ## AWS Public Pricing
 

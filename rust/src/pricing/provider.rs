@@ -33,7 +33,7 @@ pub struct PriceResolution {
     pub warnings: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Error)]
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum ProviderError {
     #[error("requested price was not found")]
     NotFound,

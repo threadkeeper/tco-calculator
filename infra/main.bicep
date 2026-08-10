@@ -15,6 +15,9 @@ param entraClientSecretUri string
 param guestRequestsPerMinute int = 60
 @minValue(1)
 param providerRefreshesPerHour int = 6
+@minValue(1048576)
+@maxValue(268435456)
+param providerMaxResponseBytes int = 67108864
 @minValue(1)
 param calculationConcurrency int = 10
 param tags object = {
@@ -91,6 +94,7 @@ module containerApp 'modules/container-app.bicep' = {
     logAnalyticsSharedKey: monitoring.outputs.sharedKey
     namePrefix: namePrefix
     providerRefreshesPerHour: providerRefreshesPerHour
+    providerMaxResponseBytes: providerMaxResponseBytes
     registryServer: registry.outputs.loginServer
     tags: tags
   }
