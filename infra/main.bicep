@@ -7,6 +7,12 @@ param location string = 'southafricanorth'
 param containerImage string
 param entraClientId string
 param entraClientSecretUri string
+@minValue(1)
+param guestRequestsPerMinute int = 60
+@minValue(1)
+param providerRefreshesPerHour int = 6
+@minValue(1)
+param calculationConcurrency int = 10
 param tags object = {
   application: 'tco-calculator'
   environment: 'dev'
@@ -70,12 +76,15 @@ module containerApp 'modules/container-app.bicep' = {
   params: {
     containerAppsSubnetId: network.outputs.containerAppsSubnetId
     containerImage: containerImage
+    calculationConcurrency: calculationConcurrency
     entraClientId: entraClientId
     entraClientSecretUri: entraClientSecretUri
+    guestRequestsPerMinute: guestRequestsPerMinute
     location: location
     logAnalyticsCustomerId: monitoring.outputs.customerId
     logAnalyticsSharedKey: monitoring.outputs.sharedKey
     namePrefix: namePrefix
+    providerRefreshesPerHour: providerRefreshesPerHour
     registryServer: registry.outputs.loginServer
     tags: tags
   }

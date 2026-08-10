@@ -1,14 +1,18 @@
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use super::{
     decimal::DecimalValue,
-    resource::{ProjectType, PurchaseOption, Resource},
+    resource::{EbsVolumeType, ProjectType, PurchaseOption, Resource},
 };
+use crate::calculation::engine::CalculationRevision;
 
 pub const MAX_PROJECT_RESOURCES: usize = 100;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectSettings {
     pub project_type: ProjectType,
     pub aws_region: Option<String>,
@@ -30,6 +34,7 @@ pub struct ProjectSettings {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct EditableProject {
     pub name: String,
     pub description: Option<String>,
@@ -42,6 +47,7 @@ pub struct EditableProject {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectDocument {
     pub id: Uuid,
+    pub document_type: String,
     pub owner_id: String,
     pub name: String,
     pub description: Option<String>,
@@ -49,6 +55,7 @@ pub struct ProjectDocument {
     pub resources: Vec<Resource>,
     pub aws_price_snapshot_id: Option<String>,
     pub azure_price_snapshot_id: Option<String>,
+    pub latest_calculation_revision: Option<CalculationRevision>,
     pub formula_version: String,
     pub schema_version: String,
     pub created_at: String,
@@ -96,6 +103,32 @@ impl EditableProject {
             ));
         }
 
+        for (pointer, value, prefix) in [
+            (
+                "/aws_price_snapshot_id",
+                self.aws_price_snapshot_id.as_deref(),
+                "aws-",
+            ),
+            (
+                "/azure_price_snapshot_id",
+                self.azure_price_snapshot_id.as_deref(),
+                "azure-",
+            ),
+        ] {
+            if value.is_some_and(|snapshot_id| !is_snapshot_id(snapshot_id, prefix)) {
+                issues.push(issue(
+                    pointer,
+                    "format",
+                    "Snapshot IDs must be server-issued content-addressed identifiers.",
+                ));
+            }
+        }
+
+        validate_settings(&self.settings, &mut issues);
+
+        let mut resource_ids = HashSet::new();
+        let mut volume_ids = HashSet::new();
+
         for (index, resource) in self.resources.iter().enumerate() {
             if resource.project_type() != self.settings.project_type {
                 issues.push(issue(
@@ -106,6 +139,20 @@ impl EditableProject {
             }
 
             let shared = resource.shared();
+            if !resource_ids.insert(shared.id) {
+                issues.push(issue(
+                    &format!("/resources/{index}/id"),
+                    "duplicate",
+                    "Resource IDs must be unique within a project.",
+                ));
+            }
+            if !(1..=160).contains(&shared.workload_name.chars().count()) {
+                issues.push(issue(
+                    &format!("/resources/{index}/workload_name"),
+                    "length",
+                    "Workload name must contain 1 to 160 characters.",
+                ));
+            }
             if !(1..=10_000).contains(&shared.quantity) {
                 issues.push(issue(
                     &format!("/resources/{index}/quantity"),
@@ -113,48 +160,339 @@ impl EditableProject {
                     "Quantity must be between 1 and 10,000.",
                 ));
             }
-        }
+            validate_decimal_range(
+                &mut issues,
+                &format!("/resources/{index}/sql_data_gb_per_instance"),
+                shared.sql_data_gb_per_instance,
+                Decimal::ZERO,
+                Decimal::from(1_000_000_000_u64),
+                false,
+                "SQL data size must be between 0 and 1,000,000,000 GB.",
+            );
+            validate_decimal_range(
+                &mut issues,
+                &format!("/resources/{index}/source_ram_gb_per_instance"),
+                shared.source_ram_gb_per_instance,
+                Decimal::ZERO,
+                Decimal::from(1_000_000_u64),
+                true,
+                "Source RAM must be greater than 0 and no more than 1,000,000 GB.",
+            );
+            validate_decimal_range(
+                &mut issues,
+                &format!("/resources/{index}/annual_hours_per_instance"),
+                shared.annual_hours_per_instance,
+                Decimal::ZERO,
+                Decimal::from(8_784_u32),
+                false,
+                "Annual hours must be between 0 and 8,784.",
+            );
 
-        for (pointer, value) in [
-            (
-                "/settings/source_compute_discount",
-                self.settings.source_compute_discount,
-            ),
-            (
-                "/settings/source_license_discount",
-                self.settings.source_license_discount,
-            ),
-            (
-                "/settings/source_storage_discount",
-                self.settings.source_storage_discount,
-            ),
-            (
-                "/settings/azure_compute_discount",
-                self.settings.azure_compute_discount,
-            ),
-            (
-                "/settings/azure_license_discount",
-                self.settings.azure_license_discount,
-            ),
-            (
-                "/settings/azure_storage_discount",
-                self.settings.azure_storage_discount,
-            ),
-            (
-                "/settings/selected_parity_adjustment",
-                self.settings.selected_parity_adjustment,
-            ),
-        ] {
-            if !value.is_percent() {
-                issues.push(issue(
-                    pointer,
-                    "range",
-                    "Discounts and adjustments must be between 0 and 1.",
-                ));
+            match resource {
+                Resource::Ec2(resource) => {
+                    if resource.instance_type.trim().is_empty() {
+                        issues.push(issue(
+                            &format!("/resources/{index}/instance_type"),
+                            "required",
+                            "EC2 instance type is required.",
+                        ));
+                    }
+                    if !(1..=50).contains(&resource.volumes.len()) {
+                        issues.push(issue(
+                            &format!("/resources/{index}/volumes"),
+                            "limit",
+                            "EC2 resources require 1 to 50 volumes.",
+                        ));
+                    }
+                    for (volume_index, volume) in resource.volumes.iter().enumerate() {
+                        let prefix = format!("/resources/{index}/volumes/{volume_index}");
+                        if !volume_ids.insert(volume.id) {
+                            issues.push(issue(
+                                &format!("{prefix}/id"),
+                                "duplicate",
+                                "Volume IDs must be unique within a project.",
+                            ));
+                        }
+                        if !(1..=80).contains(&volume.label.chars().count()) {
+                            issues.push(issue(
+                                &format!("{prefix}/label"),
+                                "length",
+                                "Volume label must contain 1 to 80 characters.",
+                            ));
+                        }
+                        if volume
+                            .aws_volume_id
+                            .as_ref()
+                            .is_some_and(|id| id.chars().count() > 128)
+                        {
+                            issues.push(issue(
+                                &format!("{prefix}/aws_volume_id"),
+                                "length",
+                                "AWS volume ID must not exceed 128 characters.",
+                            ));
+                        }
+                        if volume.capacity_gb.0 < Decimal::ZERO {
+                            issues.push(issue(
+                                &format!("{prefix}/capacity_gb"),
+                                "range",
+                                "Volume capacity must not be negative.",
+                            ));
+                        }
+                        if volume.volume_type != EbsVolumeType::Ephemeral
+                            && volume.provisioned_iops.is_none()
+                        {
+                            issues.push(issue(
+                                &format!("{prefix}/provisioned_iops"),
+                                "required",
+                                "gp3 and io2 volumes require provisioned IOPS.",
+                            ));
+                        }
+                        if volume
+                            .throughput_mibps
+                            .is_some_and(|throughput| throughput.0 < Decimal::ZERO)
+                        {
+                            issues.push(issue(
+                                &format!("{prefix}/throughput_mibps"),
+                                "range",
+                                "Volume throughput must not be negative.",
+                            ));
+                        }
+                    }
+                }
+                Resource::Rds(resource) => {
+                    for (field, value) in [
+                        ("instance_type", resource.instance_type.as_str()),
+                        ("commercial_term", resource.commercial_term.as_str()),
+                        ("storage_class", resource.storage_class.as_str()),
+                    ] {
+                        if value.trim().is_empty() {
+                            issues.push(issue(
+                                &format!("/resources/{index}/{field}"),
+                                "required",
+                                "RDS catalog selections are required.",
+                            ));
+                        }
+                    }
+                    if resource.source_max_iops > 1_000_000_000 {
+                        issues.push(issue(
+                            &format!("/resources/{index}/source_max_iops"),
+                            "range",
+                            "Source maximum IOPS must not exceed 1,000,000,000.",
+                        ));
+                    }
+                }
+                Resource::OnPrem(resource) => {
+                    for (field, value) in [
+                        ("source_vcpu", resource.source_vcpu),
+                        ("licensable_cores", resource.licensable_cores),
+                    ] {
+                        if !(1..=100_000).contains(&value) {
+                            issues.push(issue(
+                                &format!("/resources/{index}/{field}"),
+                                "range",
+                                "Core counts must be between 1 and 100,000.",
+                            ));
+                        }
+                    }
+                    if resource.source_max_iops > 1_000_000_000 {
+                        issues.push(issue(
+                            &format!("/resources/{index}/source_max_iops"),
+                            "range",
+                            "Source maximum IOPS must not exceed 1,000,000,000.",
+                        ));
+                    }
+                    if resource.hardware_capex_usd.0 < Decimal::ZERO {
+                        issues.push(issue(
+                            &format!("/resources/{index}/hardware_capex_usd"),
+                            "range",
+                            "Hardware CAPEX must not be negative.",
+                        ));
+                    }
+                    validate_decimal_range(
+                        &mut issues,
+                        &format!("/resources/{index}/depreciation_years"),
+                        resource.depreciation_years,
+                        Decimal::ZERO,
+                        Decimal::from(50_u8),
+                        true,
+                        "Depreciation years must be greater than 0 and no more than 50.",
+                    );
+                    if resource
+                        .average_power_kw_override
+                        .is_some_and(|power| power.0 <= Decimal::ZERO)
+                    {
+                        issues.push(issue(
+                            &format!("/resources/{index}/average_power_kw_override"),
+                            "range",
+                            "Average power override must be greater than 0.",
+                        ));
+                    }
+                }
             }
         }
 
         issues
+    }
+}
+
+fn is_snapshot_id(value: &str, prefix: &str) -> bool {
+    value.strip_prefix(prefix).is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
+fn validate_settings(settings: &ProjectSettings, issues: &mut Vec<ValidationIssue>) {
+    if settings.currency != "USD" {
+        issues.push(issue(
+            "/settings/currency",
+            "unsupported",
+            "Currency must be USD.",
+        ));
+    }
+    if settings.azure_region.trim().is_empty() {
+        issues.push(issue(
+            "/settings/azure_region",
+            "required",
+            "Azure region is required.",
+        ));
+    }
+    match settings.project_type {
+        ProjectType::Ec2 | ProjectType::Rds
+            if settings.aws_region.as_deref().is_none_or(str::is_empty) =>
+        {
+            issues.push(issue(
+                "/settings/aws_region",
+                "required",
+                "AWS region is required for AWS projects.",
+            ));
+        }
+        ProjectType::OnPrem if settings.aws_region.is_some() => {
+            issues.push(issue(
+                "/settings/aws_region",
+                "not_allowed",
+                "AWS region must be absent for on-premises projects.",
+            ));
+        }
+        _ => {}
+    }
+
+    for (pointer, value) in [
+        (
+            "/settings/source_compute_discount",
+            settings.source_compute_discount,
+        ),
+        (
+            "/settings/source_license_discount",
+            settings.source_license_discount,
+        ),
+        (
+            "/settings/source_storage_discount",
+            settings.source_storage_discount,
+        ),
+        (
+            "/settings/azure_compute_discount",
+            settings.azure_compute_discount,
+        ),
+        (
+            "/settings/azure_license_discount",
+            settings.azure_license_discount,
+        ),
+        (
+            "/settings/azure_storage_discount",
+            settings.azure_storage_discount,
+        ),
+        (
+            "/settings/selected_parity_adjustment",
+            settings.selected_parity_adjustment,
+        ),
+    ] {
+        if !value.is_percent() {
+            issues.push(issue(
+                pointer,
+                "range",
+                "Discounts and adjustments must be between 0 and 1.",
+            ));
+        }
+    }
+
+    validate_decimal_range(
+        issues,
+        "/settings/default_annual_hours",
+        settings.default_annual_hours,
+        Decimal::ZERO,
+        Decimal::from(8_784_u32),
+        false,
+        "Default annual hours must be between 0 and 8,784.",
+    );
+
+    if settings.project_type == ProjectType::OnPrem {
+        if settings.source_compute_discount != DecimalValue::ZERO
+            || settings.source_storage_discount != DecimalValue::ZERO
+        {
+            issues.push(issue(
+                "/settings",
+                "on_prem_discount_not_allowed",
+                "On-premises compute and storage discounts must be zero.",
+            ));
+        }
+        for (pointer, value) in [
+            (
+                "/settings/enterprise_license_sa_usd_per_two_core_pack",
+                settings.enterprise_license_sa_usd_per_two_core_pack,
+            ),
+            (
+                "/settings/standard_license_sa_usd_per_two_core_pack",
+                settings.standard_license_sa_usd_per_two_core_pack,
+            ),
+        ] {
+            if value.is_none_or(|price| price.0 <= Decimal::ZERO) {
+                issues.push(issue(
+                    pointer,
+                    "required",
+                    "On-premises License + SA pack prices must be greater than 0.",
+                ));
+            }
+        }
+        if !matches!(settings.remaining_coverage_months, Some(12 | 24 | 36)) {
+            issues.push(issue(
+                "/settings/remaining_coverage_months",
+                "required",
+                "Remaining coverage must be 12, 24, or 36 months.",
+            ));
+        }
+        if settings
+            .electricity_rate_usd_per_kwh
+            .is_none_or(|rate| rate.0 < Decimal::ZERO)
+        {
+            issues.push(issue(
+                "/settings/electricity_rate_usd_per_kwh",
+                "required",
+                "On-premises electricity rate must be zero or greater.",
+            ));
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_decimal_range(
+    issues: &mut Vec<ValidationIssue>,
+    pointer: &str,
+    value: DecimalValue,
+    minimum: Decimal,
+    maximum: Decimal,
+    minimum_exclusive: bool,
+    message: &str,
+) {
+    let below_minimum = if minimum_exclusive {
+        value.0 <= minimum
+    } else {
+        value.0 < minimum
+    };
+    if below_minimum || value.0 > maximum {
+        issues.push(issue(pointer, "range", message));
     }
 }
 
@@ -163,5 +501,19 @@ fn issue(pointer: &str, code: &'static str, message: &str) -> ValidationIssue {
         pointer: pointer.to_owned(),
         code,
         message: message.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_snapshot_id;
+
+    #[test]
+    fn snapshot_ids_are_provider_scoped_lowercase_sha256_values() {
+        let digest = "a".repeat(64);
+        assert!(is_snapshot_id(&format!("aws-{digest}"), "aws-"));
+        assert!(!is_snapshot_id(&format!("azure-{digest}"), "aws-"));
+        assert!(!is_snapshot_id(&format!("aws-{}", "A".repeat(64)), "aws-"));
+        assert!(!is_snapshot_id("aws-short", "aws-"));
     }
 }

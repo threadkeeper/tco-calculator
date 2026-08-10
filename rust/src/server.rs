@@ -1,55 +1,100 @@
+use std::path::{Component, Path, PathBuf};
+
 use axum::{
     Router,
     body::Body,
-    http::{HeaderName, HeaderValue, Request, header},
-    response::Html,
+    extract::{DefaultBodyLimit, State},
+    http::{HeaderValue, Method, Request, StatusCode, header},
+    middleware,
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
+use thiserror::Error;
 use tower_http::{
-    compression::CompressionLayer,
-    limit::RequestBodyLimitLayer,
-    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    set_header::SetResponseHeaderLayer,
-    trace::TraceLayer,
+    compression::CompressionLayer, set_header::SetResponseHeaderLayer, trace::TraceLayer,
 };
 
-use crate::{api, health, problem::Problem};
+use crate::{
+    api,
+    config::AppEnvironment,
+    health,
+    problem::Problem,
+    rate_limit, request_context,
+    state::{AppState, StateError},
+};
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
-const REQUEST_ID_HEADER: &str = "x-request-id";
 
-pub fn router(_config: crate::config::Config) -> Router {
-    let request_id_header = HeaderName::from_static(REQUEST_ID_HEADER);
+#[derive(Debug, Error)]
+pub enum ServerError {
+    #[error(transparent)]
+    State(#[from] StateError),
+    #[error("WEB_ASSET_DIR must contain index.html outside local mode: {0}")]
+    MissingStaticIndex(PathBuf),
+}
+
+pub fn router(mut config: crate::config::Config) -> Result<Router, ServerError> {
+    config.web_asset_dir = validate_asset_root(&config)?;
+    let state = AppState::in_memory(config)?;
     let api_router = Router::new()
         .route("/session", get(api::session::get_session))
         .route("/catalog/aws/regions", get(api::catalog::aws_regions))
+        .route(
+            "/catalog/aws/ec2/instances",
+            get(api::catalog::ec2_instances),
+        )
+        .route(
+            "/catalog/aws/rds/instances",
+            get(api::catalog::rds_instances),
+        )
+        .route("/catalog/aws/rds/options", get(api::catalog::rds_options))
+        .route("/catalog/aws/ebs/types", get(api::catalog::ebs_types))
         .route(
             "/catalog/azure/mi/purchase-options",
             get(api::catalog::purchase_options),
         )
         .route("/pricing/aws/resolve", post(api::pricing::resolve_aws))
-        .route("/pricing/aws/refresh", post(api::pricing::refresh_aws))
+        .route(
+            "/pricing/aws/refresh",
+            post(api::pricing::refresh_aws).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::enforce_refresh_quota,
+            )),
+        )
         .route("/pricing/azure/resolve", post(api::pricing::resolve_azure))
-        .route("/pricing/azure/refresh", post(api::pricing::refresh_azure))
+        .route(
+            "/pricing/azure/refresh",
+            post(api::pricing::refresh_azure).layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::enforce_refresh_quota,
+            )),
+        )
         .route("/calculations", post(api::calculations::calculate))
         .route(
             "/projects",
-            get(api::projects::unauthorized).post(api::projects::unauthorized),
+            get(api::projects::list).post(api::projects::create),
         )
         .route(
             "/projects/{project_id}",
-            get(api::projects::unauthorized)
-                .put(api::projects::unauthorized)
-                .delete(api::projects::unauthorized),
+            get(api::projects::get)
+                .put(api::projects::update)
+                .delete(api::projects::delete),
         )
-        .fallback(api_not_found);
+        .fallback(api_not_found)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::enforce_guest_quota,
+        ))
+        .layer(DefaultBodyLimit::max(1_048_576))
+        .with_state(state.clone());
 
-    Router::new()
+    Ok(Router::new()
         .route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
         .route("/version", get(health::version))
         .nest("/api/v1", api_router)
-        .fallback(index)
+        .fallback(static_asset)
+        .with_state(state)
         .layer(CompressionLayer::new())
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
@@ -69,17 +114,138 @@ pub fn router(_config: crate::config::Config) -> Router {
                 "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
             ),
         ))
-        .layer(RequestBodyLimitLayer::new(1_048_576))
         .layer(TraceLayer::new_for_http())
-        .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
-        .layer(SetRequestIdLayer::new(
-            request_id_header,
-            MakeRequestUuid,
-        ))
+        .layer(middleware::from_fn(request_context::assign_request_id)))
 }
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
+fn validate_asset_root(config: &crate::config::Config) -> Result<PathBuf, ServerError> {
+    let index = config.web_asset_dir.join("index.html");
+    if config.environment != AppEnvironment::Local && !index.is_file() {
+        return Err(ServerError::MissingStaticIndex(index));
+    }
+    Ok(config
+        .web_asset_dir
+        .canonicalize()
+        .unwrap_or_else(|_| config.web_asset_dir.clone()))
+}
+
+async fn static_asset(State(state): State<AppState>, request: Request<Body>) -> Response {
+    if request.method() != Method::GET && request.method() != Method::HEAD {
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
+
+    let request_path = request.uri().path();
+    let Some(relative_path) = safe_relative_path(request_path) else {
+        return Problem::not_found(request_path, "The requested asset does not exist.")
+            .into_response();
+    };
+    let root = &state.config.web_asset_dir;
+    let requested = root.join(&relative_path);
+    let asset_path = match tokio::fs::canonicalize(&requested).await {
+        Ok(path) if path.starts_with(root) && path.is_file() => Some(path),
+        _ if relative_path.extension().is_none() => {
+            let index = root.join("index.html");
+            tokio::fs::canonicalize(index).await.ok()
+        }
+        _ => None,
+    };
+
+    let Some(asset_path) = asset_path.filter(|path| path.starts_with(root) && path.is_file())
+    else {
+        if relative_path.extension().is_none() && state.config.environment == AppEnvironment::Local
+        {
+            return embedded_index(request.method() == Method::HEAD);
+        }
+        return Problem::not_found(request_path, "The requested asset does not exist.")
+            .into_response();
+    };
+
+    match tokio::fs::read(&asset_path).await {
+        Ok(bytes) => asset_response(
+            &asset_path,
+            bytes,
+            request.method() == Method::HEAD,
+            asset_path
+                .file_name()
+                .is_some_and(|name| name == "index.html"),
+        ),
+        Err(_) => Problem::internal(request_path).into_response(),
+    }
+}
+
+fn safe_relative_path(request_path: &str) -> Option<PathBuf> {
+    if request_path.contains('%') || request_path.contains('\\') {
+        return None;
+    }
+    let value = request_path.trim_start_matches('/');
+    if value.is_empty() {
+        return Some(PathBuf::from("index.html"));
+    }
+    let path = Path::new(value);
+    path.components()
+        .all(|component| matches!(component, Component::Normal(_)))
+        .then(|| path.to_path_buf())
+}
+
+fn embedded_index(head_only: bool) -> Response {
+    let body = if head_only {
+        Body::empty()
+    } else {
+        Body::from(INDEX_HTML)
+    };
+    response_with_headers(body, "text/html; charset=utf-8", "no-cache")
+}
+
+fn asset_response(path: &Path, bytes: Vec<u8>, head_only: bool, index: bool) -> Response {
+    let body = if head_only {
+        Body::empty()
+    } else {
+        Body::from(bytes)
+    };
+    let cache_control = if index {
+        "no-cache"
+    } else if path
+        .components()
+        .any(|component| component.as_os_str() == "immutable")
+    {
+        "public, max-age=31536000, immutable"
+    } else {
+        "public, max-age=3600"
+    };
+    response_with_headers(body, content_type(path), cache_control)
+}
+
+fn response_with_headers(
+    body: Body,
+    content_type: &'static str,
+    cache_control: &'static str,
+) -> Response {
+    let mut response = Response::new(body);
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    response
+}
+
+fn content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("css") => "text/css; charset=utf-8",
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") | Some("mjs") => "text/javascript; charset=utf-8",
+        Some("json") | Some("map") => "application/json; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("ico") => "image/x-icon",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
+        _ => "application/octet-stream",
+    }
 }
 
 async fn api_not_found(request: Request<Body>) -> Problem {

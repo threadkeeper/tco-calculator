@@ -9,6 +9,12 @@ param registryServer string
 param containerImage string
 param entraClientId string
 param entraClientSecretUri string
+@minValue(1)
+param guestRequestsPerMinute int = 60
+@minValue(1)
+param providerRefreshesPerHour int = 6
+@minValue(1)
+param calculationConcurrency int = 10
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: '${namePrefix}-cae'
@@ -78,6 +84,18 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'HTTP_BIND'
               value: '0.0.0.0:8080'
+            }
+            {
+              name: 'GUEST_REQUESTS_PER_MINUTE'
+              value: string(guestRequestsPerMinute)
+            }
+            {
+              name: 'PROVIDER_REFRESHES_PER_HOUR'
+              value: string(providerRefreshesPerHour)
+            }
+            {
+              name: 'CALCULATION_CONCURRENCY'
+              value: string(calculationConcurrency)
             }
           ]
           image: containerImage

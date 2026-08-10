@@ -1,4 +1,5 @@
 pub mod api;
+pub mod auth;
 pub mod calculation;
 pub mod config;
 pub mod domain;
@@ -6,4 +7,7 @@ pub mod health;
 pub mod persistence;
 pub mod pricing;
 pub mod problem;
+pub mod rate_limit;
+pub mod request_context;
 pub mod server;
+pub mod state;

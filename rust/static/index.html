@@ -30,18 +30,18 @@
   </head>
   <body>
     <header>
-      <div class="brand">Azure SQL TCO <span class="version">pass 1 scaffold</span></div>
+      <div class="brand">Azure SQL TCO <span class="version">local API fallback</span></div>
       <div class="identity">Guest</div>
     </header>
     <main>
       <section class="title">
         <h1>Projects</h1>
-        <button type="button" disabled>New project</button>
+        <button type="button" disabled>Frontend build required</button>
       </section>
-      <aside class="notice"><strong>Guest draft:</strong> temporary projects stay only on this device and cannot be saved.</aside>
+      <aside class="notice"><strong>Diagnostic mode:</strong> the Rust API is running without validated Svelte build assets.</aside>
       <section class="table scroll" aria-label="Projects">
         <div class="head" aria-hidden="true"><span>Name</span><span>Type</span><span>Modified</span><span>Source region</span><span>Azure region</span><span>Resources</span></div>
-        <div class="empty"><strong>Application scaffold ready</strong><span>Domain functionality arrives in pass 2.</span></div>
+        <div class="empty"><strong>Svelte build not configured</strong><span>Build the frontend on the approved machine and set WEB_ASSET_DIR to web/build.</span></div>
       </section>
       <footer>API checks: <a href="/healthz">health</a> · <a href="/readyz">readiness</a> · <a href="/version">version</a></footer>
     </main>

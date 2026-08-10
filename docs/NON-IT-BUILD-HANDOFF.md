@@ -8,7 +8,7 @@ Confirm stable Rust, a working native linker, Node.js 24, pnpm 11.20.0, Azure CL
 
 ## 2. Create the Frontend Lockfile
 
-The managed workstation could not contact a JavaScript package feed, so pass 1 cannot commit `pnpm-lock.yaml`.
+The managed workstation could not use JavaScript package operations, so the repository does not contain `web/pnpm-lock.yaml`. Do not reuse an npm lockfile or an ignored `node_modules` tree.
 
 ```powershell
 pnpm --dir web install
@@ -30,12 +30,17 @@ pnpm --dir web install --frozen-lockfile
 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --manifest-path rust/Cargo.toml --all-features
+pnpm --dir web run api:generate
 pnpm --dir web run lint
 pnpm --dir web run check
 pnpm --dir web run test
 pnpm --dir web run build
 az bicep build --file infra/main.bicep
 ```
+
+Review the generated OpenAPI TypeScript diff before continuing. Use an approved Rust coverage tool to measure the specification's 80% target only after its exact package/version and installation method are reviewed; until a report exists, record coverage as not measured.
+
+The source includes transport-neutral AWS/Azure normalizers but no live HTTPS transport or Cosmos adapter. Complete the dependency review and acceptance gates in [PRODUCTION-ADAPTER-READINESS.md](PRODUCTION-ADAPTER-READINESS.md) before enabling non-local readiness.
 
 Record any failure exactly. Do not disable TLS, lint rules, tests, authentication, endpoint protection, or certificate validation to make a gate pass.
 

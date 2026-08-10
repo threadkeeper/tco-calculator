@@ -25,7 +25,7 @@ pub enum LicenseBasis {
     Byol,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum PurchaseOption {
     #[serde(rename = "payg")]
     Payg,
@@ -43,6 +43,19 @@ pub enum PurchaseOption {
     SavingsOneYear,
     #[serde(rename = "ahbsv-one-year")]
     AhbSavingsOneYear,
+}
+
+impl PurchaseOption {
+    pub const ALL: [Self; 8] = [
+        Self::Payg,
+        Self::Ahb,
+        Self::OneYear,
+        Self::AhbOneYear,
+        Self::ThreeYear,
+        Self::AhbThreeYear,
+        Self::SavingsOneYear,
+        Self::AhbSavingsOneYear,
+    ];
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -13,6 +13,7 @@
   --source: #b45f06;
   --focus: #005fb8;
   --shadow: 0 2px 8px rgb(26 50 58 / 9%);
+  --line: var(--border);
 }
 
 * {
@@ -40,6 +41,9 @@ a:focus-visible {
 }
 
 .app-bar {
+  position: sticky;
+  top: 0;
+  z-index: 12;
   min-height: 58px;
   display: flex;
   align-items: center;
@@ -226,4 +230,16 @@ h1 {
     flex-direction: column;
     gap: 3px;
   }
+}
+
+.current-project {
+  overflow: hidden;
+  max-width: min(28vw, 360px);
+  padding-left: 11px;
+  color: #e5f1ef;
+  border-left: 1px solid #668087;
+  font-size: 0.82rem;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

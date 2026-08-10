@@ -1,7 +1,10 @@
-use axum::Json;
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 
-use crate::config::{APP_VERSION, FORMULA_VERSION, SCHEMA_VERSION};
+use crate::{
+    config::{APP_VERSION, AppEnvironment, FORMULA_VERSION, SCHEMA_VERSION},
+    state::AppState,
+};
 
 #[derive(Serialize)]
 pub struct HealthResponse {
@@ -26,12 +29,28 @@ pub async fn healthz() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-pub async fn readyz() -> Json<ReadinessResponse> {
-    Json(ReadinessResponse {
-        status: "ready",
-        persistence: "memory",
-        price_providers: "stubbed",
-    })
+pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+    let local = state.config.environment == AppEnvironment::Local;
+    (
+        if local {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(ReadinessResponse {
+            status: if local { "ready" } else { "not_ready" },
+            persistence: if local {
+                "memory_local_only"
+            } else {
+                "not_configured"
+            },
+            price_providers: if local {
+                "frozen_local_fixture"
+            } else {
+                "not_configured"
+            },
+        }),
+    )
 }
 
 pub async fn version() -> Json<VersionResponse> {

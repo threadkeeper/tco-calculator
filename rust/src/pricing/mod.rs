@@ -1,1 +1,8 @@
+pub mod aws_ebs;
+pub mod aws_ec2;
+pub mod aws_rds;
+pub mod azure_sql_mi;
+pub mod local_fixture;
 pub mod provider;
+pub mod repository;
+pub mod snapshot;

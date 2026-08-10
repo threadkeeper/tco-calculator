@@ -1,0 +1,230 @@
+{
+  "aws": {
+    "metadata": {
+      "status": "stale",
+      "retrieved_at": "2026-08-07T07:41:09Z",
+      "source_published_at": "2026-08-06T17:17:52Z",
+      "currency": "USD",
+      "source_urls": [
+        "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/Bring%20your%20own%20license/Yes/index.json",
+        "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/20260806022930/eu-west-1/index.json",
+        "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDSOCPULicenseFees/20260529185918/eu-west-1/index.json"
+      ],
+      "parser_schema_version": "local-public-fixture-v1",
+      "warnings": [
+        "Local development uses a frozen public-price fixture; refresh on an approved build machine before relying on current rates."
+      ]
+    },
+    "source_region": "eu-west-1",
+    "ec2_rates": [
+      {
+        "stable_key": "eu-west-1|on-demand|shared|windows|r6id.8xlarge",
+        "instance_type": "r6id.8xlarge",
+        "source_vcpu": 32,
+        "catalog_memory_gb": "256.0000000000",
+        "compute_hourly": "2.6880000000",
+        "standard_license_hourly": "5.3120000000",
+        "enterprise_license_hourly": "13.4720000000",
+        "provenance": {
+          "source_url": "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/Bring%20your%20own%20license/Yes/index.json",
+          "effective_at": "2026-08-06T17:17:52Z",
+          "source_version": "20260806171752",
+          "meter_ids": [
+            "WBZEUSYHP4AGTFTW.JRTCKXETXF.6YS6EN2CT7",
+            "SSA9PHVFXBY73R5N.JRTCKXETXF.6YS6EN2CT7",
+            "ZXYD8JMFAWZWR2UA.JRTCKXETXF.6YS6EN2CT7"
+          ]
+        }
+      }
+    ],
+    "rds_rates": [
+      {
+        "stable_key": "eu-west-1|db.m6i.8xlarge|single-az|on-demand|gp3",
+        "instance_type": "db.m6i.8xlarge",
+        "deployment": "single_az",
+        "commercial_term": "on-demand",
+        "storage_class": "gp3",
+        "source_vcpu": 32,
+        "catalog_memory_gb": "128",
+        "effective_compute_hourly": "5.1040000000",
+        "storage_monthly_per_gb": "0.1270000000",
+        "standard_license_core_hourly": "0.1200000000",
+        "enterprise_license_core_hourly": "0.3750000000",
+        "provenance": {
+          "source_url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/20260806022930/eu-west-1/index.json",
+          "effective_at": "2026-08-06T02:29:30Z",
+          "source_version": "20260806022930",
+          "meter_ids": [
+            "XT8AUU2B68GEZUWJ.JRTCKXETXF.6YS6EN2CT7",
+            "JFZE6WDYB3PE6MR7.JRTCKXETXF.6YS6EN2CT7",
+            "HR8M8BTYFNKF6WE2.JRTCKXETXF.6YS6EN2CT7"
+          ]
+        }
+      }
+    ],
+    "ebs_rates": []
+  },
+  "azure": {
+    "metadata": {
+      "status": "stale",
+      "retrieved_at": "2026-08-06T14:56:39Z",
+      "source_published_at": null,
+      "currency": "USD",
+      "source_urls": [
+        "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca",
+        "https://prices.azure.com/api/retail/prices?currencyCode='USD'&$filter=serviceName%20eq%20'SQL%20Managed%20Instance'%20and%20armRegionName%20eq%20'swedencentral'"
+      ],
+      "parser_schema_version": "local-public-fixture-v1",
+      "warnings": [
+        "Local development uses a frozen public-price fixture; refresh on an approved build machine before relying on current rates."
+      ]
+    },
+    "target_region": "swedencentral",
+    "mi_rates": [
+      {
+        "stable_key": "swedencentral|next-gen-general-purpose|premium-series|32|false|payg",
+        "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-32",
+        "purchase_option": "payg",
+        "compute_hourly": "5.632",
+        "license_hourly": "3.198912",
+        "storage_monthly_per_gb": "0.13685",
+        "additional_memory_per_gb_hourly": "0.011663",
+        "provenance": {
+          "source_url": "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca",
+          "effective_at": null,
+          "source_version": "2026-08-06",
+          "meter_ids": [
+            "5677937d-9840-5fff-a82e-bc2f0aadb4ef",
+            "84c8c05b-dcea-5a14-98a5-155bed49e107"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|next-gen-general-purpose|premium-series|32|false|ahb",
+        "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-32",
+        "purchase_option": "ahb",
+        "compute_hourly": "5.632",
+        "license_hourly": "0",
+        "storage_monthly_per_gb": "0.13685",
+        "additional_memory_per_gb_hourly": "0.011663",
+        "provenance": {
+          "source_url": "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca",
+          "effective_at": null,
+          "source_version": "2026-08-06",
+          "meter_ids": [
+            "5677937d-9840-5fff-a82e-bc2f0aadb4ef",
+            "84c8c05b-dcea-5a14-98a5-155bed49e107"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|next-gen-general-purpose|premium-series|32|false|one-year",
+        "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-32",
+        "purchase_option": "one-year",
+        "compute_hourly": "3.6602739712",
+        "license_hourly": "3.198912",
+        "storage_monthly_per_gb": "0.13685",
+        "additional_memory_per_gb_hourly": "0.011663",
+        "provenance": {
+          "source_url": "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca",
+          "effective_at": null,
+          "source_version": "2026-08-06",
+          "meter_ids": [
+            "5677937d-9840-5fff-a82e-bc2f0aadb4ef",
+            "84c8c05b-dcea-5a14-98a5-155bed49e107"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|next-gen-general-purpose|premium-series|32|false|ahbone-year",
+        "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-32",
+        "purchase_option": "ahbone-year",
+        "compute_hourly": "3.6602739712",
+        "license_hourly": "0",
+        "storage_monthly_per_gb": "0.13685",
+        "additional_memory_per_gb_hourly": "0.011663",
+        "provenance": {
+          "source_url": "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca",
+          "effective_at": null,
+          "source_version": "2026-08-06",
+          "meter_ids": [
+            "5677937d-9840-5fff-a82e-bc2f0aadb4ef",
+            "84c8c05b-dcea-5a14-98a5-155bed49e107"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|next-gen-general-purpose|premium-series|32|false|three-year",
+        "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-32",
+        "purchase_option": "three-year",
+        "compute_hourly": "2.5339421600",
+        "license_hourly": "3.198912",
+        "storage_monthly_per_gb": "0.13685",
+        "additional_memory_per_gb_hourly": "0.011663",
+        "provenance": {
+          "source_url": "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca",
+          "effective_at": null,
+          "source_version": "2026-08-06",
+          "meter_ids": [
+            "5677937d-9840-5fff-a82e-bc2f0aadb4ef",
+            "84c8c05b-dcea-5a14-98a5-155bed49e107"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|next-gen-general-purpose|premium-series|32|false|ahbthree-year",
+        "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-32",
+        "purchase_option": "ahbthree-year",
+        "compute_hourly": "2.5339421600",
+        "license_hourly": "0",
+        "storage_monthly_per_gb": "0.13685",
+        "additional_memory_per_gb_hourly": "0.011663",
+        "provenance": {
+          "source_url": "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca",
+          "effective_at": null,
+          "source_version": "2026-08-06",
+          "meter_ids": [
+            "5677937d-9840-5fff-a82e-bc2f0aadb4ef",
+            "84c8c05b-dcea-5a14-98a5-155bed49e107"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|next-gen-general-purpose|premium-series|32|false|sv-one-year",
+        "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-32",
+        "purchase_option": "sv-one-year",
+        "compute_hourly": "4.5056",
+        "license_hourly": "2.23936",
+        "storage_monthly_per_gb": "0.13685",
+        "additional_memory_per_gb_hourly": "0.011663",
+        "provenance": {
+          "source_url": "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca",
+          "effective_at": null,
+          "source_version": "2026-08-06",
+          "meter_ids": [
+            "5677937d-9840-5fff-a82e-bc2f0aadb4ef",
+            "84c8c05b-dcea-5a14-98a5-155bed49e107"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|next-gen-general-purpose|premium-series|32|false|ahbsv-one-year",
+        "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-32",
+        "purchase_option": "ahbsv-one-year",
+        "compute_hourly": "4.5056",
+        "license_hourly": "0",
+        "storage_monthly_per_gb": "0.13685",
+        "additional_memory_per_gb_hourly": "0.011663",
+        "provenance": {
+          "source_url": "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca",
+          "effective_at": null,
+          "source_version": "2026-08-06",
+          "meter_ids": [
+            "5677937d-9840-5fff-a82e-bc2f0aadb4ef",
+            "84c8c05b-dcea-5a14-98a5-155bed49e107"
+          ]
+        }
+      }
+    ]
+  }
+}

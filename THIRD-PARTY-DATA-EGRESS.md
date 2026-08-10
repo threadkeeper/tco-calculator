@@ -2,13 +2,15 @@
 
 Azure SQL TCO sends only public catalog selectors required to resolve prices. It never sends project names, workload names, quantities, customer inventories, totals, tenant identifiers, subscription identifiers, or commercial agreements to pricing providers.
 
+As of 2026-08-10, local mode performs no pricing-provider egress. It loads a frozen reviewed public-price fixture. The source contains pure provider-response normalizers, but the production HTTPS transport remains blocked pending the dependency review in [docs/PRODUCTION-ADAPTER-READINESS.md](docs/PRODUCTION-ADAPTER-READINESS.md).
+
 ## AWS Public Pricing
 
 - Destinations: AWS EC2 Calculator metered-unit maps and AWS Price List Bulk API endpoints listed in the specification.
 - Data sent: currency, AWS region, service, SKU, operating system, tenancy, SQL edition, deployment, commercial term, and storage meter filters.
 - Data received: public catalog metadata and public USD price dimensions.
 - Credentials: none.
-- Retention: normalized snapshots are cached for up to 30 days; saved revisions embed only the exact resolved rates and provenance used.
+- Runtime usability: normalized snapshots are fresh through 24 hours, stale but usable through 7 days, and expired afterward for new calculations. The Cosmos document TTL may retain expired records for cleanup/audit policy, but it must not make them usable. Saved revisions embed only the exact resolved rates and provenance used.
 
 ## Azure Public Pricing
 
