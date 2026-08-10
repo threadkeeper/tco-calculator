@@ -249,8 +249,14 @@ mod tests {
 
     #[test]
     fn provider_response_limit_is_bounded() {
-        assert_eq!(provider_response_limit(None), Ok(64 * 1024 * 1024));
-        assert_eq!(provider_response_limit(Some("1048576")), Ok(1024 * 1024));
+        assert_eq!(
+            provider_response_limit(None).expect("default response limit"),
+            64 * 1024 * 1024
+        );
+        assert_eq!(
+            provider_response_limit(Some("1048576")).expect("minimum response limit"),
+            1024 * 1024
+        );
         assert!(matches!(
             provider_response_limit(Some("1048575")),
             Err(ConfigError::InvalidProviderResponseLimit)

@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use reqwest::{
-    Client, Response, StatusCode, Url,
+    Client, StatusCode, Url,
     header::{ETAG, HeaderMap, LAST_MODIFIED, RETRY_AFTER},
     redirect::Policy,
 };
