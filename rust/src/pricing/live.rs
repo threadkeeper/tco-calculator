@@ -121,6 +121,7 @@ fn provider_url(base: &str, segments: &[&str]) -> Result<Url, ProviderError> {
     let mut url = Url::parse(base).map_err(|_| ProviderError::Unsupported)?;
     url.path_segments_mut()
         .map_err(|_| ProviderError::Unsupported)?
+        .pop_if_empty()
         .extend(segments);
     Ok(url)
 }
