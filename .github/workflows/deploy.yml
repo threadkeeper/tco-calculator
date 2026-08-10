@@ -188,13 +188,34 @@ jobs:
         if: inputs.operation == 'deploy'
         shell: pwsh
         run: |
+          $deploymentName = "tco-foundation-$env:GITHUB_RUN_ID"
           az deployment group create `
-            --name "tco-foundation-$env:GITHUB_RUN_ID" `
+            --name $deploymentName `
             --resource-group $env:AZURE_RESOURCE_GROUP `
             --template-file infra/foundation.bicep `
             --parameters infra/parameters/foundation-dev.bicepparam `
             --only-show-errors `
             --output none
+          $deploymentExitCode = $LASTEXITCODE
+          if ($deploymentExitCode -ne 0) {
+            $failedOperations = az deployment operation group list `
+              --resource-group $env:AZURE_RESOURCE_GROUP `
+              --name $deploymentName `
+              --query "[?properties.provisioningState=='Failed'].{resource:properties.targetResource.resourceName,resourceType:properties.targetResource.resourceType,error:properties.statusMessage.error}" `
+              --only-show-errors `
+              --output json | ConvertFrom-Json
+            $failureJson = $failedOperations | ConvertTo-Json -Depth 20
+            Write-Host 'Failed ARM deployment operations:'
+            Write-Host $failureJson
+            @(
+              '### Azure foundation deployment failed'
+              ''
+              '```json'
+              $failureJson
+              '```'
+            ) >> $env:GITHUB_STEP_SUMMARY
+            exit $deploymentExitCode
+          }
 
       - name: Verify foundation identifiers
         if: inputs.operation == 'deploy'

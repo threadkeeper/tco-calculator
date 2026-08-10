@@ -14,6 +14,8 @@ The Bicep templates define one development environment in South Africa North. Th
 
 The README button and `infra/foundation.bicep` stop at this boundary. They do not build or push an image, create a Container App, configure Container Apps authentication, read an Entra secret, or create runtime role assignments.
 
+Basic ACR keeps its public endpoint and export policy enabled so the separate GitHub-hosted application workflow can publish reviewed images. Authentication remains RBAC-based and the registry admin account stays disabled. Disabling artifact export requires a separately approved Premium registry, private endpoint, and network design.
+
 The separate application workflow owns the OCI image, `infra/main.bicep` application layer, externally accessible Container App, built-in Entra authentication, system-assigned identity, ACR pull and Cosmos data-contributor assignments, readiness checks, and application updates. No user-assigned identity, resource key, connection string, service-principal secret, production parameter set, or application administrator role is approved.
 
 ## Parameters

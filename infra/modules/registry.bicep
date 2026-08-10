@@ -16,8 +16,9 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
     dataEndpointEnabled: false
     networkRuleBypassOptions: 'AzureServices'
     policies: {
+      // Disabling exports requires Premium ACR with public access disabled.
       exportPolicy: {
-        status: 'disabled'
+        status: 'enabled'
       }
       quarantinePolicy: {
         status: 'disabled'
