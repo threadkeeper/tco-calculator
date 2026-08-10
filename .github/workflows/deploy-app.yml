@@ -320,6 +320,7 @@ jobs:
           $foundationChanges = @(
             $plan.changes | Where-Object {
               $resourceId = $_.resourceId
+              $_.changeType -notin @('Ignore', 'NoChange') -and
               $foundationPatterns.Where({ $resourceId -match $_ }).Count -gt 0
             }
           )
