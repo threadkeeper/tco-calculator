@@ -264,7 +264,7 @@ impl PricingHttpClient {
         } {
             received = received
                 .checked_add(chunk.len())
-                .ok_or_else(|| AttemptFailure::Terminal(ProviderError::SchemaChanged))?;
+                .ok_or(AttemptFailure::Terminal(ProviderError::SchemaChanged))?;
             if received > self.max_response_bytes {
                 drop(sender);
                 let _ = projector.await;
