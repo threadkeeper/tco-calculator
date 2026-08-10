@@ -103,7 +103,7 @@ impl ProjectRepository for CosmosProjectRepository {
             .map_err(map_cosmos_error)?;
         let mut items = self
             .container
-            .query_items::<ProjectDocument>(query, FeedScope::partition(owner_id), None)
+            .query_items::<ProjectDocument>(query, FeedScope::partition(owner_id.to_owned()), None)
             .await
             .map_err(map_cosmos_error)?;
         let mut documents = Vec::new();
@@ -139,7 +139,12 @@ impl ProjectRepository for CosmosProjectRepository {
             ItemWriteOptions::default().with_precondition(Precondition::if_none_match("*"));
         let response = self
             .container
-            .create_item(owner_id, &id.to_string(), &document, Some(options))
+            .create_item(
+                owner_id.to_owned(),
+                &id.to_string(),
+                &document,
+                Some(options),
+            )
             .await
             .map_err(map_cosmos_error)?;
         document.etag = Self::response_etag(&response)?;
@@ -153,7 +158,7 @@ impl ProjectRepository for CosmosProjectRepository {
     ) -> Result<ProjectDocument, RepositoryError> {
         let response = self
             .container
-            .read_item(owner_id, &project_id.to_string(), None)
+            .read_item(owner_id.to_owned(), &project_id.to_string(), None)
             .await
             .map_err(map_cosmos_error)?;
         let etag = Self::response_etag(&response)?;
@@ -188,7 +193,12 @@ impl ProjectRepository for CosmosProjectRepository {
             ItemWriteOptions::default().with_precondition(Precondition::if_match(if_match));
         let response = self
             .container
-            .replace_item(owner_id, &project_id.to_string(), &document, Some(options))
+            .replace_item(
+                owner_id.to_owned(),
+                &project_id.to_string(),
+                &document,
+                Some(options),
+            )
             .await
             .map_err(map_cosmos_error)?;
         document.etag = Self::response_etag(&response)?;
@@ -197,7 +207,7 @@ impl ProjectRepository for CosmosProjectRepository {
 
     async fn delete(&self, owner_id: &str, project_id: Uuid) -> Result<(), RepositoryError> {
         self.container
-            .delete_item(owner_id, &project_id.to_string(), None)
+            .delete_item(owner_id.to_owned(), &project_id.to_string(), None)
             .await
             .map(|_| ())
             .map_err(map_cosmos_error)
