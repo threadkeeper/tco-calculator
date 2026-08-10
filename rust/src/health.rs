@@ -30,9 +30,9 @@ pub async fn healthz() -> Json<HealthResponse> {
 }
 
 pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
-    let local = state.config.environment == AppEnvironment::Local;
     let persistence_ready = state.projects.check_health().await.is_ok();
-    let providers_ready = local;
+    let providers_ready =
+        state.config.environment == AppEnvironment::Local || state.live_pricing.is_some();
     let ready = persistence_ready && providers_ready;
     (
         if ready {
@@ -47,13 +47,17 @@ pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
                 (PersistenceBackend::Cosmos, true) => "cosmos_ready",
                 (_, false) => "unavailable",
             },
-            price_providers: if providers_ready {
-                "frozen_local_fixture"
-            } else {
-                "not_configured"
-            },
+            price_providers: price_provider_status(state.config.environment, providers_ready),
         }),
     )
+}
+
+fn price_provider_status(environment: AppEnvironment, configured: bool) -> &'static str {
+    match (environment, configured) {
+        (AppEnvironment::Local, true) => "frozen_local_fixture",
+        (AppEnvironment::Development | AppEnvironment::Production, true) => "configured",
+        (_, false) => "not_configured",
+    }
 }
 
 pub async fn version() -> Json<VersionResponse> {
@@ -62,4 +66,29 @@ pub async fn version() -> Json<VersionResponse> {
         formula_version: FORMULA_VERSION,
         schema_version: SCHEMA_VERSION,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readiness_reports_provider_configuration_by_environment() {
+        assert_eq!(
+            price_provider_status(AppEnvironment::Local, true),
+            "frozen_local_fixture"
+        );
+        assert_eq!(
+            price_provider_status(AppEnvironment::Development, true),
+            "configured"
+        );
+        assert_eq!(
+            price_provider_status(AppEnvironment::Production, true),
+            "configured"
+        );
+        assert_eq!(
+            price_provider_status(AppEnvironment::Production, false),
+            "not_configured"
+        );
+    }
 }

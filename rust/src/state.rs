@@ -13,7 +13,10 @@ use crate::{
         repository::{InMemoryProjectRepository, ProjectRepository, RepositoryError},
     },
     pricing::{
+        http::PricingHttpClient,
+        loader::LivePricingLoader,
         local_fixture::{self, LocalFixtureError},
+        provider::ProviderError,
         repository::{InMemorySnapshotRepository, SnapshotRepositoryError},
     },
     rate_limit::TokenBucket,
@@ -31,6 +34,8 @@ pub enum StateError {
     SnapshotRepository(#[from] SnapshotRepositoryError),
     #[error(transparent)]
     Repository(#[from] RepositoryError),
+    #[error(transparent)]
+    Provider(#[from] ProviderError),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,6 +51,7 @@ pub struct AppState {
     pub projects: Arc<dyn ProjectRepository>,
     pub persistence_backend: PersistenceBackend,
     pub snapshots: InMemorySnapshotRepository,
+    pub live_pricing: Option<LivePricingLoader>,
     pub guest_rate_limit: TokenBucket,
     pub refresh_rate_limit: TokenBucket,
     pub calculation_slots: Arc<tokio::sync::Semaphore>,
@@ -80,6 +86,13 @@ impl AppState {
             serde_json::from_str(include_str!("../../app/catalogs/sql-mi-capabilities.json"))?;
         let calculations = CalculationEngine::new(Arc::new(capabilities), FORMULA_VERSION)?;
         let snapshots = InMemorySnapshotRepository::new();
+        let live_pricing = if config.environment == AppEnvironment::Local {
+            None
+        } else {
+            Some(LivePricingLoader::new(PricingHttpClient::new(
+                config.provider_max_response_bytes,
+            )?))
+        };
         if config.environment == AppEnvironment::Local {
             let (aws, azure) = local_fixture::load()?;
             snapshots.put_aws(aws)?;
@@ -100,6 +113,7 @@ impl AppState {
             projects,
             persistence_backend,
             snapshots,
+            live_pricing,
             guest_rate_limit,
             refresh_rate_limit,
             calculation_slots,

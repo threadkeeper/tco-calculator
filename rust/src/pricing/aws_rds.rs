@@ -169,16 +169,16 @@ impl<'de> Visitor<'de> for OfferProjectionVisitor<'_> {
         while let Some(field) = map.next_key::<String>()? {
             match field.as_str() {
                 "formatVersion" => {
-                    set_once(&mut format_version, map.next_value()?, &field)?;
+                    set_once(&mut format_version, map.next_value()?, "formatVersion")?;
                 }
                 "offerCode" => {
-                    set_once(&mut offer_code, map.next_value()?, &field)?;
+                    set_once(&mut offer_code, map.next_value()?, "offerCode")?;
                 }
                 "version" => {
-                    set_once(&mut source_version, map.next_value()?, &field)?;
+                    set_once(&mut source_version, map.next_value()?, "version")?;
                 }
                 "publicationDate" => {
-                    set_once(&mut published_at, map.next_value()?, &field)?;
+                    set_once(&mut published_at, map.next_value()?, "publicationDate")?;
                 }
                 "products" => {
                     if products.is_some() {
@@ -444,7 +444,7 @@ impl<'de> Visitor<'de> for SkuTermsVisitor<'_> {
                 if term.sku != sku {
                     return Err(A::Error::custom("RDS term SKU does not match its map key"));
                 }
-                for dimension in term.price_dimensions.into_values() {
+                for dimension in term.price_dimensions.values() {
                     let price = dimension
                         .price_per_unit
                         .get("USD")
@@ -498,7 +498,7 @@ fn project_dimension(
     term_type: &str,
     product: &ProjectedProduct,
     term: &RawOfferTerm,
-    dimension: RawPriceDimension,
+    dimension: &RawPriceDimension,
     price: serde_json::Value,
 ) -> RawDimension {
     RawDimension {
@@ -520,8 +520,8 @@ fn project_dimension(
         lease_contract_length: term.term_attributes.lease_contract_length.clone(),
         purchase_option: term.term_attributes.purchase_option.clone(),
         offering_class: term.term_attributes.offering_class.clone(),
-        rate_code: dimension.rate_code,
-        unit: dimension.unit,
+        rate_code: dimension.rate_code.clone(),
+        unit: dimension.unit.clone(),
         price,
     }
 }
