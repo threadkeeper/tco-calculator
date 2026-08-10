@@ -55,4 +55,4 @@ The product behavior, calculations, security approach, user experience, and Azur
 
 The next step is to scaffold the application with GitHub Copilot agents, then build and test the calculation engine, web interface, live pricing connections, private project storage, and Azure deployment.
 
-For the detailed blueprint, see [Azure Specification.md](Azure%20Specification.md). For the recorded product decisions, see [design clarificaitons.md](design%20clarificaitons.md).
+For the detailed blueprint, see [research/Azure Specification.md](research/Azure%20Specification.md). For the recorded product decisions, see [research/design clarificaitons.md](research/design%20clarificaitons.md).

@@ -3,7 +3,7 @@
 ## Scope and Authority
 
 - Apply these instructions to every task in this repository.
-- Treat [Azure Specification.md](../Azure%20Specification.md) as the product, architecture, security, and testing authority. Use [design clarificaitons.md](../design%20clarificaitons.md) only to identify unresolved decisions; do not present provisional answers as approved commitments.
+- Treat [Azure Specification.md](../research/Azure%20Specification.md) as the product, architecture, security, and testing authority. Use [design clarificaitons.md](../research/design%20clarificaitons.md) only to identify unresolved decisions; do not present provisional answers as approved commitments.
 - These rules define what is approved for this repository. They do not claim to be a Microsoft-wide approved-software list or a substitute for Microsoft, customer, Legal, Privacy, compliance, or corporate InfoSec policy.
 - When instructions conflict, follow the stricter security requirement and stop for clarification if the conflict affects architecture, customer data, identity, licensing, external services, or production.
 - Copilot cannot approve its own exception. Approval means a written decision from the repository owner and, where applicable, the responsible Security, Privacy, Legal/OSS, Procurement, or service-owner reviewer.
@@ -27,6 +27,17 @@
 - Do not treat a dependency, action, service, permission, exception, or data flow used by Gaia as approved here. It must independently satisfy this repository's Priority 1 approval and security requirements.
 - Do not inherit Gaia-only operational instructions, including its browser-session login workflow, automatic version-bump process, exact repository layout, or project-specific deployment commands, unless this repository's specification explicitly adopts them.
 - When Gaia conflicts with this repository, follow Priority 1 and briefly document the conflict and the locally compliant choice. If compatibility remains uncertain and the choice affects a protected area, stop and request a documented human decision.
+
+## Application Technology and Containerization
+
+- Use stable Rust as the production backend language for the API, domain, pricing, persistence, and server-side calculation code. Use Axum and Tokio as specified.
+- Use TypeScript in strict mode as the frontend application language, with Svelte 5 and SvelteKit as the frontend framework. Do not use `any` or implement financial logic in the frontend.
+- Do not introduce another production application language or frontend framework without a specification change and written approval. Existing Python and PowerShell files are legacy research and data-generation tools only; they MUST NOT become production runtime components.
+- Containerize every deployable application component. The MVP MUST build one OCI-compatible application image from one multi-stage Dockerfile and deploy that image to one Azure Container App; do not deploy host-installed application processes or separate frontend and backend services.
+- Use a Node build stage to run `npm ci`, checks, and the static Svelte build; use a Rust build stage to produce the locked release binary; use a minimal Debian slim runtime containing only CA certificates, the Rust binary, and built web assets. Node.js, Python, PowerShell, compilers, package managers, source files, and build credentials MUST NOT be present in the runtime image.
+- Have the Rust process serve both the API and the built Svelte assets from the same origin. Splitting the application into additional runtime images, containers, workers, or sidecars requires a specification change, threat-model review, and written approval.
+- Run the image as non-root UID `10001`, use immutable image tags for deployments, keep secrets out of image layers and build arguments, and validate the image with applicable vulnerability, secret, and configuration checks.
+- Provision managed Azure dependencies such as Cosmos DB, ACR, and Log Analytics with Bicep; they are platform services rather than deployable application components and MUST NOT be replaced with ad hoc containers.
 
 ## Working Method
 
