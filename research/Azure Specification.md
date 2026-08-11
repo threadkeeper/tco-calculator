@@ -156,7 +156,7 @@ The screen MUST NOT use a marketing hero or feature-description cards.
 - AWS source region for EC2 and RDS projects, default `eu-west-1`. The region applies to every resource in the project.
 - Azure migration region, default `Sweden Central`. The selected supported region applies to every resource in the project.
 
-Authenticated users create a persisted project. Guests create a temporary browser-local project draft.
+Authenticated users create a persisted EC2 or RDS project. Because On-prem License + SA prices are required customer inputs and are not collected in this dialog, an authenticated On-prem project opens as an unsaved workspace; its first explicit save persists it only after both prices are greater than zero. Guests create a temporary browser-local project draft.
 
 ### 6.3 Open Project
 

@@ -127,8 +127,8 @@ export function createProjectDraft(
       selected_parity_adjustment: '0',
       default_annual_hours: '8760',
       default_mi_purchase_option: 'ahb',
-      enterprise_license_sa_usd_per_two_core_pack: onPrem ? '0' : null,
-      standard_license_sa_usd_per_two_core_pack: onPrem ? '0' : null,
+      enterprise_license_sa_usd_per_two_core_pack: null,
+      standard_license_sa_usd_per_two_core_pack: null,
       remaining_coverage_months: onPrem ? 12 : null,
       electricity_rate_usd_per_kwh: onPrem ? '0' : null
     },

@@ -36,14 +36,14 @@ describe('project drafts', () => {
     });
   });
 
-  it('creates an on-premises project with source licensing inputs', () => {
+  it('leaves customer-supplied on-premises licensing inputs blank', () => {
     const project = createProjectDraft('on_prem', 'Datacenter', null);
 
     expect(project.settings).toMatchObject({
       project_type: 'on_prem',
       aws_region: null,
-      enterprise_license_sa_usd_per_two_core_pack: '0',
-      standard_license_sa_usd_per_two_core_pack: '0',
+      enterprise_license_sa_usd_per_two_core_pack: null,
+      standard_license_sa_usd_per_two_core_pack: null,
       remaining_coverage_months: 12,
       electricity_rate_usd_per_kwh: '0'
     });

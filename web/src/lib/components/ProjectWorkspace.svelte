@@ -630,8 +630,9 @@
           <label
             ><span>Enterprise License + SA / two-core pack</span><input
               type="number"
-              min="0"
+              min="0.01"
               step="0.01"
+              required
               bind:value={workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack}
               oninput={markDirty}
             /></label
@@ -639,8 +640,9 @@
           <label
             ><span>Standard License + SA / two-core pack</span><input
               type="number"
-              min="0"
+              min="0.01"
               step="0.01"
+              required
               bind:value={workspace.project.settings.standard_license_sa_usd_per_two_core_pack}
               oninput={markDirty}
             /></label
