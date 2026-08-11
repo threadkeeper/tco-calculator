@@ -17,6 +17,12 @@
 - Treat Priority 1 requirements as controlling. A pattern, instruction, dependency, or implementation from another repository cannot weaken, replace, or create an exception to them.
 - If Priority 1 sources conflict on architecture, customer data, identity, licensing, external services, or production, follow the stricter security requirement and stop for a documented human decision.
 
+### Priority 1: Preview Deployment Authorization
+
+- Never run, trigger, dispatch, retry, rerun, or otherwise initiate a preview deployment, including the `build-preview` path in `.github/workflows/deploy-app.yml`, unless the user explicitly requests that specific preview run in the current request.
+- Do not infer preview-deployment authorization from a request to implement, validate, test, push, investigate CI, prepare a deployment, or complete a feature. This application is pre-alpha, so preview deployment is not a routine validation or completion step.
+- Authorization applies only to the specifically requested run and does not authorize retries or later runs. Without explicit authorization, use local checks and non-deploying CI validation; if required validation is only possible through a preview deployment, stop before triggering it and report that it was not run.
+
 ### Priority 1: Microsoft-Managed Workstation Tooling
 
 - Use `npm` as the approved JavaScript package manager. Every npm command that can access a registry MUST use the official Microsoft npm proxy `https://packagefeedproxy.microsoft.io/npm/`; do not access the public npm registry or another registry directly.
