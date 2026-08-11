@@ -124,6 +124,8 @@ pub enum SnapshotError {
     InvalidAzurePurchaseMatrix,
     #[error("snapshot content could not be canonicalized")]
     Canonicalization,
+    #[error("stored snapshot metadata or content does not match its canonical snapshot")]
+    StoredSnapshotMismatch,
 }
 
 impl AwsPriceSnapshot {
@@ -297,6 +299,58 @@ pub fn utc_now_rfc3339() -> Result<String, SnapshotError> {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .map_err(|_| SnapshotError::Canonicalization)
+}
+
+pub fn validate_stored_aws_snapshot(
+    snapshot: AwsPriceSnapshot,
+) -> Result<AwsPriceSnapshot, SnapshotError> {
+    let original = serde_json::to_value(&snapshot).map_err(|_| SnapshotError::Canonicalization)?;
+    let AwsPriceSnapshot {
+        metadata,
+        source_region,
+        ec2_rates,
+        rds_rates,
+        ebs_rates,
+    } = snapshot;
+    let rebuilt = AwsPriceSnapshot::create(
+        creation_metadata(metadata),
+        source_region,
+        ec2_rates,
+        rds_rates,
+        ebs_rates,
+    )?;
+    if serde_json::to_value(&rebuilt).map_err(|_| SnapshotError::Canonicalization)? != original {
+        return Err(SnapshotError::StoredSnapshotMismatch);
+    }
+    Ok(rebuilt)
+}
+
+pub fn validate_stored_azure_snapshot(
+    snapshot: AzurePriceSnapshot,
+) -> Result<AzurePriceSnapshot, SnapshotError> {
+    let original = serde_json::to_value(&snapshot).map_err(|_| SnapshotError::Canonicalization)?;
+    let AzurePriceSnapshot {
+        metadata,
+        target_region,
+        mi_rates,
+    } = snapshot;
+    let rebuilt = AzurePriceSnapshot::create(creation_metadata(metadata), target_region, mi_rates)?;
+    if serde_json::to_value(&rebuilt).map_err(|_| SnapshotError::Canonicalization)? != original {
+        return Err(SnapshotError::StoredSnapshotMismatch);
+    }
+    Ok(rebuilt)
+}
+
+fn creation_metadata(metadata: SnapshotMetadata) -> SnapshotCreationMetadata {
+    SnapshotCreationMetadata {
+        status: metadata.status,
+        retrieved_at: metadata.retrieved_at,
+        source_published_at: metadata.source_published_at,
+        currency: metadata.currency,
+        source_urls: metadata.source_urls,
+        parser_schema_version: metadata.parser_schema_version,
+        warnings: metadata.warnings,
+    }
 }
 
 #[derive(Serialize)]

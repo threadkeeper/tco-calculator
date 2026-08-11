@@ -9,7 +9,7 @@ use crate::{
     },
     config::{AppEnvironment, Config, FORMULA_VERSION},
     persistence::{
-        cosmos::CosmosProjectRepository,
+        cosmos::{CosmosProjectRepository, CosmosSnapshotRepository},
         repository::{InMemoryProjectRepository, ProjectRepository, RepositoryError},
     },
     pricing::{
@@ -18,7 +18,9 @@ use crate::{
         loader::LivePricingLoader,
         local_fixture::{self, LocalFixtureError},
         provider::ProviderError,
-        repository::{InMemorySnapshotRepository, SnapshotRepositoryError},
+        repository::{
+            DurableSnapshotRepository, InMemorySnapshotRepository, SnapshotRepositoryError,
+        },
     },
     rate_limit::TokenBucket,
 };
@@ -51,7 +53,6 @@ pub struct AppState {
     pub calculations: CalculationEngine,
     pub projects: Arc<dyn ProjectRepository>,
     pub persistence_backend: PersistenceBackend,
-    pub snapshots: InMemorySnapshotRepository,
     pub pricing: PricingCoordinator,
     pub live_pricing: Option<LivePricingLoader>,
     pub guest_rate_limit: TokenBucket,
@@ -68,13 +69,22 @@ impl AppState {
         let projects = Arc::new(
             CosmosProjectRepository::new(&cosmos.endpoint, &cosmos.application_region).await?,
         );
-        Self::with_projects(config, projects, PersistenceBackend::Cosmos)
+        let snapshots = Arc::new(
+            CosmosSnapshotRepository::new(&cosmos.endpoint, &cosmos.application_region).await?,
+        );
+        Self::with_projects(
+            config,
+            projects,
+            Some(snapshots),
+            PersistenceBackend::Cosmos,
+        )
     }
 
     pub fn in_memory(config: Config) -> Result<Self, StateError> {
         Self::with_projects(
             config,
             Arc::new(InMemoryProjectRepository::new()),
+            None,
             PersistenceBackend::MemoryLocal,
         )
     }
@@ -82,6 +92,7 @@ impl AppState {
     fn with_projects(
         config: Config,
         projects: Arc<dyn ProjectRepository>,
+        durable_snapshots: Option<Arc<dyn DurableSnapshotRepository>>,
         persistence_backend: PersistenceBackend,
     ) -> Result<Self, StateError> {
         let capabilities = Arc::new(serde_json::from_str::<CapabilityCatalog>(include_str!(
@@ -103,6 +114,7 @@ impl AppState {
         }
         let pricing = PricingCoordinator::new(
             snapshots.clone(),
+            durable_snapshots,
             live_pricing.clone(),
             Arc::clone(&capabilities),
         );
@@ -120,7 +132,6 @@ impl AppState {
             calculations,
             projects,
             persistence_backend,
-            snapshots,
             pricing,
             live_pricing,
             guest_rate_limit,

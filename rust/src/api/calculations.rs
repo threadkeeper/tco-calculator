@@ -57,36 +57,38 @@ pub async fn calculate(
         .map_err(|error| super::json_rejection(error, INSTANCE))?
         .0
         .into_parts();
-    calculate_project(&state, &project, expected_formula_version.as_deref()).map(Json)
+    calculate_project(&state, &project, expected_formula_version.as_deref())
+        .await
+        .map(Json)
 }
 
-pub(crate) fn calculate_project(
+pub(crate) async fn calculate_project(
     state: &AppState,
     project: &EditableProject,
     expected_formula_version: Option<&str>,
 ) -> Result<CalculationRevision, Problem> {
-    let aws_snapshot = project
-        .aws_price_snapshot_id
-        .as_deref()
-        .map(|snapshot_id| {
+    let aws_snapshot = match project.aws_price_snapshot_id.as_deref() {
+        Some(snapshot_id) => Some(
             state
-                .snapshots
+                .pricing
                 .get_aws(snapshot_id)
+                .await
                 .map_err(|_| Problem::internal(INSTANCE))?
-                .ok_or_else(|| Problem::snapshot_unavailable(INSTANCE))
-        })
-        .transpose()?;
-    let azure_snapshot = project
-        .azure_price_snapshot_id
-        .as_deref()
-        .map(|snapshot_id| {
+                .ok_or_else(|| Problem::snapshot_unavailable(INSTANCE))?,
+        ),
+        None => None,
+    };
+    let azure_snapshot = match project.azure_price_snapshot_id.as_deref() {
+        Some(snapshot_id) => Some(
             state
-                .snapshots
+                .pricing
                 .get_azure(snapshot_id)
+                .await
                 .map_err(|_| Problem::internal(INSTANCE))?
-                .ok_or_else(|| Problem::snapshot_unavailable(INSTANCE))
-        })
-        .transpose()?;
+                .ok_or_else(|| Problem::snapshot_unavailable(INSTANCE))?,
+        ),
+        None => None,
+    };
 
     state
         .calculations

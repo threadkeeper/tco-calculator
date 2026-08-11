@@ -1,8 +1,10 @@
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
+    time::{Duration as StdDuration, Instant},
 };
 
+use async_trait::async_trait;
 use thiserror::Error;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -14,17 +16,61 @@ use super::{
 const HOT_CACHE_MAX_AGE: Duration = Duration::minutes(15);
 const FRESH_MAX_AGE: Duration = Duration::hours(24);
 const USABLE_MAX_AGE: Duration = Duration::days(7);
+const HOT_ENTRY_MAX_AGE: StdDuration = StdDuration::from_secs(15 * 60);
+const MAX_HOT_SNAPSHOTS_PER_PROVIDER: usize = 256;
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum SnapshotRepositoryError {
     #[error("pricing snapshot repository is unavailable")]
     Unavailable,
+    #[error("stored pricing snapshot is invalid")]
+    InvalidData,
+    #[error("pricing snapshot exceeds the persistence limit")]
+    PayloadTooLarge,
+}
+
+#[async_trait]
+pub trait DurableSnapshotRepository: Send + Sync {
+    async fn put_aws(&self, snapshot: &AwsPriceSnapshot) -> Result<(), SnapshotRepositoryError>;
+
+    async fn put_azure(&self, snapshot: &AzurePriceSnapshot)
+    -> Result<(), SnapshotRepositoryError>;
+
+    async fn get_aws(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<Option<AwsPriceSnapshot>, SnapshotRepositoryError>;
+
+    async fn get_azure(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<Option<AzurePriceSnapshot>, SnapshotRepositoryError>;
+
+    async fn find_aws(
+        &self,
+        currency: &str,
+        source_region: &str,
+    ) -> Result<Option<AwsPriceSnapshot>, SnapshotRepositoryError>;
+
+    async fn find_azure(
+        &self,
+        currency: &str,
+        target_region: &str,
+    ) -> Result<Option<AzurePriceSnapshot>, SnapshotRepositoryError>;
+
+    async fn list_latest_aws(&self) -> Result<Vec<AwsPriceSnapshot>, SnapshotRepositoryError>;
 }
 
 #[derive(Clone, Default)]
 pub struct InMemorySnapshotRepository {
-    aws: Arc<RwLock<HashMap<String, Arc<AwsPriceSnapshot>>>>,
-    azure: Arc<RwLock<HashMap<String, Arc<AzurePriceSnapshot>>>>,
+    aws: Arc<RwLock<HashMap<String, HotSnapshot<AwsPriceSnapshot>>>>,
+    azure: Arc<RwLock<HashMap<String, HotSnapshot<AzurePriceSnapshot>>>>,
+}
+
+#[derive(Clone)]
+struct HotSnapshot<T> {
+    snapshot: Arc<T>,
+    inserted_at: Instant,
 }
 
 impl InMemorySnapshotRepository {
@@ -34,19 +80,21 @@ impl InMemorySnapshotRepository {
 
     pub fn put_aws(&self, snapshot: AwsPriceSnapshot) -> Result<(), SnapshotRepositoryError> {
         let id = snapshot.metadata.snapshot_id.clone();
-        self.aws
+        let mut snapshots = self
+            .aws
             .write()
-            .map_err(|_| SnapshotRepositoryError::Unavailable)?
-            .insert(id, Arc::new(snapshot));
+            .map_err(|_| SnapshotRepositoryError::Unavailable)?;
+        insert_hot(&mut snapshots, id, snapshot);
         Ok(())
     }
 
     pub fn put_azure(&self, snapshot: AzurePriceSnapshot) -> Result<(), SnapshotRepositoryError> {
         let id = snapshot.metadata.snapshot_id.clone();
-        self.azure
+        let mut snapshots = self
+            .azure
             .write()
-            .map_err(|_| SnapshotRepositoryError::Unavailable)?
-            .insert(id, Arc::new(snapshot));
+            .map_err(|_| SnapshotRepositoryError::Unavailable)?;
+        insert_hot(&mut snapshots, id, snapshot);
         Ok(())
     }
 
@@ -59,7 +107,21 @@ impl InMemorySnapshotRepository {
             .read()
             .map_err(|_| SnapshotRepositoryError::Unavailable)?
             .get(snapshot_id)
-            .cloned();
+            .map(|entry| Arc::clone(&entry.snapshot));
+        Ok(snapshot.and_then(|snapshot| classify_aws(snapshot, OffsetDateTime::now_utc())))
+    }
+
+    pub fn get_aws_hot(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<Option<Arc<AwsPriceSnapshot>>, SnapshotRepositoryError> {
+        let snapshot = self
+            .aws
+            .read()
+            .map_err(|_| SnapshotRepositoryError::Unavailable)?
+            .get(snapshot_id)
+            .filter(|entry| entry.inserted_at.elapsed() <= HOT_ENTRY_MAX_AGE)
+            .map(|entry| Arc::clone(&entry.snapshot));
         Ok(snapshot.and_then(|snapshot| classify_aws(snapshot, OffsetDateTime::now_utc())))
     }
 
@@ -72,7 +134,21 @@ impl InMemorySnapshotRepository {
             .read()
             .map_err(|_| SnapshotRepositoryError::Unavailable)?
             .get(snapshot_id)
-            .cloned();
+            .map(|entry| Arc::clone(&entry.snapshot));
+        Ok(snapshot.and_then(|snapshot| classify_azure(snapshot, OffsetDateTime::now_utc())))
+    }
+
+    pub fn get_azure_hot(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<Option<Arc<AzurePriceSnapshot>>, SnapshotRepositoryError> {
+        let snapshot = self
+            .azure
+            .read()
+            .map_err(|_| SnapshotRepositoryError::Unavailable)?
+            .get(snapshot_id)
+            .filter(|entry| entry.inserted_at.elapsed() <= HOT_ENTRY_MAX_AGE)
+            .map(|entry| Arc::clone(&entry.snapshot));
         Ok(snapshot.and_then(|snapshot| classify_azure(snapshot, OffsetDateTime::now_utc())))
     }
 
@@ -86,9 +162,28 @@ impl InMemorySnapshotRepository {
             .read()
             .map_err(|_| SnapshotRepositoryError::Unavailable)?
             .values()
+            .map(|entry| &entry.snapshot)
             .filter(|snapshot| snapshot.matches_scope(currency, source_region))
             .max_by(|left, right| left.metadata.retrieved_at.cmp(&right.metadata.retrieved_at))
-            .cloned();
+            .map(Arc::clone);
+        Ok(snapshot.and_then(|snapshot| classify_aws(snapshot, OffsetDateTime::now_utc())))
+    }
+
+    pub fn find_aws_hot(
+        &self,
+        currency: &str,
+        source_region: &str,
+    ) -> Result<Option<Arc<AwsPriceSnapshot>>, SnapshotRepositoryError> {
+        let snapshot = self
+            .aws
+            .read()
+            .map_err(|_| SnapshotRepositoryError::Unavailable)?
+            .values()
+            .filter(|entry| entry.inserted_at.elapsed() <= HOT_ENTRY_MAX_AGE)
+            .map(|entry| &entry.snapshot)
+            .filter(|snapshot| snapshot.matches_scope(currency, source_region))
+            .max_by(|left, right| left.metadata.retrieved_at.cmp(&right.metadata.retrieved_at))
+            .map(Arc::clone);
         Ok(snapshot.and_then(|snapshot| classify_aws(snapshot, OffsetDateTime::now_utc())))
     }
 
@@ -102,9 +197,28 @@ impl InMemorySnapshotRepository {
             .read()
             .map_err(|_| SnapshotRepositoryError::Unavailable)?
             .values()
+            .map(|entry| &entry.snapshot)
             .filter(|snapshot| snapshot.matches_scope(currency, target_region))
             .max_by(|left, right| left.metadata.retrieved_at.cmp(&right.metadata.retrieved_at))
-            .cloned();
+            .map(Arc::clone);
+        Ok(snapshot.and_then(|snapshot| classify_azure(snapshot, OffsetDateTime::now_utc())))
+    }
+
+    pub fn find_azure_hot(
+        &self,
+        currency: &str,
+        target_region: &str,
+    ) -> Result<Option<Arc<AzurePriceSnapshot>>, SnapshotRepositoryError> {
+        let snapshot = self
+            .azure
+            .read()
+            .map_err(|_| SnapshotRepositoryError::Unavailable)?
+            .values()
+            .filter(|entry| entry.inserted_at.elapsed() <= HOT_ENTRY_MAX_AGE)
+            .map(|entry| &entry.snapshot)
+            .filter(|snapshot| snapshot.matches_scope(currency, target_region))
+            .max_by(|left, right| left.metadata.retrieved_at.cmp(&right.metadata.retrieved_at))
+            .map(Arc::clone);
         Ok(snapshot.and_then(|snapshot| classify_azure(snapshot, OffsetDateTime::now_utc())))
     }
 
@@ -114,7 +228,7 @@ impl InMemorySnapshotRepository {
             .read()
             .map_err(|_| SnapshotRepositoryError::Unavailable)?;
         let mut latest = BTreeMap::<(String, String), Arc<AwsPriceSnapshot>>::new();
-        for snapshot in snapshots.values() {
+        for snapshot in snapshots.values().map(|entry| &entry.snapshot) {
             let key = (
                 snapshot.metadata.currency.clone(),
                 snapshot.source_region.clone(),
@@ -133,6 +247,25 @@ impl InMemorySnapshotRepository {
             .filter_map(|snapshot| classify_aws(snapshot, now))
             .collect())
     }
+}
+
+fn insert_hot<T>(snapshots: &mut HashMap<String, HotSnapshot<T>>, id: String, snapshot: T) {
+    if !snapshots.contains_key(&id)
+        && snapshots.len() >= MAX_HOT_SNAPSHOTS_PER_PROVIDER
+        && let Some(oldest_id) = snapshots
+            .iter()
+            .min_by_key(|(_, entry)| entry.inserted_at)
+            .map(|(id, _)| id.clone())
+    {
+        snapshots.remove(&oldest_id);
+    }
+    snapshots.insert(
+        id,
+        HotSnapshot {
+            snapshot: Arc::new(snapshot),
+            inserted_at: Instant::now(),
+        },
+    );
 }
 
 fn classify_aws(

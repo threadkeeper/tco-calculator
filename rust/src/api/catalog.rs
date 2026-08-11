@@ -92,8 +92,9 @@ pub async fn aws_regions(
     State(state): State<AppState>,
 ) -> Result<Json<CatalogResponse<Vec<Region>>>, Problem> {
     let snapshots = state
-        .snapshots
+        .pricing
         .list_latest_aws()
+        .await
         .map_err(|_| Problem::internal(REGIONS_INSTANCE))?;
     if snapshots.is_empty() {
         return Ok(Json(unavailable(Vec::new())));
@@ -117,7 +118,8 @@ pub async fn ec2_instances(
         &state,
         parse_query(query, EC2_INSTANCE)?.region,
         EC2_INSTANCE,
-    )?;
+    )
+    .await?;
     let Some(snapshot) = snapshot else {
         return Ok(Json(unavailable(Vec::new())));
     };
@@ -141,7 +143,8 @@ pub async fn rds_instances(
         &state,
         parse_query(query, RDS_INSTANCE)?.region,
         RDS_INSTANCE,
-    )?;
+    )
+    .await?;
     let Some(snapshot) = snapshot else {
         return Ok(Json(unavailable(Vec::new())));
     };
@@ -166,7 +169,7 @@ pub async fn rds_options(
     query: Result<Query<RdsOptionsQuery>, QueryRejection>,
 ) -> Result<Json<CatalogResponse<Vec<RdsOption>>>, Problem> {
     let query = parse_query(query, RDS_OPTIONS_INSTANCE)?;
-    let snapshot = snapshot_for_region(&state, query.region, RDS_OPTIONS_INSTANCE)?;
+    let snapshot = snapshot_for_region(&state, query.region, RDS_OPTIONS_INSTANCE).await?;
     let Some(snapshot) = snapshot else {
         return Ok(Json(unavailable(Vec::new())));
     };
@@ -195,7 +198,8 @@ pub async fn ebs_types(
         &state,
         parse_query(query, EBS_INSTANCE)?.region,
         EBS_INSTANCE,
-    )?;
+    )
+    .await?;
     let Some(snapshot) = snapshot else {
         return Ok(Json(unavailable(Vec::new())));
     };
@@ -288,7 +292,7 @@ fn parse_query<T>(query: Result<Query<T>, QueryRejection>, instance: &str) -> Re
         .map_err(|_| Problem::malformed_request(instance))
 }
 
-fn snapshot_for_region(
+async fn snapshot_for_region(
     state: &AppState,
     region: String,
     instance: &str,
@@ -297,8 +301,10 @@ fn snapshot_for_region(
         return Err(Problem::malformed_request(instance));
     }
     state
-        .snapshots
-        .find_aws("USD", &region)
+        .pricing
+        .resolve_aws("USD", &region)
+        .await
+        .map(|resolution| resolution.snapshot)
         .map_err(|_| Problem::internal(instance))
 }
 

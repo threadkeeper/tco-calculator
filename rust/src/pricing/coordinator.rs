@@ -10,7 +10,7 @@ use super::{
     live::PARSER_SCHEMA_VERSION,
     loader::LivePricingLoader,
     provider::{Provider, ProviderError},
-    repository::{InMemorySnapshotRepository, SnapshotRepositoryError},
+    repository::{DurableSnapshotRepository, InMemorySnapshotRepository, SnapshotRepositoryError},
     snapshot::{AwsPriceSnapshot, AzurePriceSnapshot},
 };
 
@@ -66,6 +66,7 @@ impl SnapshotLoader for LivePricingLoader {
 #[derive(Clone)]
 pub struct PricingCoordinator {
     repository: InMemorySnapshotRepository,
+    durable: Option<Arc<dyn DurableSnapshotRepository>>,
     loader: Option<Arc<dyn SnapshotLoader>>,
     capabilities: Arc<CapabilityCatalog>,
     aws_flights: Arc<Mutex<HashMap<RefreshKey, Arc<Flight<AwsPriceSnapshot>>>>>,
@@ -75,11 +76,13 @@ pub struct PricingCoordinator {
 impl PricingCoordinator {
     pub fn new(
         repository: InMemorySnapshotRepository,
+        durable: Option<Arc<dyn DurableSnapshotRepository>>,
         loader: Option<LivePricingLoader>,
         capabilities: Arc<CapabilityCatalog>,
     ) -> Self {
         Self::with_loader(
             repository,
+            durable,
             loader.map(|loader| Arc::new(loader) as Arc<dyn SnapshotLoader>),
             capabilities,
         )
@@ -87,11 +90,13 @@ impl PricingCoordinator {
 
     fn with_loader(
         repository: InMemorySnapshotRepository,
+        durable: Option<Arc<dyn DurableSnapshotRepository>>,
         loader: Option<Arc<dyn SnapshotLoader>>,
         capabilities: Arc<CapabilityCatalog>,
     ) -> Self {
         Self {
             repository,
+            durable,
             loader,
             capabilities,
             aws_flights: Arc::new(Mutex::new(HashMap::new())),
@@ -99,22 +104,85 @@ impl PricingCoordinator {
         }
     }
 
-    pub fn resolve_aws(
+    pub async fn resolve_aws(
         &self,
         currency: &str,
         source_region: &str,
     ) -> Result<SnapshotResolution<AwsPriceSnapshot>, PricingCoordinatorError> {
-        let snapshot = self.repository.find_aws(currency, source_region)?;
+        let snapshot = self.find_aws_snapshot(currency, source_region).await?;
         Ok(resolve_cached(snapshot, Provider::Aws))
     }
 
-    pub fn resolve_azure(
+    pub async fn resolve_azure(
         &self,
         currency: &str,
         target_region: &str,
     ) -> Result<SnapshotResolution<AzurePriceSnapshot>, PricingCoordinatorError> {
-        let snapshot = self.repository.find_azure(currency, target_region)?;
+        let snapshot = self.find_azure_snapshot(currency, target_region).await?;
         Ok(resolve_cached(snapshot, Provider::Azure))
+    }
+
+    pub async fn get_aws(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<Option<Arc<AwsPriceSnapshot>>, PricingCoordinatorError> {
+        let fallback = self.repository.get_aws(snapshot_id)?;
+        let Some(durable) = &self.durable else {
+            return Ok(fallback);
+        };
+        if let Some(snapshot) = self.repository.get_aws_hot(snapshot_id)? {
+            return Ok(Some(snapshot));
+        }
+        match durable.get_aws(snapshot_id).await {
+            Ok(Some(snapshot)) => self.cache_durable_aws(snapshot),
+            Ok(None) => Ok(fallback),
+            Err(_) if fallback.is_some() => Ok(fallback),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn get_azure(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<Option<Arc<AzurePriceSnapshot>>, PricingCoordinatorError> {
+        let fallback = self.repository.get_azure(snapshot_id)?;
+        let Some(durable) = &self.durable else {
+            return Ok(fallback);
+        };
+        if let Some(snapshot) = self.repository.get_azure_hot(snapshot_id)? {
+            return Ok(Some(snapshot));
+        }
+        match durable.get_azure(snapshot_id).await {
+            Ok(Some(snapshot)) => self.cache_durable_azure(snapshot),
+            Ok(None) => Ok(fallback),
+            Err(_) if fallback.is_some() => Ok(fallback),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn list_latest_aws(
+        &self,
+    ) -> Result<Vec<Arc<AwsPriceSnapshot>>, PricingCoordinatorError> {
+        let fallback = self.repository.list_latest_aws()?;
+        let Some(durable) = &self.durable else {
+            return Ok(fallback);
+        };
+        match durable.list_latest_aws().await {
+            Ok(snapshots) => {
+                for mut snapshot in snapshots {
+                    snapshot.metadata.status = super::provider::ResolutionStatus::Cached;
+                    self.repository.put_aws(snapshot)?;
+                }
+                let snapshots = self.repository.list_latest_aws()?;
+                if snapshots.is_empty() {
+                    Ok(fallback)
+                } else {
+                    Ok(snapshots)
+                }
+            }
+            Err(_) if !fallback.is_empty() => Ok(fallback),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub async fn refresh_aws(
@@ -124,7 +192,7 @@ impl PricingCoordinator {
         target_region: &str,
     ) -> Result<SnapshotResolution<AwsPriceSnapshot>, PricingCoordinatorError> {
         let Some(loader) = &self.loader else {
-            let snapshot = self.repository.find_aws(currency, source_region)?;
+            let snapshot = self.find_aws_snapshot(currency, source_region).await?;
             return Ok(refresh_not_configured(snapshot, Provider::Aws));
         };
         let key = RefreshKey::new(
@@ -144,10 +212,13 @@ impl PricingCoordinator {
                 warnings: Vec::new(),
             }),
             Err(RefreshFailure::Provider(error)) => {
-                let snapshot = self.repository.find_aws(currency, source_region)?;
+                let snapshot = self.find_aws_snapshot(currency, source_region).await?;
                 Ok(provider_fallback(snapshot, Provider::Aws, error))
             }
-            Err(RefreshFailure::Repository(error)) => Err(error.into()),
+            Err(RefreshFailure::Repository(_)) => {
+                let snapshot = self.repository.find_aws(currency, source_region)?;
+                Ok(repository_fallback(snapshot, Provider::Aws))
+            }
         }
     }
 
@@ -158,7 +229,7 @@ impl PricingCoordinator {
         target_region: &str,
     ) -> Result<SnapshotResolution<AzurePriceSnapshot>, PricingCoordinatorError> {
         let Some(loader) = &self.loader else {
-            let snapshot = self.repository.find_azure(currency, target_region)?;
+            let snapshot = self.find_azure_snapshot(currency, target_region).await?;
             return Ok(refresh_not_configured(snapshot, Provider::Azure));
         };
         let key = RefreshKey::new(
@@ -178,11 +249,74 @@ impl PricingCoordinator {
                 warnings: Vec::new(),
             }),
             Err(RefreshFailure::Provider(error)) => {
-                let snapshot = self.repository.find_azure(currency, target_region)?;
+                let snapshot = self.find_azure_snapshot(currency, target_region).await?;
                 Ok(provider_fallback(snapshot, Provider::Azure, error))
             }
-            Err(RefreshFailure::Repository(error)) => Err(error.into()),
+            Err(RefreshFailure::Repository(_)) => {
+                let snapshot = self.repository.find_azure(currency, target_region)?;
+                Ok(repository_fallback(snapshot, Provider::Azure))
+            }
         }
+    }
+
+    async fn find_aws_snapshot(
+        &self,
+        currency: &str,
+        source_region: &str,
+    ) -> Result<Option<Arc<AwsPriceSnapshot>>, PricingCoordinatorError> {
+        let fallback = self.repository.find_aws(currency, source_region)?;
+        let Some(durable) = &self.durable else {
+            return Ok(fallback);
+        };
+        if let Some(snapshot) = self.repository.find_aws_hot(currency, source_region)? {
+            return Ok(Some(snapshot));
+        }
+        match durable.find_aws(currency, source_region).await {
+            Ok(Some(snapshot)) => self.cache_durable_aws(snapshot),
+            Ok(None) => Ok(fallback),
+            Err(_) if fallback.is_some() => Ok(fallback),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    async fn find_azure_snapshot(
+        &self,
+        currency: &str,
+        target_region: &str,
+    ) -> Result<Option<Arc<AzurePriceSnapshot>>, PricingCoordinatorError> {
+        let fallback = self.repository.find_azure(currency, target_region)?;
+        let Some(durable) = &self.durable else {
+            return Ok(fallback);
+        };
+        if let Some(snapshot) = self.repository.find_azure_hot(currency, target_region)? {
+            return Ok(Some(snapshot));
+        }
+        match durable.find_azure(currency, target_region).await {
+            Ok(Some(snapshot)) => self.cache_durable_azure(snapshot),
+            Ok(None) => Ok(fallback),
+            Err(_) if fallback.is_some() => Ok(fallback),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn cache_durable_aws(
+        &self,
+        mut snapshot: AwsPriceSnapshot,
+    ) -> Result<Option<Arc<AwsPriceSnapshot>>, PricingCoordinatorError> {
+        let snapshot_id = snapshot.metadata.snapshot_id.clone();
+        snapshot.metadata.status = super::provider::ResolutionStatus::Cached;
+        self.repository.put_aws(snapshot)?;
+        self.repository.get_aws(&snapshot_id).map_err(Into::into)
+    }
+
+    fn cache_durable_azure(
+        &self,
+        mut snapshot: AzurePriceSnapshot,
+    ) -> Result<Option<Arc<AzurePriceSnapshot>>, PricingCoordinatorError> {
+        let snapshot_id = snapshot.metadata.snapshot_id.clone();
+        snapshot.metadata.status = super::provider::ResolutionStatus::Cached;
+        self.repository.put_azure(snapshot)?;
+        self.repository.get_azure(&snapshot_id).map_err(Into::into)
     }
 
     async fn start_aws_flight(
@@ -200,14 +334,17 @@ impl PricingCoordinator {
         drop(flights);
 
         let repository = self.repository.clone();
+        let durable = self.durable.clone();
         let flights = Arc::clone(&self.aws_flights);
         let task_flight = Arc::clone(&flight);
         tokio::spawn(async move {
             let result = match loader.load_aws_snapshot(&source_region).await {
-                Ok(snapshot) => match repository.put_aws(snapshot.clone()) {
-                    Ok(()) => Ok(Arc::new(snapshot)),
-                    Err(error) => Err(RefreshFailure::Repository(error)),
-                },
+                Ok(snapshot) => {
+                    match persist_aws(&repository, durable.as_deref(), snapshot).await {
+                        Ok(snapshot) => Ok(snapshot),
+                        Err(error) => Err(RefreshFailure::Repository(error)),
+                    }
+                }
                 Err(error) => Err(RefreshFailure::Provider(error)),
             };
             task_flight.complete(result).await;
@@ -231,6 +368,7 @@ impl PricingCoordinator {
         drop(flights);
 
         let repository = self.repository.clone();
+        let durable = self.durable.clone();
         let capabilities = Arc::clone(&self.capabilities);
         let flights = Arc::clone(&self.azure_flights);
         let task_flight = Arc::clone(&flight);
@@ -239,10 +377,12 @@ impl PricingCoordinator {
                 .load_azure_snapshot(&target_region, &capabilities)
                 .await
             {
-                Ok(snapshot) => match repository.put_azure(snapshot.clone()) {
-                    Ok(()) => Ok(Arc::new(snapshot)),
-                    Err(error) => Err(RefreshFailure::Repository(error)),
-                },
+                Ok(snapshot) => {
+                    match persist_azure(&repository, durable.as_deref(), snapshot).await {
+                        Ok(snapshot) => Ok(snapshot),
+                        Err(error) => Err(RefreshFailure::Repository(error)),
+                    }
+                }
                 Err(error) => Err(RefreshFailure::Provider(error)),
             };
             task_flight.complete(result).await;
@@ -250,6 +390,30 @@ impl PricingCoordinator {
         });
         flight
     }
+}
+
+async fn persist_aws(
+    repository: &InMemorySnapshotRepository,
+    durable: Option<&dyn DurableSnapshotRepository>,
+    snapshot: AwsPriceSnapshot,
+) -> Result<Arc<AwsPriceSnapshot>, SnapshotRepositoryError> {
+    if let Some(durable) = durable {
+        durable.put_aws(&snapshot).await?;
+    }
+    repository.put_aws(snapshot.clone())?;
+    Ok(Arc::new(snapshot))
+}
+
+async fn persist_azure(
+    repository: &InMemorySnapshotRepository,
+    durable: Option<&dyn DurableSnapshotRepository>,
+    snapshot: AzurePriceSnapshot,
+) -> Result<Arc<AzurePriceSnapshot>, SnapshotRepositoryError> {
+    if let Some(durable) = durable {
+        durable.put_azure(&snapshot).await?;
+    }
+    repository.put_azure(snapshot.clone())?;
+    Ok(Arc::new(snapshot))
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -370,6 +534,21 @@ fn provider_fallback<T>(
     }
 }
 
+fn repository_fallback<T>(snapshot: Option<Arc<T>>, provider: Provider) -> SnapshotResolution<T> {
+    let suffix = if snapshot.is_some() {
+        "the most recent usable snapshot was returned."
+    } else {
+        "no usable snapshot exists."
+    };
+    SnapshotResolution {
+        snapshot,
+        warnings: vec![format!(
+            "The durable {} price cache is temporarily unavailable; {suffix}",
+            provider_name(provider)
+        )],
+    }
+}
+
 fn provider_name(provider: Provider) -> &'static str {
     match provider {
         Provider::Aws => "AWS",
@@ -388,7 +567,7 @@ fn provider_error_code(error: ProviderError) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
     use tokio::sync::Semaphore;
@@ -413,6 +592,119 @@ mod tests {
         azure_calls: AtomicUsize,
         aws_gate: Option<Arc<Semaphore>>,
         aws_started: Notify,
+    }
+
+    #[derive(Default)]
+    struct TestDurableRepository {
+        aws: Mutex<HashMap<String, AwsPriceSnapshot>>,
+        azure: Mutex<HashMap<String, AzurePriceSnapshot>>,
+        fail_reads: AtomicBool,
+        fail_writes: AtomicBool,
+        reads: AtomicUsize,
+        aws_writes: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl DurableSnapshotRepository for TestDurableRepository {
+        async fn put_aws(
+            &self,
+            snapshot: &AwsPriceSnapshot,
+        ) -> Result<(), SnapshotRepositoryError> {
+            self.aws_writes.fetch_add(1, Ordering::SeqCst);
+            if self.fail_writes.load(Ordering::SeqCst) {
+                return Err(SnapshotRepositoryError::Unavailable);
+            }
+            self.aws
+                .lock()
+                .await
+                .insert(snapshot.metadata.snapshot_id.clone(), snapshot.clone());
+            Ok(())
+        }
+
+        async fn put_azure(
+            &self,
+            snapshot: &AzurePriceSnapshot,
+        ) -> Result<(), SnapshotRepositoryError> {
+            if self.fail_writes.load(Ordering::SeqCst) {
+                return Err(SnapshotRepositoryError::Unavailable);
+            }
+            self.azure
+                .lock()
+                .await
+                .insert(snapshot.metadata.snapshot_id.clone(), snapshot.clone());
+            Ok(())
+        }
+
+        async fn get_aws(
+            &self,
+            snapshot_id: &str,
+        ) -> Result<Option<AwsPriceSnapshot>, SnapshotRepositoryError> {
+            self.check_read()?;
+            Ok(self.aws.lock().await.get(snapshot_id).cloned())
+        }
+
+        async fn get_azure(
+            &self,
+            snapshot_id: &str,
+        ) -> Result<Option<AzurePriceSnapshot>, SnapshotRepositoryError> {
+            self.check_read()?;
+            Ok(self.azure.lock().await.get(snapshot_id).cloned())
+        }
+
+        async fn find_aws(
+            &self,
+            currency: &str,
+            source_region: &str,
+        ) -> Result<Option<AwsPriceSnapshot>, SnapshotRepositoryError> {
+            self.check_read()?;
+            Ok(self
+                .aws
+                .lock()
+                .await
+                .values()
+                .filter(|snapshot| snapshot.matches_scope(currency, source_region))
+                .max_by(|left, right| left.metadata.retrieved_at.cmp(&right.metadata.retrieved_at))
+                .cloned())
+        }
+
+        async fn find_azure(
+            &self,
+            currency: &str,
+            target_region: &str,
+        ) -> Result<Option<AzurePriceSnapshot>, SnapshotRepositoryError> {
+            self.check_read()?;
+            Ok(self
+                .azure
+                .lock()
+                .await
+                .values()
+                .filter(|snapshot| snapshot.matches_scope(currency, target_region))
+                .max_by(|left, right| left.metadata.retrieved_at.cmp(&right.metadata.retrieved_at))
+                .cloned())
+        }
+
+        async fn list_latest_aws(&self) -> Result<Vec<AwsPriceSnapshot>, SnapshotRepositoryError> {
+            self.check_read()?;
+            Ok(self.aws.lock().await.values().cloned().collect())
+        }
+    }
+
+    impl TestDurableRepository {
+        fn check_read(&self) -> Result<(), SnapshotRepositoryError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            if self.fail_reads.load(Ordering::SeqCst) {
+                Err(SnapshotRepositoryError::Unavailable)
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn seed_aws(&self, snapshot: AwsPriceSnapshot) {
+            self.aws
+                .lock()
+                .await
+                .insert(snapshot.metadata.snapshot_id.clone(), snapshot);
+        }
     }
 
     impl TestLoader {
@@ -480,8 +772,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cache_resolution_never_calls_the_live_loader() {
+    #[tokio::test]
+    async fn cache_resolution_never_calls_the_live_loader() {
         let repository = InMemorySnapshotRepository::new();
         repository
             .put_aws(aws_snapshot(
@@ -495,6 +787,7 @@ mod tests {
 
         let resolution = coordinator
             .resolve_aws("USD", "eu-west-1")
+            .await
             .expect("resolve cache");
 
         assert!(resolution.snapshot.is_some());
@@ -513,7 +806,12 @@ mod tests {
             ))
             .expect("store cache");
         let loader = TestLoader::new(TestBehavior::Success, TestBehavior::Success);
-        let coordinator = coordinator(repository.clone(), Arc::clone(&loader));
+        let durable = Arc::new(TestDurableRepository::default());
+        let coordinator = coordinator_with_durable(
+            repository.clone(),
+            Arc::clone(&loader),
+            Arc::clone(&durable),
+        );
 
         let resolution = coordinator
             .refresh_aws("USD", "eu-west-1", "swedencentral")
@@ -522,6 +820,7 @@ mod tests {
         let snapshot = resolution.snapshot.expect("live snapshot");
 
         assert_eq!(loader.aws_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(durable.aws_writes.load(Ordering::SeqCst), 1);
         assert_eq!(snapshot.metadata.status, ResolutionStatus::Fresh);
         assert_eq!(
             snapshot.metadata.parser_schema_version,
@@ -670,12 +969,176 @@ mod tests {
         assert_eq!(loader.aws_calls.load(Ordering::SeqCst), 1);
     }
 
+    #[tokio::test]
+    async fn durable_cache_hydrates_scope_and_id_lookups_after_restart() {
+        let durable = Arc::new(TestDurableRepository::default());
+        let snapshot = aws_snapshot(
+            "eu-west-1",
+            &utc_now_rfc3339().expect("current timestamp"),
+            "durable-test-v1",
+        );
+        let snapshot_id = snapshot.metadata.snapshot_id.clone();
+        durable.seed_aws(snapshot).await;
+        let coordinator = coordinator_with_dependencies(
+            InMemorySnapshotRepository::new(),
+            Some(Arc::clone(&durable)),
+            None,
+        );
+
+        let resolved = coordinator
+            .resolve_aws("USD", "eu-west-1")
+            .await
+            .expect("resolve durable cache")
+            .snapshot
+            .expect("durable scope snapshot");
+        assert_eq!(durable.reads.load(Ordering::SeqCst), 1);
+
+        let restarted = coordinator_with_dependencies(
+            InMemorySnapshotRepository::new(),
+            Some(Arc::clone(&durable)),
+            None,
+        );
+        let by_id = restarted
+            .get_aws(&snapshot_id)
+            .await
+            .expect("load durable ID")
+            .expect("durable ID snapshot");
+
+        assert_eq!(resolved.metadata.status, ResolutionStatus::Cached);
+        assert_eq!(resolved.metadata.snapshot_id, snapshot_id);
+        assert_eq!(by_id.metadata.snapshot_id, snapshot_id);
+        assert_eq!(durable.reads.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn hot_snapshot_avoids_durable_read() {
+        let repository = InMemorySnapshotRepository::new();
+        repository
+            .put_aws(aws_snapshot(
+                "eu-west-1",
+                &utc_now_rfc3339().expect("current timestamp"),
+                "hot-test-v1",
+            ))
+            .expect("store hot snapshot");
+        let durable = Arc::new(TestDurableRepository::default());
+        durable.fail_reads.store(true, Ordering::SeqCst);
+        let coordinator =
+            coordinator_with_dependencies(repository, Some(Arc::clone(&durable)), None);
+
+        let resolution = coordinator
+            .resolve_aws("USD", "eu-west-1")
+            .await
+            .expect("resolve hot snapshot");
+
+        assert!(resolution.snapshot.is_some());
+        assert_eq!(durable.reads.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn expired_durable_snapshot_is_not_hydrated() {
+        let repository = InMemorySnapshotRepository::new();
+        let durable = Arc::new(TestDurableRepository::default());
+        durable
+            .seed_aws(aws_snapshot(
+                "eu-west-1",
+                &timestamp(Duration::days(8)),
+                "expired-durable-test-v1",
+            ))
+            .await;
+        let coordinator = coordinator_with_dependencies(repository, Some(durable), None);
+
+        let resolution = coordinator
+            .resolve_aws("USD", "eu-west-1")
+            .await
+            .expect("resolve expired durable cache");
+
+        assert!(resolution.snapshot.is_none());
+    }
+
+    #[tokio::test]
+    async fn durable_write_failure_returns_existing_stale_snapshot() {
+        let repository = InMemorySnapshotRepository::new();
+        repository
+            .put_aws(aws_snapshot(
+                "eu-west-1",
+                &timestamp(Duration::days(2)),
+                "stale-write-fallback-v1",
+            ))
+            .expect("store stale fallback");
+        let loader = TestLoader::new(TestBehavior::Success, TestBehavior::Success);
+        let durable = Arc::new(TestDurableRepository::default());
+        durable.fail_writes.store(true, Ordering::SeqCst);
+        let coordinator =
+            coordinator_with_durable(repository.clone(), loader, Arc::clone(&durable));
+
+        let resolution = coordinator
+            .refresh_aws("USD", "eu-west-1", "swedencentral")
+            .await
+            .expect("return stale cache after write failure");
+
+        assert_eq!(
+            resolution.snapshot.expect("stale fallback").metadata.status,
+            ResolutionStatus::Stale
+        );
+        assert!(resolution.warnings[0].contains("durable AWS price cache"));
+        assert_eq!(durable.aws_writes.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            repository
+                .list_latest_aws()
+                .expect("list hot snapshots")
+                .into_iter()
+                .next()
+                .expect("existing stale snapshot")
+                .metadata
+                .parser_schema_version,
+            "stale-write-fallback-v1"
+        );
+    }
+
+    #[tokio::test]
+    async fn durable_read_failure_without_fallback_is_an_error() {
+        let durable = Arc::new(TestDurableRepository::default());
+        durable.fail_reads.store(true, Ordering::SeqCst);
+        let coordinator = coordinator_with_dependencies(
+            InMemorySnapshotRepository::new(),
+            Some(Arc::clone(&durable)),
+            None,
+        );
+
+        let result = coordinator.resolve_aws("USD", "eu-west-1").await;
+
+        assert!(matches!(
+            result,
+            Err(PricingCoordinatorError::Repository(
+                SnapshotRepositoryError::Unavailable
+            ))
+        ));
+        assert_eq!(durable.reads.load(Ordering::SeqCst), 1);
+    }
+
     fn coordinator(
         repository: InMemorySnapshotRepository,
         loader: Arc<TestLoader>,
     ) -> PricingCoordinator {
-        let loader: Arc<dyn SnapshotLoader> = loader;
-        PricingCoordinator::with_loader(repository, Some(loader), capabilities())
+        coordinator_with_dependencies(repository, None, Some(loader))
+    }
+
+    fn coordinator_with_durable(
+        repository: InMemorySnapshotRepository,
+        loader: Arc<TestLoader>,
+        durable: Arc<TestDurableRepository>,
+    ) -> PricingCoordinator {
+        coordinator_with_dependencies(repository, Some(durable), Some(loader))
+    }
+
+    fn coordinator_with_dependencies(
+        repository: InMemorySnapshotRepository,
+        durable: Option<Arc<TestDurableRepository>>,
+        loader: Option<Arc<TestLoader>>,
+    ) -> PricingCoordinator {
+        let durable = durable.map(|durable| durable as Arc<dyn DurableSnapshotRepository>);
+        let loader = loader.map(|loader| loader as Arc<dyn SnapshotLoader>);
+        PricingCoordinator::with_loader(repository, durable, loader, capabilities())
     }
 
     fn capabilities() -> Arc<CapabilityCatalog> {

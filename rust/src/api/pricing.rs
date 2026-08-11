@@ -86,7 +86,10 @@ async fn resolve_aws_request(
             .refresh_aws(&request.currency, source_region, &request.azure_region)
             .await
     } else {
-        state.pricing.resolve_aws(&request.currency, source_region)
+        state
+            .pricing
+            .resolve_aws(&request.currency, source_region)
+            .await
     }
     .map_err(|_| Problem::internal(AWS_INSTANCE))?;
     Ok(Json(response(resolution, Provider::Aws)))
@@ -111,6 +114,7 @@ async fn resolve_azure_request(
         state
             .pricing
             .resolve_azure(&request.currency, &request.azure_region)
+            .await
     }
     .map_err(|_| Problem::internal(AZURE_INSTANCE))?;
     Ok(Json(response(resolution, Provider::Azure)))

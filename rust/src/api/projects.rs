@@ -78,7 +78,7 @@ pub async fn create(
         .map_err(|error| super::json_rejection(error, COLLECTION_INSTANCE))?
         .0;
     validate_project(&project, COLLECTION_INSTANCE)?;
-    let revision = calculate_revision_if_priced(&state, &project, COLLECTION_INSTANCE)?;
+    let revision = calculate_revision_if_priced(&state, &project, COLLECTION_INSTANCE).await?;
     let document = state
         .projects
         .create(&principal.owner_id(), project, revision)
@@ -136,7 +136,7 @@ pub async fn update(
     let revision = if pricing_unchanged {
         None
     } else {
-        calculate_revision_if_priced(&state, &project, ITEM_INSTANCE)?
+        calculate_revision_if_priced(&state, &project, ITEM_INSTANCE).await?
     };
 
     match state
@@ -195,7 +195,7 @@ fn validate_project(project: &EditableProject, instance: &str) -> Result<(), Pro
     }
 }
 
-fn calculate_revision_if_priced(
+async fn calculate_revision_if_priced(
     state: &AppState,
     project: &EditableProject,
     instance: &str,
@@ -208,7 +208,7 @@ fn calculate_revision_if_priced(
             .clone()
             .try_acquire_owned()
             .map_err(|_| Problem::rate_limited(instance, 1))?;
-        calculate_project(state, project, None).map(Some)
+        calculate_project(state, project, None).await.map(Some)
     } else {
         Ok(None)
     }
