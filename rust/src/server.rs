@@ -9,6 +9,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tower_http::{
     compression::CompressionLayer, set_header::SetResponseHeaderLayer, trace::TraceLayer,
@@ -31,10 +33,13 @@ pub enum ServerError {
     State(#[from] StateError),
     #[error("WEB_ASSET_DIR must contain index.html outside local mode: {0}")]
     MissingStaticIndex(PathBuf),
+    #[error("WEB_ASSET_DIR index.html contains malformed script markup: {0}")]
+    InvalidStaticIndex(PathBuf),
 }
 
 pub async fn router(mut config: crate::config::Config) -> Result<Router, ServerError> {
     config.web_asset_dir = validate_asset_root(&config)?;
+    let content_security_policy = content_security_policy(&config)?;
     let state = AppState::new(config).await?;
     let api_router = Router::new()
         .route("/session", get(api::session::get_session))
@@ -110,9 +115,7 @@ pub async fn router(mut config: crate::config::Config) -> Result<Router, ServerE
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static(
-                "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-            ),
+            content_security_policy,
         ))
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(request_context::assign_request_id)))
@@ -127,6 +130,60 @@ fn validate_asset_root(config: &crate::config::Config) -> Result<PathBuf, Server
         .web_asset_dir
         .canonicalize()
         .unwrap_or_else(|_| config.web_asset_dir.clone()))
+}
+
+fn content_security_policy(config: &crate::config::Config) -> Result<HeaderValue, ServerError> {
+    let index_path = config.web_asset_dir.join("index.html");
+    let index = match std::fs::read_to_string(&index_path) {
+        Ok(index) => index,
+        Err(_) if config.environment == AppEnvironment::Local => INDEX_HTML.to_owned(),
+        Err(_) => return Err(ServerError::MissingStaticIndex(index_path)),
+    };
+    let policy = content_security_policy_for_index(&index, &index_path)?;
+    HeaderValue::from_str(&policy).map_err(|_| ServerError::InvalidStaticIndex(index_path))
+}
+
+fn content_security_policy_for_index(
+    index: &str,
+    index_path: &Path,
+) -> Result<String, ServerError> {
+    let script_hashes = inline_script_hashes(index, index_path)?;
+    let mut policy = String::from(
+        "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'",
+    );
+    for script_hash in script_hashes {
+        policy.push_str(" 'sha256-");
+        policy.push_str(&script_hash);
+        policy.push('\'');
+    }
+    policy.push_str("; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+    Ok(policy)
+}
+
+fn inline_script_hashes(index: &str, index_path: &Path) -> Result<Vec<String>, ServerError> {
+    let mut hashes = Vec::new();
+    let mut offset = 0;
+    while let Some(relative_start) = index[offset..].find("<script") {
+        let start = offset + relative_start;
+        let tag_end = index[start..]
+            .find('>')
+            .map(|relative_end| start + relative_end)
+            .ok_or_else(|| ServerError::InvalidStaticIndex(index_path.to_path_buf()))?;
+        let close_start = index[tag_end + 1..]
+            .find("</script>")
+            .map(|relative_end| tag_end + 1 + relative_end)
+            .ok_or_else(|| ServerError::InvalidStaticIndex(index_path.to_path_buf()))?;
+        let start_tag = &index[start..=tag_end];
+        if !start_tag
+            .split_ascii_whitespace()
+            .any(|part| part.starts_with("src="))
+        {
+            let script = &index[tag_end + 1..close_start];
+            hashes.push(STANDARD.encode(Sha256::digest(script.as_bytes())));
+        }
+        offset = close_start + "</script>".len();
+    }
+    Ok(hashes)
 }
 
 async fn static_asset(State(state): State<AppState>, request: Request<Body>) -> Response {
@@ -253,4 +310,62 @@ async fn api_not_found(request: Request<Body>) -> Problem {
         request.uri().path(),
         "The requested API route does not exist.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hashes_each_inline_script_exactly() {
+        let index = "<script>console.log('one')</script><script type=\"module\">two()</script>";
+        let hashes = inline_script_hashes(index, Path::new("index.html")).expect("valid scripts");
+
+        assert_eq!(
+            hashes,
+            [
+                "H3QXV/uMHFl6e+0SaK2PX1M3PYINSznPfB3wKKLHnSs=",
+                "iMrPAWirDC2X0OhZzLsM2MRIWSmepJGI4r7D8ZlwBOw="
+            ]
+        );
+    }
+
+    #[test]
+    fn policy_allows_exact_inline_script_hashes_without_unsafe_inline() {
+        let policy = content_security_policy_for_index(
+            "<script>console.log('one')</script>",
+            Path::new("index.html"),
+        )
+        .expect("valid policy");
+
+        assert!(
+            policy.contains(
+                "script-src 'self' 'sha256-H3QXV/uMHFl6e+0SaK2PX1M3PYINSznPfB3wKKLHnSs='"
+            )
+        );
+        assert!(!policy.contains("script-src 'self' 'unsafe-inline'"));
+        assert!(policy.contains("style-src 'self' 'unsafe-inline'"));
+    }
+
+    #[test]
+    fn ignores_external_scripts_and_accepts_script_free_html() {
+        assert!(
+            inline_script_hashes("<script src=\"/app.js\"></script>", Path::new("index.html"))
+                .expect("valid external script")
+                .is_empty()
+        );
+        assert!(
+            inline_script_hashes("<main>Static</main>", Path::new("index.html"))
+                .expect("script-free HTML")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn rejects_unclosed_script_markup() {
+        assert!(matches!(
+            inline_script_hashes("<script>broken", Path::new("index.html")),
+            Err(ServerError::InvalidStaticIndex(_))
+        ));
+    }
 }
