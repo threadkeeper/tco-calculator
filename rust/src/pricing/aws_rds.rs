@@ -238,7 +238,7 @@ struct ProjectedProduct {
 struct RawProduct {
     sku: String,
     #[serde(rename = "productFamily")]
-    product_family: String,
+    product_family: Option<String>,
     attributes: ProductAttributes,
 }
 
@@ -308,11 +308,14 @@ impl<'de> Visitor<'de> for ProductsVisitor<'_> {
                 ));
             }
             if is_selected_product(self.expected_offer_code, &product) {
+                let Some(product_family) = product.product_family else {
+                    continue;
+                };
                 products.insert(
                     sku,
                     ProjectedProduct {
                         sku: product.sku,
-                        product_family: product.product_family,
+                        product_family,
                         attributes: product.attributes,
                     },
                 );
@@ -330,14 +333,14 @@ fn is_selected_product(offer_code: &str, product: &RawProduct) -> bool {
                     product.attributes.database_edition.as_deref(),
                     Some("Standard" | "Enterprise")
                 )
-                && match product.product_family.as_str() {
-                    "Database Instance" => customer_provided_media(&product.attributes),
-                    "Database Storage" => true,
+                && match product.product_family.as_deref() {
+                    Some("Database Instance") => customer_provided_media(&product.attributes),
+                    Some("Database Storage") => true,
                     _ => false,
                 }
         }
         "AmazonRDSOCPULicenseFees" => {
-            product.product_family == "Optimized License"
+            product.product_family.as_deref() == Some("Optimized License")
                 && product.attributes.license_type.as_deref() == Some("SQLServer")
                 && matches!(
                     product.attributes.database_edition.as_deref(),
@@ -1106,6 +1109,22 @@ mod tests {
             "0.127"
         );
         assert_eq!(normalized.records[0].provenance.meter_ids.len(), 2);
+    }
+
+    #[test]
+    fn ignores_unselected_products_without_product_family() {
+        let mut offer: serde_json::Value =
+            serde_json::from_slice(&raw_rds_offer()).expect("parse raw RDS offer");
+        offer["products"]["ignored-sku"]
+            .as_object_mut()
+            .expect("ignored product")
+            .remove("productFamily");
+        let body = serde_json::to_vec(&offer).expect("serialize raw RDS offer");
+
+        let projected = project_rds_offer(std::io::Cursor::new(body), "AmazonRDS")
+            .expect("ignore product without family");
+
+        assert_eq!(projected.source_version, "20260806022930");
     }
 
     #[test]
