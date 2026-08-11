@@ -88,6 +88,21 @@
     }
     onchange();
   }
+
+  function isMissing(value: unknown): boolean {
+    return (
+      value === null || value === undefined || (typeof value === 'string' && value.trim() === '')
+    );
+  }
+
+  function ebsPriceError(volume: EbsVolumeDraft): string | null {
+    const selected = ebsTypes.find((item) => readString(item, 'key') === volume.volume_type);
+    const unavailable =
+      readBoolean(selected ?? null, 'price_required') === true &&
+      readBoolean(selected ?? null, 'pricing_available') !== true;
+    if (!unavailable) return null;
+    return `${readString(selected ?? null, 'label') ?? volume.volume_type} pricing is unavailable in the selected AWS region. This workload cannot be included in the comparison.`;
+  }
 </script>
 
 <article class="resource-editor">
@@ -99,9 +114,18 @@
         <input
           class="name-input"
           aria-label="Workload name"
+          aria-invalid={isMissing(resource.workload_name)}
+          aria-describedby={isMissing(resource.workload_name)
+            ? `${resource.id}-workload-name-error`
+            : undefined}
           bind:value={resource.workload_name}
           oninput={onchange}
         />
+        {#if isMissing(resource.workload_name)}
+          <small class="field-error" id={`${resource.id}-workload-name-error`}
+            >Workload name is required.</small
+          >
+        {/if}
       </div>
     </div>
     <button
@@ -118,7 +142,16 @@
   <div class="field-grid shared-fields">
     <label>
       <span>Quantity</span>
-      <input type="number" min="1" max="10000" bind:value={resource.quantity} oninput={onchange} />
+      <input
+        type="number"
+        min="1"
+        max="10000"
+        aria-invalid={isMissing(resource.quantity)}
+        bind:value={resource.quantity}
+        oninput={onchange}
+      />
+      {#if isMissing(resource.quantity)}<small class="field-error">Quantity is required.</small
+        >{/if}
     </label>
     <label>
       <span>SQL edition</span>
@@ -141,9 +174,13 @@
         min="0"
         max="8784"
         step="1"
+        aria-invalid={isMissing(resource.annual_hours_per_instance)}
         bind:value={resource.annual_hours_per_instance}
         oninput={onchange}
       />
+      {#if isMissing(resource.annual_hours_per_instance)}<small class="field-error"
+          >Annual hours are required.</small
+        >{/if}
     </label>
     <label>
       <span>Source RAM / instance (GiB)</span>
@@ -151,9 +188,13 @@
         type="number"
         min="0.01"
         step="0.01"
+        aria-invalid={isMissing(resource.source_ram_gb_per_instance)}
         bind:value={resource.source_ram_gb_per_instance}
         oninput={onchange}
       />
+      {#if isMissing(resource.source_ram_gb_per_instance)}<small class="field-error"
+          >Source RAM is required.</small
+        >{/if}
     </label>
     <label>
       <span>SQL data / instance (GB)</span>
@@ -161,9 +202,13 @@
         type="number"
         min="0.01"
         step="0.01"
+        aria-invalid={isMissing(resource.sql_data_gb_per_instance)}
         bind:value={resource.sql_data_gb_per_instance}
         oninput={onchange}
       />
+      {#if isMissing(resource.sql_data_gb_per_instance)}<small class="field-error"
+          >SQL data is required.</small
+        >{/if}
     </label>
     <label>
       <span>Azure purchase option</span>
@@ -194,6 +239,7 @@
           {#if sourceInstances.length > 0}
             <select
               value={resource.instance_type}
+              aria-invalid={isMissing(resource.instance_type)}
               onchange={(event) => selectInstance(event.currentTarget.value)}
             >
               {#if !sourceInstances.some((item) => readString(item, 'instance_type') === resource.instance_type)}<option
@@ -206,11 +252,15 @@
             </select>
           {:else}
             <input
+              aria-invalid={isMissing(resource.instance_type)}
               bind:value={resource.instance_type}
               oninput={onchange}
               placeholder="r6id.8xlarge"
             />
           {/if}
+          {#if isMissing(resource.instance_type)}<small class="field-error"
+              >Instance type is required.</small
+            >{/if}
         </label>
       </div>
     </section>
@@ -230,14 +280,26 @@
       {:else}
         <div class="volume-list">
           {#each resource.volumes as volume (volume.id)}
+            {@const priceError = ebsPriceError(volume)}
             <div class="volume-row">
               <label>
                 <span>Label</span>
-                <input bind:value={volume.label} oninput={onchange} />
+                <input
+                  aria-invalid={isMissing(volume.label)}
+                  bind:value={volume.label}
+                  oninput={onchange}
+                />
+                {#if isMissing(volume.label)}<small class="field-error"
+                    >Volume label is required.</small
+                  >{/if}
               </label>
               <label>
                 <span>Type</span>
-                <select bind:value={volume.volume_type} onchange={() => normalizeVolume(volume)}>
+                <select
+                  aria-invalid={isMissing(volume.volume_type) || priceError !== null}
+                  bind:value={volume.volume_type}
+                  onchange={() => normalizeVolume(volume)}
+                >
                   {#if ebsTypes.length > 0}
                     {#each ebsTypes as item, index (index)}
                       {@const priceUnavailable =
@@ -255,6 +317,11 @@
                     <option value="ephemeral">Instance storage</option>
                   {/if}
                 </select>
+                {#if isMissing(volume.volume_type)}
+                  <small class="field-error">Volume type is required.</small>
+                {:else if priceError}
+                  <small class="field-error">{priceError}</small>
+                {/if}
               </label>
               <label>
                 <span>Capacity (GB)</span>
@@ -263,9 +330,14 @@
                   min="0"
                   step="1"
                   disabled={volume.volume_type === 'ephemeral'}
+                  aria-invalid={volume.volume_type !== 'ephemeral' && isMissing(volume.capacity_gb)}
                   bind:value={volume.capacity_gb}
                   oninput={onchange}
                 />
+                {#if volume.volume_type !== 'ephemeral' && isMissing(volume.capacity_gb)}<small
+                    class="field-error"
+                    >Capacity is required for {volume.volume_type} volumes.</small
+                  >{/if}
               </label>
               <label>
                 <span>Provisioned IOPS</span>
@@ -273,9 +345,15 @@
                   type="number"
                   min="0"
                   disabled={volume.volume_type === 'ephemeral'}
+                  aria-invalid={volume.volume_type !== 'ephemeral' &&
+                    isMissing(volume.provisioned_iops)}
                   bind:value={volume.provisioned_iops}
                   oninput={onchange}
                 />
+                {#if volume.volume_type !== 'ephemeral' && isMissing(volume.provisioned_iops)}<small
+                    class="field-error"
+                    >Provisioned IOPS are required for {volume.volume_type} volumes.</small
+                  >{/if}
               </label>
               <label>
                 <span>Throughput (MiB/s)</span>
@@ -315,6 +393,7 @@
           {#if sourceInstances.length > 0}
             <select
               value={resource.instance_type}
+              aria-invalid={isMissing(resource.instance_type)}
               onchange={(event) => selectInstance(event.currentTarget.value)}
             >
               {#if !sourceInstances.some((item) => readString(item, 'instance_type') === resource.instance_type)}<option
@@ -327,11 +406,15 @@
             </select>
           {:else}
             <input
+              aria-invalid={isMissing(resource.instance_type)}
               bind:value={resource.instance_type}
               oninput={onchange}
               placeholder="db.m6i.8xlarge"
             />
           {/if}
+          {#if isMissing(resource.instance_type)}<small class="field-error"
+              >Instance type is required.</small
+            >{/if}
         </label>
         <label>
           <span>Deployment</span>
@@ -368,19 +451,40 @@
           <label>
             <span>Commercial term</span>
             <input
+              aria-invalid={isMissing(resource.commercial_term)}
               bind:value={resource.commercial_term}
               oninput={onchange}
               placeholder="on-demand"
             />
+            {#if isMissing(resource.commercial_term)}<small class="field-error"
+                >Commercial term is required.</small
+              >{/if}
           </label>
           <label>
             <span>Storage class</span>
-            <input bind:value={resource.storage_class} oninput={onchange} placeholder="gp3" />
+            <input
+              aria-invalid={isMissing(resource.storage_class)}
+              bind:value={resource.storage_class}
+              oninput={onchange}
+              placeholder="gp3"
+            />
+            {#if isMissing(resource.storage_class)}<small class="field-error"
+                >Storage class is required.</small
+              >{/if}
           </label>
         {/if}
         <label>
           <span>Maximum source IOPS</span>
-          <input type="number" min="0" bind:value={resource.source_max_iops} oninput={onchange} />
+          <input
+            type="number"
+            min="0"
+            aria-invalid={isMissing(resource.source_max_iops)}
+            bind:value={resource.source_max_iops}
+            oninput={onchange}
+          />
+          {#if isMissing(resource.source_max_iops)}<small class="field-error"
+              >Maximum source IOPS are required.</small
+            >{/if}
         </label>
       </div>
     </section>
@@ -395,15 +499,42 @@
       <div class="field-grid">
         <label>
           <span>Source vCPU</span>
-          <input type="number" min="1" bind:value={resource.source_vcpu} oninput={onchange} />
+          <input
+            type="number"
+            min="1"
+            aria-invalid={isMissing(resource.source_vcpu)}
+            bind:value={resource.source_vcpu}
+            oninput={onchange}
+          />
+          {#if isMissing(resource.source_vcpu)}<small class="field-error"
+              >Source vCPU is required.</small
+            >{/if}
         </label>
         <label>
           <span>Licensable cores</span>
-          <input type="number" min="1" bind:value={resource.licensable_cores} oninput={onchange} />
+          <input
+            type="number"
+            min="1"
+            aria-invalid={isMissing(resource.licensable_cores)}
+            bind:value={resource.licensable_cores}
+            oninput={onchange}
+          />
+          {#if isMissing(resource.licensable_cores)}<small class="field-error"
+              >Licensable cores are required.</small
+            >{/if}
         </label>
         <label>
           <span>Maximum source IOPS</span>
-          <input type="number" min="0" bind:value={resource.source_max_iops} oninput={onchange} />
+          <input
+            type="number"
+            min="0"
+            aria-invalid={isMissing(resource.source_max_iops)}
+            bind:value={resource.source_max_iops}
+            oninput={onchange}
+          />
+          {#if isMissing(resource.source_max_iops)}<small class="field-error"
+              >Maximum source IOPS are required.</small
+            >{/if}
         </label>
         <label>
           <span>Hardware capex (USD)</span>
@@ -411,9 +542,13 @@
             type="number"
             min="0"
             step="0.01"
+            aria-invalid={isMissing(resource.hardware_capex_usd)}
             bind:value={resource.hardware_capex_usd}
             oninput={onchange}
           />
+          {#if isMissing(resource.hardware_capex_usd)}<small class="field-error"
+              >Hardware capex is required.</small
+            >{/if}
         </label>
         <label>
           <span>Depreciation years</span>
@@ -421,9 +556,13 @@
             type="number"
             min="0.01"
             step="0.01"
+            aria-invalid={isMissing(resource.depreciation_years)}
             bind:value={resource.depreciation_years}
             oninput={onchange}
           />
+          {#if isMissing(resource.depreciation_years)}<small class="field-error"
+              >Depreciation years are required.</small
+            >{/if}
         </label>
         <label>
           <span>Average power override (kW)</span>
@@ -543,6 +682,16 @@
   input:disabled {
     color: #7d898b;
     background: #edf1f1;
+  }
+  input[aria-invalid='true'],
+  select[aria-invalid='true'] {
+    border-color: #b42318;
+  }
+  .field-error {
+    color: #b42318;
+    font-size: 0.75rem;
+    font-weight: 650;
+    line-height: 1.3;
   }
   .source-section {
     padding: 17px 18px 19px;

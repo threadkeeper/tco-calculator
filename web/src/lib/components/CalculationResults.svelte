@@ -16,6 +16,16 @@
   const revision = $derived(asRecord(calculation));
   const portfolio = $derived(readRecord(revision, 'portfolio_totals'));
   const resourceResults = $derived(readRecords(revision, 'resource_results'));
+  const sourcePortfolioTotal = $derived(readString(portfolio, 'aws_all_rows_total'));
+  const azurePortfolioTotal = $derived(readString(portfolio, 'portfolio_after_selected_parity'));
+  const portfolioDifference = $derived(readString(portfolio, 'portfolio_difference'));
+  const comparableResourceCount = $derived(readNumber(portfolio, 'comparable_resource_count') ?? 0);
+  const priceUnavailableResourceCount = $derived(
+    readNumber(portfolio, 'price_unavailable_resource_count') ?? 0
+  );
+  const noComparablePrices = $derived(
+    comparableResourceCount === 0 && priceUnavailableResourceCount > 0
+  );
   const warnings = $derived(
     Array.isArray(revision?.warnings)
       ? revision.warnings.filter((warning): warning is string => typeof warning === 'string')
@@ -29,6 +39,12 @@
 
   function label(value: string | null): string {
     return value ? value.replaceAll('_', ' ') : 'unavailable';
+  }
+
+  function excludedPriceMessage(): string {
+    if (noComparablePrices) return 'No workloads have complete source and Azure pricing.';
+    const noun = priceUnavailableResourceCount === 1 ? 'workload' : 'workloads';
+    return `${priceUnavailableResourceCount} ${noun} excluded because pricing is unavailable.`;
   }
 </script>
 
@@ -46,26 +62,44 @@
   <div class="totals-grid">
     <div class="total-block source">
       <span>Source estate</span>
-      <strong>{formatMoney(readString(portfolio, 'aws_all_rows_total'))}</strong>
-      <small>All price-resolved rows</small>
+      <strong class:unavailable={sourcePortfolioTotal === null}
+        >{formatMoney(sourcePortfolioTotal)}</strong
+      >
+      {#if sourcePortfolioTotal === null}
+        <small class="metric-error">One or more source prices are unavailable.</small>
+      {:else}
+        <small>All price-resolved rows</small>
+      {/if}
     </div>
     <div class="total-block azure">
       <span>Azure SQL MI</span>
-      <strong>{formatMoney(readString(portfolio, 'portfolio_after_selected_parity'))}</strong>
-      <small>Mapped rows after selected parity</small>
+      <strong class:unavailable={noComparablePrices}
+        >{noComparablePrices ? 'PRICE UNAVAILABLE' : formatMoney(azurePortfolioTotal)}</strong
+      >
+      {#if priceUnavailableResourceCount > 0}
+        <small class="metric-error">{excludedPriceMessage()}</small>
+      {:else}
+        <small>Mapped rows after selected parity</small>
+      {/if}
     </div>
     <div class="total-block difference">
       <span>Annual difference</span>
-      <strong>{formatMoney(readString(portfolio, 'portfolio_difference'))}</strong>
-      <small>Source minus Azure</small>
+      <strong class:unavailable={noComparablePrices}
+        >{noComparablePrices ? 'PRICE UNAVAILABLE' : formatMoney(portfolioDifference)}</strong
+      >
+      {#if priceUnavailableResourceCount > 0}
+        <small class="metric-error">{excludedPriceMessage()}</small>
+      {:else}
+        <small>Source minus Azure</small>
+      {/if}
     </div>
   </div>
 
   <div class="comparison-meta">
-    <span><b>{readNumber(portfolio, 'comparable_resource_count') ?? 0}</b> comparable</span>
+    <span><b>{comparableResourceCount}</b> comparable</span>
     <span><b>{readNumber(portfolio, 'no_mapping_resource_count') ?? 0}</b> no mapping</span>
-    <span
-      ><b>{readNumber(portfolio, 'price_unavailable_resource_count') ?? 0}</b> price unavailable</span
+    <span class:unavailable={priceUnavailableResourceCount > 0}
+      ><b>{priceUnavailableResourceCount}</b> price unavailable</span
     >
   </div>
 
@@ -88,6 +122,12 @@
       {@const unresolved = readRecords(result, 'unresolved_components')}
       {@const reasons = readRecords(targetSelection, 'outcome_reasons')}
       {@const steps = readRecords(result, 'explanation_steps')}
+      {@const awsUnavailable = readString(result, 'aws_pricing_status') === 'unavailable'}
+      {@const azureUnavailable = readString(result, 'azure_pricing_status') === 'unavailable'}
+      {@const pricingIncomplete = awsUnavailable || azureUnavailable}
+      {@const sourceAnnual = readString(sourceCosts, 'total')}
+      {@const azureAnnual = readString(azureCosts, 'total_before_parity')}
+      {@const totalSavings = readString(savings, 'total_savings')}
       <article class="result-row">
         <header>
           <div class="result-name">
@@ -104,8 +144,10 @@
                 />{:else}<CircleHelp size={14} />{/if}
               {label(readString(result, 'mapping_status'))}
             </span>
-            <span class="price-status">AWS {label(readString(result, 'aws_pricing_status'))}</span>
-            <span class="price-status"
+            <span class="price-status" class:unavailable={awsUnavailable}
+              >AWS {label(readString(result, 'aws_pricing_status'))}</span
+            >
+            <span class="price-status" class:unavailable={azureUnavailable}
               >Azure {label(readString(result, 'azure_pricing_status'))}</span
             >
           </div>
@@ -113,19 +155,26 @@
 
         <div class="result-costs">
           <div>
-            <span>Source annual</span><strong
-              >{formatMoney(readString(sourceCosts, 'total'))}</strong
+            <span>Source annual</span><strong class:unavailable={awsUnavailable}
+              >{formatMoney(sourceAnnual)}</strong
             >
+            {#if awsUnavailable}<small class="metric-error">Source price is unavailable.</small
+              >{/if}
           </div>
           <div>
-            <span>Azure annual</span><strong
-              >{formatMoney(readString(azureCosts, 'total_before_parity'))}</strong
+            <span>Azure annual</span><strong class:unavailable={azureUnavailable}
+              >{formatMoney(azureAnnual)}</strong
             >
+            {#if azureUnavailable}<small class="metric-error">Azure price is unavailable.</small
+              >{/if}
           </div>
           <div>
-            <span>Estimated savings</span><strong
-              >{formatMoney(readString(savings, 'total_savings'))}</strong
+            <span>Estimated savings</span><strong class:unavailable={pricingIncomplete}
+              >{formatMoney(totalSavings)}</strong
             >
+            {#if pricingIncomplete}<small class="metric-error"
+                >Savings require complete source and Azure prices.</small
+              >{/if}
           </div>
         </div>
 
@@ -154,7 +203,7 @@
         {/if}
 
         {#if unresolved.length > 0 || reasons.length > 0}
-          <div class="issues">
+          <div class="issues" role="alert">
             {#each unresolved as item, index (index)}<p>
                 <AlertTriangle size={15} />
                 {readString(item, 'message')}
@@ -245,8 +294,18 @@
       700 clamp(1.15rem, 3vw, 1.75rem)/1.2 Bahnschrift,
       sans-serif;
   }
+  .total-block strong.unavailable,
+  .result-costs strong.unavailable {
+    color: #b42318;
+  }
   .total-block small {
     color: #6b7d80;
+  }
+  .metric-error {
+    color: #b42318 !important;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.3;
   }
   .total-block.azure {
     background: #e1f1ed;
@@ -262,6 +321,10 @@
     color: #506367;
     background: #dce8e5;
     font-size: 0.8rem;
+  }
+  .comparison-meta .unavailable {
+    color: #b42318;
+    font-weight: 700;
   }
   .warnings {
     display: grid;
@@ -348,6 +411,11 @@
     background: #edf1f1;
     border-color: #d1dada;
   }
+  .price-status.unavailable {
+    color: #8f1d16;
+    background: #fff0ee;
+    border-color: #efb0aa;
+  }
   .result-costs {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -393,9 +461,9 @@
   }
   .issues {
     padding: 11px 15px;
-    color: #7b3d19;
-    background: #fff5ed;
-    border-bottom: 1px solid #f0cfba;
+    color: #8f1d16;
+    background: #fff0ee;
+    border-bottom: 1px solid #efb0aa;
   }
   .issues p {
     display: flex;
