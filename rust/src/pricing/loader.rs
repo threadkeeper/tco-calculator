@@ -1114,6 +1114,7 @@ mod tests {
                         "licenseModel": "NA",
                         "deploymentModel": "Custom",
                         "deploymentOption": "Single-AZ",
+                        "operation": "CreateDBInstance:0405",
                         "instanceType": "db.m6i.8xlarge",
                         "memory": "128 GiB",
                         "vcpu": "32"
