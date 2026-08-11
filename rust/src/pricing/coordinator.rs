@@ -1650,7 +1650,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(result, Err(ProviderError::TemporarilyUnavailable));
+        assert!(matches!(result, Err(ProviderError::TemporarilyUnavailable)));
     }
 
     #[tokio::test]
