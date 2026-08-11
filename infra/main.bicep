@@ -40,7 +40,7 @@ param minimumReplicas int = 0
 @minValue(1)
 param guestRequestsPerMinute int = 60
 @minValue(1)
-param providerRefreshesPerHour int = 8
+param providerRefreshesPerHour int = 40
 @minValue(1048576)
 @maxValue(268435456)
 param providerMaxResponseBytes int = 67108864

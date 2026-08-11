@@ -5,7 +5,7 @@ Target implementer: GitHub Copilot coding agent using GPT 5.6 Sol
 Backend: Rust  
 Frontend: TypeScript with Svelte 5 and SvelteKit  
 Hosting: Microsoft Azure  
-Default Azure SQL migration region: Sweden Central (`swedencentral`), selected once per project
+Default Azure SQL migration region: Sweden Central (`swedencentral`), selected once per project from the reviewed public-region catalog
 
 ## 1. Purpose
 
@@ -285,7 +285,11 @@ The settings area MUST contain:
 | Project name | User supplied | 1-100 chars | Persisted for authenticated users |
 | Project type | User selected | `ec2`, `rds`, or `on_prem` | Immutable after the first resource is added |
 | AWS region | `eu-west-1` | Supported live catalog region | Required for EC2/RDS; absent for On-prem; one region per project |
-| Azure migration region | `Sweden Central` | Supported SQL MI catalog region | One selected region per project; internal ARM region name |
+| Azure migration region | `Sweden Central` | One of the 28 reviewed SQL MI public pricing regions | One selected region per project; internal ARM region name |
+
+The Azure migration-region catalog MUST contain the 28 public USD regions that, as reviewed on 2026-08-11, are listed by Microsoft for Premium-series hardware with 16-TB storage and are represented by both the global Azure Retail Prices API and Azure SQL calculator: Australia East, Australia Southeast, Brazil South, Canada Central, Canada East, Central India, Central US, East Asia, East US, East US 2, France Central, Germany West Central, Italy North, Japan East, Japan West, North Central US, North Europe, Poland Central, Qatar Central, South Central US, Southeast Asia, Sweden Central, Switzerland North, UK South, West Central US, West Europe, West US, and West US 2.
+
+China North 3 MUST remain excluded while the application uses the approved global USD pricing endpoints because those endpoints do not expose a compatible regional price set for that sovereign-cloud region. East Asia catalog availability does not promise deployment capacity; Microsoft documents that creation or modification can be temporarily disabled there because of limited Premium-series hardware capacity. Region availability MUST be re-reviewed against the official SQL Managed Instance region-availability page before adding, removing, or materially changing a region capability.
 | Currency | `USD` | Read-only | Tax excluded |
 | AWS/source compute discount | `10%` | 0-100% | AWS projects only; fixed at 0 and not editable for On-prem |
 | AWS/source SQL license discount | `5%` | 0-100% | Applies to AWS licensing or On-prem License + SA pack prices |

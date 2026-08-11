@@ -26,7 +26,151 @@ pub struct AwsRegionScope {
 pub struct AzureRegionScope {
     pub arm_name: &'static str,
     pub calculator_slug: &'static str,
+    pub display_name: &'static str,
 }
+
+pub const AZURE_REGION_SCOPES: [AzureRegionScope; 28] = [
+    AzureRegionScope {
+        arm_name: "australiaeast",
+        calculator_slug: "australia-east",
+        display_name: "Australia East",
+    },
+    AzureRegionScope {
+        arm_name: "australiasoutheast",
+        calculator_slug: "australia-southeast",
+        display_name: "Australia Southeast",
+    },
+    AzureRegionScope {
+        arm_name: "brazilsouth",
+        calculator_slug: "brazil-south",
+        display_name: "Brazil South",
+    },
+    AzureRegionScope {
+        arm_name: "canadacentral",
+        calculator_slug: "canada-central",
+        display_name: "Canada Central",
+    },
+    AzureRegionScope {
+        arm_name: "canadaeast",
+        calculator_slug: "canada-east",
+        display_name: "Canada East",
+    },
+    AzureRegionScope {
+        arm_name: "centralindia",
+        calculator_slug: "central-india",
+        display_name: "Central India",
+    },
+    AzureRegionScope {
+        arm_name: "centralus",
+        calculator_slug: "us-central",
+        display_name: "Central US",
+    },
+    AzureRegionScope {
+        arm_name: "eastasia",
+        calculator_slug: "asia-pacific-east",
+        display_name: "East Asia",
+    },
+    AzureRegionScope {
+        arm_name: "eastus",
+        calculator_slug: "us-east",
+        display_name: "East US",
+    },
+    AzureRegionScope {
+        arm_name: "eastus2",
+        calculator_slug: "us-east-2",
+        display_name: "East US 2",
+    },
+    AzureRegionScope {
+        arm_name: "francecentral",
+        calculator_slug: "france-central",
+        display_name: "France Central",
+    },
+    AzureRegionScope {
+        arm_name: "germanywestcentral",
+        calculator_slug: "germany-west-central",
+        display_name: "Germany West Central",
+    },
+    AzureRegionScope {
+        arm_name: "italynorth",
+        calculator_slug: "italy-north",
+        display_name: "Italy North",
+    },
+    AzureRegionScope {
+        arm_name: "japaneast",
+        calculator_slug: "japan-east",
+        display_name: "Japan East",
+    },
+    AzureRegionScope {
+        arm_name: "japanwest",
+        calculator_slug: "japan-west",
+        display_name: "Japan West",
+    },
+    AzureRegionScope {
+        arm_name: "northcentralus",
+        calculator_slug: "us-north-central",
+        display_name: "North Central US",
+    },
+    AzureRegionScope {
+        arm_name: "northeurope",
+        calculator_slug: "europe-north",
+        display_name: "North Europe",
+    },
+    AzureRegionScope {
+        arm_name: "polandcentral",
+        calculator_slug: "poland-central",
+        display_name: "Poland Central",
+    },
+    AzureRegionScope {
+        arm_name: "qatarcentral",
+        calculator_slug: "qatar-central",
+        display_name: "Qatar Central",
+    },
+    AzureRegionScope {
+        arm_name: "southcentralus",
+        calculator_slug: "us-south-central",
+        display_name: "South Central US",
+    },
+    AzureRegionScope {
+        arm_name: "southeastasia",
+        calculator_slug: "asia-pacific-southeast",
+        display_name: "Southeast Asia",
+    },
+    AzureRegionScope {
+        arm_name: "swedencentral",
+        calculator_slug: "sweden-central",
+        display_name: "Sweden Central",
+    },
+    AzureRegionScope {
+        arm_name: "switzerlandnorth",
+        calculator_slug: "switzerland-north",
+        display_name: "Switzerland North",
+    },
+    AzureRegionScope {
+        arm_name: "uksouth",
+        calculator_slug: "united-kingdom-south",
+        display_name: "UK South",
+    },
+    AzureRegionScope {
+        arm_name: "westcentralus",
+        calculator_slug: "us-west-central",
+        display_name: "West Central US",
+    },
+    AzureRegionScope {
+        arm_name: "westeurope",
+        calculator_slug: "europe-west",
+        display_name: "West Europe",
+    },
+    AzureRegionScope {
+        arm_name: "westus",
+        calculator_slug: "us-west",
+        display_name: "West US",
+    },
+    AzureRegionScope {
+        arm_name: "westus2",
+        calculator_slug: "us-west-2",
+        display_name: "West US 2",
+    },
+];
 
 pub fn aws_region_scope(region: &str) -> Result<AwsRegionScope, ProviderError> {
     let location = match region {
@@ -57,13 +201,11 @@ pub fn aws_region_scope(region: &str) -> Result<AwsRegionScope, ProviderError> {
 }
 
 pub fn azure_region_scope(region: &str) -> Result<AzureRegionScope, ProviderError> {
-    match region {
-        "swedencentral" => Ok(AzureRegionScope {
-            arm_name: "swedencentral",
-            calculator_slug: "sweden-central",
-        }),
-        _ => Err(ProviderError::Unsupported),
-    }
+    AZURE_REGION_SCOPES
+        .iter()
+        .copied()
+        .find(|scope| scope.arm_name == region)
+        .ok_or(ProviderError::Unsupported)
 }
 
 pub fn ec2_metadata_url() -> Result<Url, ProviderError> {
@@ -233,7 +375,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scopes_are_limited_to_reviewed_regions() {
+    fn scopes_are_limited_to_reviewed_priceable_regions() {
         assert_eq!(
             aws_region_scope("eu-west-1").expect("reviewed AWS region"),
             AwsRegionScope {
@@ -245,15 +387,31 @@ mod tests {
             azure_region_scope("swedencentral").expect("reviewed Azure region"),
             AzureRegionScope {
                 arm_name: "swedencentral",
-                calculator_slug: "sweden-central"
+                calculator_slug: "sweden-central",
+                display_name: "Sweden Central"
             }
         );
+        assert_eq!(AZURE_REGION_SCOPES.len(), 28);
+        let unique_arm_names = AZURE_REGION_SCOPES
+            .iter()
+            .map(|scope| scope.arm_name)
+            .collect::<std::collections::BTreeSet<_>>();
+        let unique_calculator_slugs = AZURE_REGION_SCOPES
+            .iter()
+            .map(|scope| scope.calculator_slug)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique_arm_names.len(), AZURE_REGION_SCOPES.len());
+        assert_eq!(unique_calculator_slugs.len(), AZURE_REGION_SCOPES.len());
         assert_eq!(
             aws_region_scope("us-east-1"),
             Err(ProviderError::Unsupported)
         );
         assert_eq!(
             azure_region_scope("southafricanorth"),
+            Err(ProviderError::Unsupported)
+        );
+        assert_eq!(
+            azure_region_scope("chinanorth3"),
             Err(ProviderError::Unsupported)
         );
     }
