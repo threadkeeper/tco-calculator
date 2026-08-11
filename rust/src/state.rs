@@ -50,6 +50,14 @@ pub enum PersistenceBackend {
     Cosmos,
 }
 
+/// Durable pricing-cache repositories, which are only available together on the
+/// Cosmos-backed path and are all absent for the in-memory local path.
+struct PricingCacheRepositories {
+    snapshots: Arc<dyn DurableSnapshotRepository>,
+    leases: Arc<dyn RefreshLeaseRepository>,
+    quota: Arc<dyn RefreshQuotaRepository>,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
@@ -88,9 +96,11 @@ impl AppState {
             projects,
             privacy_consents,
             project_shares,
-            Some(snapshots),
-            Some(leases),
-            Some(refresh_quota),
+            Some(PricingCacheRepositories {
+                snapshots,
+                leases,
+                quota: refresh_quota,
+            }),
             PersistenceBackend::Cosmos,
         )
     }
@@ -102,8 +112,6 @@ impl AppState {
             Arc::new(InMemoryPrivacyConsentRepository::new()),
             Arc::new(InMemoryProjectShareRepository::new()),
             None,
-            None,
-            None,
             PersistenceBackend::MemoryLocal,
         )
     }
@@ -113,11 +121,13 @@ impl AppState {
         projects: Arc<dyn ProjectRepository>,
         privacy_consents: Arc<dyn PrivacyConsentRepository>,
         project_shares: Arc<dyn ProjectShareRepository>,
-        durable_snapshots: Option<Arc<dyn DurableSnapshotRepository>>,
-        refresh_leases: Option<Arc<dyn RefreshLeaseRepository>>,
-        refresh_quota_repository: Option<Arc<dyn RefreshQuotaRepository>>,
+        pricing_cache: Option<PricingCacheRepositories>,
         persistence_backend: PersistenceBackend,
     ) -> Result<Self, StateError> {
+        let (durable_snapshots, refresh_leases, refresh_quota_repository) = match pricing_cache {
+            Some(cache) => (Some(cache.snapshots), Some(cache.leases), Some(cache.quota)),
+            None => (None, None, None),
+        };
         let capabilities = Arc::new(serde_json::from_str::<CapabilityCatalog>(include_str!(
             "../../app/catalogs/sql-mi-capabilities.json"
         ))?);
