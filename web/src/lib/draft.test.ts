@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createGuestWorkspace, createProjectDraft, createResource, editableProject } from './draft';
+import {
+  createGuestWorkspace,
+  createProjectDraft,
+  createResource,
+  editableProject,
+  projectRequestPayload
+} from './draft';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -76,6 +82,94 @@ describe('project drafts', () => {
       editableProject({ name: 'Unknown type', settings: { project_type: 'vmware' }, resources: [] })
     ).toBeNull();
   });
+
+  it.each(['ec2', 'rds', 'on_prem'] as const)(
+    'normalizes browser-coerced %s values to API contract types',
+    (projectType) => {
+      const project = createProjectDraft(projectType, 'Contract test', null);
+      const resource = createResource(projectType);
+      project.resources.push(resource);
+      const settingDecimals = {
+        source_compute_discount: 0.1,
+        source_license_discount: 0.2,
+        source_storage_discount: 0.3,
+        azure_compute_discount: 0.4,
+        azure_license_discount: 0.5,
+        azure_storage_discount: 0.6,
+        selected_parity_adjustment: 0.7,
+        default_annual_hours: 8000.5
+      };
+      const sharedDecimals = {
+        sql_data_gb_per_instance: 2048.5,
+        source_ram_gb_per_instance: 512.25,
+        annual_hours_per_instance: 8000.5
+      };
+      for (const [field, value] of Object.entries(settingDecimals)) {
+        Reflect.set(project.settings, field, value);
+      }
+      for (const [field, value] of Object.entries(sharedDecimals)) {
+        Reflect.set(resource, field, value);
+      }
+      Reflect.set(resource, 'quantity', '2');
+
+      if (resource.source_type === 'ec2') {
+        const volume = resource.volumes[0];
+        volume.volume_type = 'gp3';
+        Reflect.set(volume, 'capacity_gb', 2048.5);
+        Reflect.set(volume, 'provisioned_iops', '6000');
+        Reflect.set(volume, 'throughput_mibps', 250.25);
+      } else if (resource.source_type === 'rds') {
+        Reflect.set(resource, 'source_max_iops', '12000');
+      } else {
+        Reflect.set(project.settings, 'enterprise_license_sa_usd_per_two_core_pack', 7123.45);
+        Reflect.set(project.settings, 'standard_license_sa_usd_per_two_core_pack', 2345.67);
+        Reflect.set(project.settings, 'remaining_coverage_months', '24');
+        Reflect.set(project.settings, 'electricity_rate_usd_per_kwh', 0.1234);
+        Reflect.set(resource, 'source_vcpu', '64');
+        Reflect.set(resource, 'licensable_cores', '48');
+        Reflect.set(resource, 'source_max_iops', '24000');
+        Reflect.set(resource, 'hardware_capex_usd', 125000.25);
+        Reflect.set(resource, 'depreciation_years', 4.5);
+        Reflect.set(resource, 'average_power_kw_override', 0.75);
+      }
+
+      const payload = projectRequestPayload(project);
+      const payloadResource = payload.resources[0];
+
+      for (const [field, value] of Object.entries(settingDecimals)) {
+        expect(Reflect.get(payload.settings, field)).toBe(String(value));
+      }
+      for (const [field, value] of Object.entries(sharedDecimals)) {
+        expect(Reflect.get(payloadResource, field)).toBe(String(value));
+      }
+      expect(payloadResource.quantity).toBe(2);
+
+      if (payloadResource.source_type === 'ec2') {
+        expect(payloadResource.volumes[0]).toMatchObject({
+          capacity_gb: '2048.5',
+          provisioned_iops: 6000,
+          throughput_mibps: '250.25'
+        });
+      } else if (payloadResource.source_type === 'rds') {
+        expect(payloadResource.source_max_iops).toBe(12000);
+      } else {
+        expect(payload.settings).toMatchObject({
+          enterprise_license_sa_usd_per_two_core_pack: '7123.45',
+          standard_license_sa_usd_per_two_core_pack: '2345.67',
+          remaining_coverage_months: 24,
+          electricity_rate_usd_per_kwh: '0.1234'
+        });
+        expect(payloadResource).toMatchObject({
+          source_vcpu: 64,
+          licensable_cores: 48,
+          source_max_iops: 24000,
+          hardware_capex_usd: '125000.25',
+          depreciation_years: '4.5',
+          average_power_kw_override: '0.75'
+        });
+      }
+    }
+  );
 });
 
 describe('resource drafts', () => {

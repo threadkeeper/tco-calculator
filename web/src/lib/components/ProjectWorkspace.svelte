@@ -26,6 +26,7 @@
     clearGuestWorkspace,
     createResource,
     editableProject,
+    projectRequestPayload,
     saveGuestWorkspace,
     type GuestWorkspace
   } from '$lib/draft';
@@ -136,7 +137,7 @@
       const response = await requestJsonResponse(path, {
         method: currentProjectId ? 'PUT' : 'POST',
         headers,
-        body: JSON.stringify(workspace.project)
+        body: JSON.stringify(projectRequestPayload(workspace.project))
       });
       const document = asRecord(response.payload);
       const savedProject = editableProject(document);
@@ -311,7 +312,7 @@
     resolving = true;
     problem = null;
     try {
-      const project = workspace.project;
+      const project = projectRequestPayload(workspace.project);
       const payload = {
         currency: project.settings.currency,
         aws_region: project.settings.aws_region,
@@ -373,7 +374,7 @@
       await resolvePrices();
       workspace.calculation = await requestJson('/api/v1/calculations', {
         method: 'POST',
-        body: JSON.stringify(workspace.project)
+        body: JSON.stringify(projectRequestPayload(workspace.project))
       });
       dirty = mode === 'authenticated';
       if (mode === 'guest') await persistGuest();

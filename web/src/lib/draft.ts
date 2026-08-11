@@ -202,6 +202,162 @@ export function createGuestWorkspace(project: ProjectDraft): GuestWorkspace {
   };
 }
 
+export function projectRequestPayload(project: ProjectDraft): ProjectDraft {
+  const settings = {
+    ...project.settings,
+    source_compute_discount: requiredDecimal(
+      project.settings.source_compute_discount,
+      'Source compute discount'
+    ),
+    source_license_discount: requiredDecimal(
+      project.settings.source_license_discount,
+      'Source license discount'
+    ),
+    source_storage_discount: requiredDecimal(
+      project.settings.source_storage_discount,
+      'Source storage discount'
+    ),
+    azure_compute_discount: requiredDecimal(
+      project.settings.azure_compute_discount,
+      'Azure compute discount'
+    ),
+    azure_license_discount: requiredDecimal(
+      project.settings.azure_license_discount,
+      'Azure license discount'
+    ),
+    azure_storage_discount: requiredDecimal(
+      project.settings.azure_storage_discount,
+      'Azure storage discount'
+    ),
+    selected_parity_adjustment: requiredDecimal(
+      project.settings.selected_parity_adjustment,
+      'Selected parity adjustment'
+    ),
+    default_annual_hours: requiredDecimal(
+      project.settings.default_annual_hours,
+      'Default annual hours'
+    ),
+    enterprise_license_sa_usd_per_two_core_pack: optionalDecimal(
+      project.settings.enterprise_license_sa_usd_per_two_core_pack
+    ),
+    standard_license_sa_usd_per_two_core_pack: optionalDecimal(
+      project.settings.standard_license_sa_usd_per_two_core_pack
+    ),
+    remaining_coverage_months: optionalCoverageMonths(project.settings.remaining_coverage_months),
+    electricity_rate_usd_per_kwh: optionalDecimal(project.settings.electricity_rate_usd_per_kwh)
+  };
+  const resources = project.resources.map((resource, index): ResourceDraft => {
+    const shared = {
+      id: resource.id,
+      workload_name: resource.workload_name,
+      quantity: requiredInteger(resource.quantity, `Workload ${index + 1} quantity`),
+      sql_edition: resource.sql_edition,
+      license_basis: resource.license_basis,
+      sql_data_gb_per_instance: requiredDecimal(
+        resource.sql_data_gb_per_instance,
+        `Workload ${index + 1} SQL data`
+      ),
+      source_ram_gb_per_instance: requiredDecimal(
+        resource.source_ram_gb_per_instance,
+        `Workload ${index + 1} source RAM`
+      ),
+      annual_hours_per_instance: requiredDecimal(
+        resource.annual_hours_per_instance,
+        `Workload ${index + 1} annual hours`
+      ),
+      mi_purchase_option: resource.mi_purchase_option
+    };
+
+    if (resource.source_type === 'ec2') {
+      return {
+        ...shared,
+        source_type: 'ec2',
+        instance_type: resource.instance_type,
+        volumes: resource.volumes.map((volume, volumeIndex) => ({
+          ...volume,
+          capacity_gb: requiredDecimal(
+            volume.capacity_gb,
+            `Workload ${index + 1} volume ${volumeIndex + 1} capacity`
+          ),
+          provisioned_iops: optionalInteger(volume.provisioned_iops),
+          throughput_mibps: optionalDecimal(volume.throughput_mibps)
+        }))
+      };
+    }
+    if (resource.source_type === 'rds') {
+      return {
+        ...shared,
+        source_type: 'rds',
+        instance_type: resource.instance_type,
+        deployment: resource.deployment,
+        commercial_term: resource.commercial_term,
+        storage_class: resource.storage_class,
+        source_max_iops: requiredInteger(
+          resource.source_max_iops,
+          `Workload ${index + 1} maximum source IOPS`
+        )
+      };
+    }
+    return {
+      ...shared,
+      source_type: 'on_prem',
+      source_vcpu: requiredInteger(resource.source_vcpu, `Workload ${index + 1} source vCPU`),
+      licensable_cores: requiredInteger(
+        resource.licensable_cores,
+        `Workload ${index + 1} licensable cores`
+      ),
+      source_max_iops: requiredInteger(
+        resource.source_max_iops,
+        `Workload ${index + 1} maximum source IOPS`
+      ),
+      hardware_capex_usd: requiredDecimal(
+        resource.hardware_capex_usd,
+        `Workload ${index + 1} hardware capex`
+      ),
+      depreciation_years: requiredDecimal(
+        resource.depreciation_years,
+        `Workload ${index + 1} depreciation years`
+      ),
+      average_power_kw_override: optionalDecimal(resource.average_power_kw_override)
+    };
+  });
+
+  return { ...project, settings, resources };
+}
+
+function requiredDecimal(value: unknown, label: string): string {
+  if (typeof value === 'string' && value.trim() !== '') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  throw new Error(`${label} is required.`);
+}
+
+function optionalDecimal(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function requiredInteger(value: unknown, label: string): number {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed)) return parsed;
+  }
+  throw new Error(`${label} is required.`);
+}
+
+function optionalInteger(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  return requiredInteger(value, 'Integer value');
+}
+
+function optionalCoverageMonths(value: unknown): 12 | 24 | 36 | null {
+  const months = optionalInteger(value);
+  if (months === null || months === 12 || months === 24 || months === 36) return months;
+  throw new Error('Remaining coverage months must be 12, 24, or 36.');
+}
+
 export function editableProject(value: unknown): ProjectDraft | null {
   if (!isRecord(value) || !isRecord(value.settings) || !Array.isArray(value.resources)) {
     return null;

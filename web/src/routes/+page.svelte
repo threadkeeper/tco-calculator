@@ -27,6 +27,7 @@
     createResource,
     editableProject,
     loadGuestWorkspace,
+    projectRequestPayload,
     saveGuestWorkspace,
     type GuestWorkspace,
     type ProjectType
@@ -216,7 +217,7 @@
       if (mode === 'authenticated' && setupType !== 'on_prem') {
         const response = await requestJsonResponse('/api/v1/projects', {
           method: 'POST',
-          body: JSON.stringify(project)
+          body: JSON.stringify(projectRequestPayload(project))
         });
         openDocument(response.payload, response.etag);
       } else if (mode === 'authenticated') {
