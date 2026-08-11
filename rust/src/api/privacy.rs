@@ -209,12 +209,10 @@ mod tests {
             allow_contact: true,
             email_address: Some("person@example.com".to_owned()),
         };
-        assert_eq!(
-            validate_request(&request)
-                .expect("valid request")
-                .as_deref(),
-            Some("person@example.com")
-        );
+        let Ok(email_address) = validate_request(&request) else {
+            panic!("expected a valid request");
+        };
+        assert_eq!(email_address.as_deref(), Some("person@example.com"));
 
         let missing = SavePrivacyConsentRequest {
             email_address: None,
@@ -232,29 +230,30 @@ mod tests {
             email_address: Some("discard@example.com".to_owned()),
         };
 
-        assert_eq!(validate_request(&request).expect("valid request"), None);
+        let Ok(email_address) = validate_request(&request) else {
+            panic!("expected a valid request");
+        };
+        assert_eq!(email_address, None);
     }
 
     #[tokio::test]
     async fn guest_requests_do_not_require_consent() {
         let state = AppState::in_memory(local_config(None)).expect("guest state");
 
-        assert!(
-            !consent_required(&state, &HeaderMap::new(), "/test")
-                .await
-                .expect("consent decision")
-        );
+        let Ok(required) = consent_required(&state, &HeaderMap::new(), "/test").await else {
+            panic!("expected a consent decision");
+        };
+        assert!(!required);
     }
 
     #[tokio::test]
     async fn authenticated_requests_require_missing_consent() {
         let state = authenticated_state();
 
-        assert!(
-            consent_required(&state, &HeaderMap::new(), "/test")
-                .await
-                .expect("consent decision")
-        );
+        let Ok(required) = consent_required(&state, &HeaderMap::new(), "/test").await else {
+            panic!("expected a consent decision");
+        };
+        assert!(required);
     }
 
     #[tokio::test]
@@ -276,11 +275,10 @@ mod tests {
             .await
             .expect("save consent");
 
-        assert!(
-            !consent_required(&state, &HeaderMap::new(), "/test")
-                .await
-                .expect("consent decision")
-        );
+        let Ok(required) = consent_required(&state, &HeaderMap::new(), "/test").await else {
+            panic!("expected a consent decision");
+        };
+        assert!(!required);
     }
 
     #[tokio::test]
@@ -302,11 +300,10 @@ mod tests {
             }),
         });
 
-        assert!(
-            consent_required(&state, &HeaderMap::new(), "/test")
-                .await
-                .expect("consent decision")
-        );
+        let Ok(required) = consent_required(&state, &HeaderMap::new(), "/test").await else {
+            panic!("expected a consent decision");
+        };
+        assert!(required);
     }
 
     fn authenticated_state() -> AppState {

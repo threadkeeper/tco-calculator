@@ -217,7 +217,7 @@ impl ProjectRepository for CosmosProjectRepository {
         project: EditableProject,
         calculation_revision: Option<CalculationRevision>,
     ) -> Result<ProjectDocument, RepositoryError> {
-        let current = self.get(owner_id, project_id).await?;
+        let current = ProjectRepository::get(self, owner_id, project_id).await?;
         if current.etag != if_match {
             return Err(RepositoryError::PreconditionFailed);
         }
