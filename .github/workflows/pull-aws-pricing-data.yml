@@ -2,7 +2,7 @@ name: Pull AWS Pricing Data
 
 on:
   schedule:
-    - cron: '0 1 * * *'
+    - cron: "0 1 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -14,13 +14,28 @@ permissions:
 
 jobs:
   refresh:
-    name: Refresh supported AWS regions
+    name: Refresh ${{ matrix.region }}
     runs-on: ubuntu-latest
     environment: dev
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        region:
+          - eu-central-1
+          - eu-central-2
+          - eu-north-1
+          - eu-south-1
+          - eu-south-2
+          - eu-west-1
+          - eu-west-2
+          - eu-west-3
     env:
       TCO_CALCULATOR_URL: ${{ vars.TCO_CALCULATOR_URL }}
+      AWS_REGION: ${{ matrix.region }}
     steps:
-      - name: Refresh AWS price snapshots
+      - name: Refresh AWS price snapshot
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace($env:TCO_CALCULATOR_URL)) {
@@ -35,32 +50,20 @@ jobs:
           }
 
           $endpoint = [Uri]::new($origin, '/api/v1/pricing/aws/refresh')
-          $regions = @(
-            'eu-central-1',
-            'eu-central-2',
-            'eu-north-1',
-            'eu-south-1',
-            'eu-south-2',
-            'eu-west-1',
-            'eu-west-2',
-            'eu-west-3'
-          )
 
-          foreach ($region in $regions) {
-            $body = @{
-              aws_region = $region
-              azure_region = 'swedencentral'
-              currency = 'USD'
-              resources = @()
-            } | ConvertTo-Json -Compress
-            $response = Invoke-RestMethod `
-              -Uri $endpoint `
-              -Method Post `
-              -ContentType 'application/json' `
-              -Body $body `
-              -TimeoutSec 180
-            if ($response.status -ne 'fresh' -or [string]::IsNullOrWhiteSpace($response.snapshot_id)) {
-              throw "AWS pricing refresh for $region did not produce a fresh snapshot."
-            }
-            Write-Output "Refreshed $region at $($response.retrieved_at)."
+          $body = @{
+            aws_region = $env:AWS_REGION
+            azure_region = 'swedencentral'
+            currency = 'USD'
+            resources = @()
+          } | ConvertTo-Json -Compress
+          $response = Invoke-RestMethod `
+            -Uri $endpoint `
+            -Method Post `
+            -ContentType 'application/json' `
+            -Body $body `
+            -TimeoutSec 900
+          if ($response.status -ne 'fresh' -or [string]::IsNullOrWhiteSpace($response.snapshot_id)) {
+            throw "AWS pricing refresh for $env:AWS_REGION did not produce a fresh snapshot."
           }
+          Write-Output "Refreshed $env:AWS_REGION at $($response.retrieved_at)."
