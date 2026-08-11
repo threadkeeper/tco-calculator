@@ -179,9 +179,9 @@ impl LivePricingLoader {
         source_region: &str,
     ) -> Result<AwsPriceSnapshot, ProviderError> {
         let (ec2, rds, ebs) = tokio::try_join!(
-            self.load_aws_ec2(source_region),
-            self.load_aws_rds(source_region),
-            self.load_aws_ebs(source_region),
+            log_aws_component_failure("ec2", self.load_aws_ec2(source_region)),
+            log_aws_component_failure("rds", self.load_aws_rds(source_region)),
+            log_aws_component_failure("ebs", self.load_aws_ebs(source_region)),
         )?;
         let mut warnings = ec2.warnings;
         warnings.extend(rds.warnings);
@@ -413,6 +413,20 @@ impl LivePricingLoader {
         )
         .map_err(map_snapshot_error)
     }
+}
+
+async fn log_aws_component_failure<T>(
+    component: &'static str,
+    result: impl Future<Output = Result<T, ProviderError>>,
+) -> Result<T, ProviderError> {
+    result.await.inspect_err(|error| {
+        tracing::warn!(
+            provider = "aws",
+            component,
+            reason = ?error,
+            "AWS pricing component refresh failed"
+        );
+    })
 }
 
 fn snapshot_sources<'a>(
