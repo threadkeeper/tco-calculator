@@ -37,6 +37,11 @@ use super::{
         PricingCacheDocumentError, RefreshLeaseDocument, RefreshQuotaDocument,
         RefreshQuotaMutation,
     },
+    project_share::{
+        CreatedProjectShare, PROJECT_SHARE_DOCUMENT_TYPE, ProjectShareCredentials,
+        ProjectShareDocument, ProjectShareError, ProjectShareRepository, new_share_document,
+        resolve_document, share_partition, validate_document as validate_share_document,
+    },
     repository::{
         PROJECT_DOCUMENT_TYPE, ProjectRepository, RepositoryError, current_timestamp,
         new_project_document, updated_project_document, validate_stored_document,
@@ -241,6 +246,131 @@ impl ProjectRepository for CosmosProjectRepository {
     }
 }
 
+#[async_trait]
+impl ProjectShareRepository for CosmosProjectRepository {
+    async fn create(
+        &self,
+        source_owner_id: &str,
+        source_project_id: Uuid,
+        project: EditableProject,
+    ) -> Result<CreatedProjectShare, ProjectShareError> {
+        let credentials = ProjectShareCredentials {
+            share_id: Uuid::new_v4(),
+            secret: Uuid::new_v4(),
+        };
+        let document = new_share_document(
+            source_owner_id,
+            source_project_id,
+            project,
+            &credentials,
+            OffsetDateTime::now_utc(),
+        )?;
+        let options =
+            ItemWriteOptions::default().with_precondition(Precondition::if_none_match("*"));
+        self.container
+            .create_item(
+                document.partition_key.clone(),
+                &document.id.to_string(),
+                &document,
+                Some(options),
+            )
+            .await
+            .map_err(map_share_cosmos_error)?;
+        Ok(CreatedProjectShare {
+            credentials,
+            expires_at: document.expires_at,
+        })
+    }
+
+    async fn resolve(
+        &self,
+        credentials: &ProjectShareCredentials,
+    ) -> Result<EditableProject, ProjectShareError> {
+        let response = self
+            .container
+            .read_item(share_partition(), &credentials.share_id.to_string(), None)
+            .await
+            .map_err(map_share_cosmos_error)?;
+        let document = response
+            .into_model::<ProjectShareDocument>()
+            .map_err(map_share_cosmos_error)?;
+        let outcome = resolve_document(&document, credentials, OffsetDateTime::now_utc());
+        if matches!(outcome, Err(ProjectShareError::Expired))
+            && let Err(error) = self
+                .container
+                .delete_item(share_partition(), &credentials.share_id.to_string(), None)
+                .await
+        {
+            let status = error.status();
+            tracing::warn!(
+                status_code = u16::from(status.status_code()),
+                "Expired Cosmos project share cleanup failed"
+            );
+        }
+        outcome
+    }
+
+    async fn revoke(
+        &self,
+        source_owner_id: &str,
+        source_project_id: Uuid,
+        share_id: Uuid,
+    ) -> Result<(), ProjectShareError> {
+        let partition = share_partition();
+        let response = self
+            .container
+            .read_item(partition.clone(), &share_id.to_string(), None)
+            .await
+            .map_err(map_share_cosmos_error)?;
+        let document = response
+            .into_model::<ProjectShareDocument>()
+            .map_err(map_share_cosmos_error)?;
+        validate_share_document(&document, share_id)?;
+        if document.source_owner_id != source_owner_id
+            || document.source_project_id != source_project_id
+        {
+            return Err(ProjectShareError::NotFound);
+        }
+        self.container
+            .delete_item(partition, &share_id.to_string(), None)
+            .await
+            .map(|_| ())
+            .map_err(map_share_cosmos_error)
+    }
+
+    async fn revoke_project(
+        &self,
+        source_owner_id: &str,
+        source_project_id: Uuid,
+    ) -> Result<(), ProjectShareError> {
+        let query = Query::from(
+            "SELECT * FROM c WHERE c.document_type = @document_type AND c.source_owner_id = @source_owner_id AND c.source_project_id = @source_project_id",
+        )
+        .with_parameter("@document_type", PROJECT_SHARE_DOCUMENT_TYPE)
+        .and_then(|query| query.with_parameter("@source_owner_id", source_owner_id))
+        .and_then(|query| query.with_parameter("@source_project_id", source_project_id.to_string()))
+        .map_err(map_share_cosmos_error)?;
+        let partition = share_partition();
+        let mut items = self
+            .container
+            .query_items::<ProjectShareDocument>(
+                query,
+                FeedScope::partition(partition.clone()),
+                None,
+            )
+            .await
+            .map_err(map_share_cosmos_error)?;
+        while let Some(document) = items.try_next().await.map_err(map_share_cosmos_error)? {
+            validate_share_document(&document, document.id)?;
+            self.container
+                .delete_item(partition.clone(), &document.id.to_string(), None)
+                .await
+                .map_err(map_share_cosmos_error)?;
+        }
+        Ok(())
+    }
+}
+
 fn map_cosmos_error(error: CosmosError) -> RepositoryError {
     let status = error.status();
     tracing::warn!(
@@ -256,6 +386,22 @@ fn map_cosmos_error(error: CosmosError) -> RepositoryError {
         RepositoryError::PayloadTooLarge
     } else {
         RepositoryError::Unavailable
+    }
+}
+
+fn map_share_cosmos_error(error: CosmosError) -> ProjectShareError {
+    let status = error.status();
+    tracing::warn!(
+        status_code = u16::from(status.status_code()),
+        sub_status = status.sub_status().map(|value| value.value()),
+        "Cosmos project share operation failed"
+    );
+    if status.is_not_found() {
+        ProjectShareError::NotFound
+    } else if u16::from(status.status_code()) == 413 {
+        ProjectShareError::PayloadTooLarge
+    } else {
+        ProjectShareError::Unavailable
     }
 }
 

@@ -256,6 +256,7 @@ struct ProductAttributes {
     deployment_model: Option<String>,
     #[serde(rename = "deploymentOption")]
     deployment_option: Option<String>,
+    operation: Option<String>,
     #[serde(rename = "instanceType")]
     instance_type: Option<String>,
     memory: Option<String>,
@@ -330,11 +331,7 @@ fn is_selected_product(offer_code: &str, product: &RawProduct) -> bool {
                     Some("Standard" | "Enterprise")
                 )
                 && match product.product_family.as_str() {
-                    "Database Instance" => {
-                        product.attributes.deployment_model.as_deref() == Some("Custom")
-                            || product.attributes.license_model.as_deref()
-                                == Some("Bring your own media")
-                    }
+                    "Database Instance" => customer_provided_media(&product.attributes),
                     "Database Storage" => true,
                     _ => false,
                 }
@@ -349,6 +346,19 @@ fn is_selected_product(offer_code: &str, product: &RawProduct) -> bool {
         }
         _ => false,
     }
+}
+
+fn customer_provided_media(attributes: &ProductAttributes) -> bool {
+    attributes.license_model.as_deref() == Some("Bring your own media")
+        || attributes.deployment_model.as_deref() == Some("Custom")
+            && matches!(
+                (
+                    attributes.database_edition.as_deref(),
+                    attributes.operation.as_deref()
+                ),
+                (Some("Standard"), Some("CreateDBInstance:0405"))
+                    | (Some("Enterprise"), Some("CreateDBInstance:0406"))
+            )
 }
 
 struct TermsSeed<'a> {
@@ -1319,6 +1329,22 @@ mod tests {
                         "licenseModel": "NA",
                         "deploymentModel": "Custom",
                         "deploymentOption": "Single-AZ",
+                        "operation": "CreateDBInstance:0405",
+                        "instanceType": "db.m6i.8xlarge",
+                        "memory": "128 GiB",
+                        "vcpu": "32"
+                    }
+                },
+                "licensed-compute-sku": {
+                    "sku": "licensed-compute-sku",
+                    "productFamily": "Database Instance",
+                    "attributes": {
+                        "databaseEngine": "SQL Server",
+                        "databaseEdition": "Standard",
+                        "licenseModel": "NA",
+                        "deploymentModel": "Custom",
+                        "deploymentOption": "Single-AZ",
+                        "operation": "CreateDBInstance:0402",
                         "instanceType": "db.m6i.8xlarge",
                         "memory": "128 GiB",
                         "vcpu": "32"
@@ -1358,6 +1384,25 @@ mod tests {
                                     "endRange": "Inf",
                                     "unit": "Hrs",
                                     "pricePerUnit": { "USD": "5.104" },
+                                    "appliesTo": []
+                                }
+                            },
+                            "termAttributes": {}
+                        }
+                    },
+                    "licensed-compute-sku": {
+                        "licensed-compute-offer": {
+                            "offerTermCode": "JRTCKXETXF",
+                            "sku": "licensed-compute-sku",
+                            "effectiveDate": "2026-08-01T00:00:00Z",
+                            "priceDimensions": {
+                                "licensed.compute.offer.dimension": {
+                                    "rateCode": "licensed.compute.offer.dimension",
+                                    "description": "synthetic AWS-provided media compute",
+                                    "beginRange": "0",
+                                    "endRange": "Inf",
+                                    "unit": "Hrs",
+                                    "pricePerUnit": { "USD": "10.08" },
                                     "appliesTo": []
                                 }
                             },

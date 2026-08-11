@@ -16,6 +16,17 @@ export async function requestJson(path: string, init?: RequestInit): Promise<unk
   return (await requestJsonResponse(path, init)).payload;
 }
 
+export function requestPriceResolution(
+  provider: 'aws' | 'azure',
+  operation: 'resolve' | 'refresh',
+  payload: JsonRecord
+): Promise<unknown> {
+  return requestJson(`/api/v1/pricing/${provider}/${operation}`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function requestJsonResponse(
   path: string,
   init?: RequestInit

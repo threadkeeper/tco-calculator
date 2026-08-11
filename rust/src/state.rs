@@ -10,6 +10,7 @@ use crate::{
     config::{AppEnvironment, Config, FORMULA_VERSION},
     persistence::{
         cosmos::{CosmosProjectRepository, CosmosSnapshotRepository},
+        project_share::{InMemoryProjectShareRepository, ProjectShareRepository},
         repository::{InMemoryProjectRepository, ProjectRepository, RepositoryError},
     },
     pricing::{
@@ -53,6 +54,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub calculations: CalculationEngine,
     pub projects: Arc<dyn ProjectRepository>,
+    pub project_shares: Arc<dyn ProjectShareRepository>,
     pub persistence_backend: PersistenceBackend,
     pub pricing: PricingCoordinator,
     pub live_pricing: Option<LivePricingLoader>,
@@ -67,9 +69,10 @@ impl AppState {
             return Self::in_memory(config);
         }
         let cosmos = config.cosmos.as_ref().ok_or(RepositoryError::Unavailable)?;
-        let projects = Arc::new(
-            CosmosProjectRepository::new(&cosmos.endpoint, &cosmos.application_region).await?,
-        );
+        let project_repository =
+            CosmosProjectRepository::new(&cosmos.endpoint, &cosmos.application_region).await?;
+        let projects: Arc<dyn ProjectRepository> = Arc::new(project_repository.clone());
+        let project_shares: Arc<dyn ProjectShareRepository> = Arc::new(project_repository);
         let pricing_cache = Arc::new(
             CosmosSnapshotRepository::new(&cosmos.endpoint, &cosmos.application_region).await?,
         );
@@ -79,6 +82,7 @@ impl AppState {
         Self::with_projects(
             config,
             projects,
+            project_shares,
             Some(snapshots),
             Some(leases),
             Some(refresh_quota),
@@ -90,6 +94,7 @@ impl AppState {
         Self::with_projects(
             config,
             Arc::new(InMemoryProjectRepository::new()),
+            Arc::new(InMemoryProjectShareRepository::new()),
             None,
             None,
             None,
@@ -100,6 +105,7 @@ impl AppState {
     fn with_projects(
         config: Config,
         projects: Arc<dyn ProjectRepository>,
+        project_shares: Arc<dyn ProjectShareRepository>,
         durable_snapshots: Option<Arc<dyn DurableSnapshotRepository>>,
         refresh_leases: Option<Arc<dyn RefreshLeaseRepository>>,
         refresh_quota_repository: Option<Arc<dyn RefreshQuotaRepository>>,
@@ -140,6 +146,7 @@ impl AppState {
             config: Arc::new(config),
             calculations,
             projects,
+            project_shares,
             persistence_backend,
             pricing,
             live_pricing,

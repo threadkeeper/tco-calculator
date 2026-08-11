@@ -15,6 +15,7 @@
   import ProblemBanner from '$lib/components/ProblemBanner.svelte';
   import ProjectList from '$lib/components/ProjectList.svelte';
   import ProjectWorkspace from '$lib/components/ProjectWorkspace.svelte';
+  import SearchSelect from '$lib/components/SearchSelect.svelte';
   import {
     clearGuestWorkspace,
     createGuestWorkspace,
@@ -26,6 +27,13 @@
     type GuestWorkspace,
     type ProjectType
   } from '$lib/draft';
+  import { projectShareFromFragment, type ProjectShareCredentials } from '$lib/project-share';
+  import {
+    DEFAULT_AWS_REGION,
+    DEFAULT_AZURE_REGION,
+    readRegionOptions,
+    type RegionOption
+  } from '$lib/regions';
 
   type SessionMode = 'loading' | 'guest' | 'authenticated' | 'offline';
 
@@ -43,6 +51,8 @@
   let setupType = $state<ProjectType>('ec2');
   let setupAwsRegion = $state('eu-west-1');
   let setupAzureRegion = $state('swedencentral');
+  let awsRegions = $state<RegionOption[]>([DEFAULT_AWS_REGION]);
+  let azureRegions = $state<RegionOption[]>([DEFAULT_AZURE_REGION]);
   let creating = $state(false);
   let problem = $state<string | null>(null);
   let deleteTarget = $state<{ id: string; name: string } | null>(null);
@@ -50,9 +60,24 @@
 
   onMount(() => {
     void initialize();
+    void loadRegionCatalogs();
   });
 
+  async function loadRegionCatalogs() {
+    const [awsCatalog, azureCatalog] = await Promise.allSettled([
+      requestJson('/api/v1/catalog/aws/regions'),
+      requestJson('/api/v1/catalog/azure/regions')
+    ]);
+    if (awsCatalog.status === 'fulfilled')
+      awsRegions = readRegionOptions(awsCatalog.value, awsRegions);
+    if (azureCatalog.status === 'fulfilled')
+      azureRegions = readRegionOptions(azureCatalog.value, azureRegions);
+  }
+
   async function initialize() {
+    const hasShareFragment = new URLSearchParams(window.location.hash.slice(1)).has('share');
+    const sharedCredentials = projectShareFromFragment(window.location.hash);
+    if (hasShareFragment) history.replaceState(null, '', `${location.pathname}${location.search}`);
     try {
       availableGuestWorkspace = await loadGuestWorkspace();
     } catch {
@@ -64,11 +89,34 @@
       const sessionMode = readString(session, 'mode');
       mode = sessionMode === 'authenticated' ? 'authenticated' : 'guest';
       displayName = readString(session, 'display_name');
-      if (mode === 'authenticated') await loadProjects();
+      if (mode === 'authenticated') {
+        await loadProjects();
+        if (sharedCredentials) await openSharedProject(sharedCredentials);
+      } else if (sharedCredentials) {
+        problem = 'Sign in with Microsoft, then open the shared project link again.';
+      }
+      if (hasShareFragment && !sharedCredentials) problem = 'The shared project link is not valid.';
     } catch (error) {
       mode = 'offline';
       if (!(error instanceof TypeError))
         problem = messageFromError(error, 'The application session is unavailable.');
+    }
+  }
+
+  async function openSharedProject(credentials: ProjectShareCredentials) {
+    try {
+      const payload = await requestJson('/api/v1/project-shares/resolve', {
+        method: 'POST',
+        body: JSON.stringify(credentials)
+      });
+      const project = editableProject(payload);
+      if (!project) throw new Error('The shared project response was not recognized.');
+      activeWorkspace = createGuestWorkspace(project);
+      activeProjectId = null;
+      activeEtag = null;
+      showSetup = false;
+    } catch (error) {
+      problem = messageFromError(error, 'The shared project could not be opened.');
     }
   }
 
@@ -295,12 +343,26 @@
                   placeholder="Optional context"
                 /></label
               >
-              {#if setupType !== 'on_prem'}<label
-                  ><span>AWS region</span><input required bind:value={setupAwsRegion} /></label
-                >{/if}
-              <label
-                ><span>Azure region</span><input required bind:value={setupAzureRegion} /></label
-              >
+              {#if setupType !== 'on_prem'}
+                <div class="region-field">
+                  <SearchSelect
+                    id="setup-aws-region"
+                    label="AWS region"
+                    options={awsRegions}
+                    bind:value={setupAwsRegion}
+                    required
+                  />
+                </div>
+              {/if}
+              <div class="region-field">
+                <SearchSelect
+                  id="setup-azure-region"
+                  label="Azure region"
+                  options={azureRegions}
+                  bind:value={setupAzureRegion}
+                  required
+                />
+              </div>
             </div>
             <div class="setup-actions">
               <span
@@ -489,6 +551,9 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 14px;
     margin-top: 20px;
+  }
+  .region-field {
+    min-width: 0;
   }
   label {
     display: grid;

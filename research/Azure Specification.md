@@ -76,7 +76,7 @@ Useful engineering practices reviewed in `C:\Repos\gaia-robot` and adopted here 
 - Taxes and foreign-exchange conversion. Currency is USD.
 - AI-generated sizing advice. Explanations are deterministic calculation traces.
 - Application administrator UI, privileged project access, and global price-cache controls.
-- Project sharing, collaboration, or organization workspaces.
+- Collaboration, organization workspaces, invitations, role assignment, and ownership transfer. Authenticated capability-link sharing is included only as specified in section 6.5.
 - CSV/Excel inventory import, result export, and project duplication in the first scaffold.
 - AWS or Azure write access.
 - Provider-console login in MVP. Public price feeds are sufficient for the modeled retail prices.
@@ -118,7 +118,7 @@ Authentication MUST use Microsoft Entra ID through Azure Container Apps built-in
 - The backend MUST ignore any client-supplied owner identifier.
 - Project routes MUST return `401` when no authenticated principal exists.
 - Every successfully authenticated Entra user MUST be able to create, open, update, and delete their own saved projects. MVP MUST NOT require a paid entitlement, app role, group membership, or administrator assignment for save capability.
-- Saved projects MUST be private to the authenticated principal.
+- Saved projects MUST be private to the authenticated principal. The only cross-principal disclosure is an explicit 30-day capability link created by the owner; it returns an editable snapshot without owner metadata and never grants access to mutate the source project.
 
 For local development only, a clearly marked mock principal MAY be enabled with `APP_ENV=local`, `LOCAL_AUTH_TENANT_ID`, `LOCAL_AUTH_OWNER_ID`, and `LOCAL_AUTH_DISPLAY_NAME`. The mock path bypasses header parsing but MUST construct the same tenant-plus-object owner identifier and preserve owner-scoped persistence tests. Startup MUST fail if any local-auth setting is present while `APP_ENV` is not `local`.
 
@@ -172,11 +172,21 @@ Saved projects MUST NOT refresh prices automatically on open. Refresh prices onl
 ### 6.4 Delete Project
 
 - Delete MUST require confirmation containing the project name.
-- Delete MUST be owner-scoped.
+- Delete MUST be owner-scoped and MUST revoke every outstanding share before deleting the source project.
 - Successful deletion returns to the main screen.
 - MVP uses immediate hard delete with no recovery tombstone or retained application audit copy.
 
-### 6.5 Add Resource
+### 6.5 Share Project
+
+- Only the source-project owner may create or revoke a share.
+- A share link is reusable until it expires 30 days after creation or the owner revokes it.
+- Any authenticated Entra user who possesses the complete link may open the shared editable snapshot. Guests MUST be directed to sign in before the snapshot is disclosed.
+- The share secret MUST be generated independently from the share ID, stored only as a SHA-256 digest, placed in the browser URL fragment so it is not sent in HTTP request targets, and exchanged with the API only in a bounded JSON request body. It MUST NOT appear in logs.
+- Opening a share MUST NOT disclose the source owner ID, source project ID, ETag, or saved calculation revision and MUST NOT grant update or delete access to the source project.
+- The opened snapshot is an unsaved copy. Edits remain local to that workspace until the recipient selects `Save project`, which creates a new project under the recipient's server-derived owner ID. Source prices are referenced only by server-issued snapshot IDs and all persisted calculations remain server-authoritative.
+- Expiry MUST be checked server-side before disclosure. Expired links return `410 Gone`; invalid, revoked, or incorrectly keyed links return `404 Not Found`. Because v1 does not change the existing `projects` container TTL policy, an expired share record is removed when encountered rather than relying on automatic Cosmos TTL.
+
+### 6.6 Add Resource
 
 `Add resource` MUST open a modal or right-side drawer with stable dimensions and these stages:
 
@@ -197,7 +207,7 @@ Submitting MUST:
 - Add one row to the resource table.
 - Show a deterministic target or `NO MAPPING`.
 
-### 6.6 Edit and Delete Resource
+### 6.7 Edit and Delete Resource
 
 Every row MUST have icon buttons with accessible labels and tooltips:
 
@@ -207,7 +217,7 @@ Every row MUST have icon buttons with accessible labels and tooltips:
 
 Delete requires confirmation. Edit reopens the same form and recalculates after save.
 
-### 6.7 Inspect Mapping Explanation
+### 6.8 Inspect Mapping Explanation
 
 The information icon MUST open a drawer that shows:
 
@@ -918,6 +928,9 @@ Authentication required:
 - `GET /api/v1/projects/{project_id}`
 - `PUT /api/v1/projects/{project_id}`
 - `DELETE /api/v1/projects/{project_id}`
+- `POST /api/v1/projects/{project_id}/shares`
+- `DELETE /api/v1/projects/{project_id}/shares/{share_id}`
+- `POST /api/v1/project-shares/resolve`
 
 `PUT` requires `If-Match` with the current ETag. A missing precondition returns `428 Precondition Required`; a stale or mismatched ETag returns `412 Precondition Failed` with the latest metadata. Project documents include the latest successful calculation revision.
 
@@ -984,6 +997,8 @@ Project document fields:
 - schema version
 
 Do not persist guest projects.
+
+Share documents use the same container and `/owner_id` partition definition without changing deployment topology. Their partition value is the fixed `project-shares` value so credential resolution is a point read and all links for a deleted source can be found with a single-partition query. A share document contains `document_type = "project_share"`, source owner and project IDs, a SHA-256 secret digest, the editable project snapshot, and creation/expiry timestamps. It MUST NOT contain an ETag from the source response or a calculation revision. Share API responses use `Cache-Control: no-store`.
 
 ### 13.2 `pricing-cache` Container
 
@@ -1108,7 +1123,7 @@ Do not implement financial calculations in TypeScript. Formatting and view-only 
 - Use HTTPS only in Azure.
 - Use Container Apps built-in Entra authentication.
 - Trust identity headers only behind Container Apps authentication.
-- All project operations enforce owner scope in the backend and Cosmos query.
+- All source-project operations enforce owner scope in the backend and Cosmos query. Share creation and revocation require that same owner scope; resolution requires both an authenticated principal and the independently generated capability secret.
 - Every runtime Azure-to-Azure permission MUST use Azure RBAC granted to the consuming resource's system-assigned managed identity (SAMI). For this MVP, the Container App SAMI MUST be used for Cosmos data access, ACR image pull, and Key Vault secret reads when Key Vault is deployed.
 - Do not create or attach a user-assigned managed identity. Do not use a service principal, client secret, access key, account key, or connection string for runtime Azure-to-Azure authorization.
 - Disable Cosmos local/key authentication in production.
@@ -1435,6 +1450,9 @@ Live tests assert schema and non-negative prices, never exact current amounts.
 - Provider failure with valid stale cache calculates with warning.
 - Provider failure without cache returns `PRICE UNAVAILABLE`.
 - Project reopen retains the exact saved snapshots/results until refresh.
+- Only an owner can create or revoke a project share; another owner cannot use those endpoints against the source project.
+- A valid share resolves for any authenticated principal without exposing source ownership metadata, and saving the result creates a distinct recipient-owned project.
+- Missing, malformed, incorrectly keyed, revoked, and expired shares disclose no project data; expiry is enforced at exactly 30 days.
 
 ### 23.5 Frontend and E2E Tests
 

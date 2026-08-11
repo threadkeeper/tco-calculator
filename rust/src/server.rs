@@ -44,6 +44,7 @@ pub async fn router(mut config: crate::config::Config) -> Result<Router, ServerE
     let api_router = Router::new()
         .route("/session", get(api::session::get_session))
         .route("/catalog/aws/regions", get(api::catalog::aws_regions))
+        .route("/catalog/azure/regions", get(api::catalog::azure_regions))
         .route(
             "/catalog/aws/ec2/instances",
             get(api::catalog::ec2_instances),
@@ -84,6 +85,18 @@ pub async fn router(mut config: crate::config::Config) -> Result<Router, ServerE
             get(api::projects::get)
                 .put(api::projects::update)
                 .delete(api::projects::delete),
+        )
+        .route(
+            "/projects/{project_id}/shares",
+            post(api::project_shares::create),
+        )
+        .route(
+            "/projects/{project_id}/shares/{share_id}",
+            axum::routing::delete(api::project_shares::revoke),
+        )
+        .route(
+            "/project-shares/resolve",
+            post(api::project_shares::resolve),
         )
         .fallback(api_not_found)
         .layer(middleware::from_fn_with_state(

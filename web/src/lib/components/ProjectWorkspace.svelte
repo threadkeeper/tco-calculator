@@ -8,6 +8,7 @@
     Plus,
     RotateCw,
     Save,
+    Share2,
     ShieldCheck,
     Trash2
   } from 'lucide-svelte';
@@ -17,6 +18,7 @@
     readRecords,
     readString,
     requestJson,
+    requestPriceResolution,
     requestJsonResponse,
     type JsonRecord
   } from '$lib/api';
@@ -27,10 +29,14 @@
     saveGuestWorkspace,
     type GuestWorkspace
   } from '$lib/draft';
+  import { projectShareUrl } from '$lib/project-share';
+  import { readRegionOptions, type RegionOption } from '$lib/regions';
   import CalculationResults from './CalculationResults.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import ProblemBanner from './ProblemBanner.svelte';
+  import ProjectShareDialog from './ProjectShareDialog.svelte';
   import ResourceEditor from './ResourceEditor.svelte';
+  import SearchSelect from './SearchSelect.svelte';
 
   let {
     workspace,
@@ -62,7 +68,25 @@
   let sourceInstances = $state<JsonRecord[]>([]);
   let ebsTypes = $state<JsonRecord[]>([]);
   let rdsOptions = $state<Record<string, JsonRecord[]>>({});
+  let awsRegions = $state<RegionOption[]>(
+    untrack(() => {
+      const value = workspace.project.settings.aws_region ?? 'eu-west-1';
+      return [{ value, label: value }];
+    })
+  );
+  let azureRegions = $state<RegionOption[]>(
+    untrack(() => {
+      const value = workspace.project.settings.azure_region;
+      return [{ value, label: value }];
+    })
+  );
   let confirmClear = $state(false);
+  let sharing = $state(false);
+  let shareLink = $state<string | null>(null);
+  let shareId = $state<string | null>(null);
+  let shareExpiresAt = $state('');
+  let shareCopied = $state(false);
+  let revokingShare = $state(false);
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   const resourceLabel = $derived(
@@ -130,6 +154,68 @@
     }
   }
 
+  async function createShare() {
+    if (!currentProjectId || dirty) return;
+    sharing = true;
+    problem = null;
+    try {
+      const response = asRecord(
+        await requestJson(`/api/v1/projects/${encodeURIComponent(currentProjectId)}/shares`, {
+          method: 'POST'
+        })
+      );
+      const createdShareId = readString(response, 'share_id');
+      const secret = readString(response, 'secret');
+      const expiresAt = readString(response, 'expires_at');
+      if (!createdShareId || !secret || !expiresAt)
+        throw new Error('The share response was not recognized.');
+      shareId = createdShareId;
+      shareExpiresAt = expiresAt;
+      shareLink = projectShareUrl(window.location.href, {
+        share_id: createdShareId,
+        secret
+      });
+      shareCopied = false;
+    } catch (error) {
+      problem = messageFromError(error, 'The project link could not be created.');
+    } finally {
+      sharing = false;
+    }
+  }
+
+  async function copyShare() {
+    if (!shareLink) return;
+    try {
+      await navigator.clipboard.writeText(shareLink);
+      shareCopied = true;
+    } catch (error) {
+      problem = messageFromError(error, 'The project link could not be copied.');
+    }
+  }
+
+  async function revokeShare() {
+    if (!currentProjectId || !shareId) return;
+    revokingShare = true;
+    try {
+      await requestJson(
+        `/api/v1/projects/${encodeURIComponent(currentProjectId)}/shares/${encodeURIComponent(shareId)}`,
+        { method: 'DELETE' }
+      );
+      closeShare();
+    } catch (error) {
+      problem = messageFromError(error, 'The project link could not be revoked.');
+    } finally {
+      revokingShare = false;
+    }
+  }
+
+  function closeShare() {
+    shareLink = null;
+    shareId = null;
+    shareExpiresAt = '';
+    shareCopied = false;
+  }
+
   function addResource() {
     const resource = createResource(workspace.project.settings.project_type);
     workspace.project.resources = [...workspace.project.resources, resource];
@@ -182,6 +268,17 @@
     }
   }
 
+  async function loadRegionCatalogs() {
+    const [awsCatalog, azureCatalog] = await Promise.allSettled([
+      requestJson('/api/v1/catalog/aws/regions'),
+      requestJson('/api/v1/catalog/azure/regions')
+    ]);
+    if (awsCatalog.status === 'fulfilled')
+      awsRegions = readRegionOptions(awsCatalog.value, awsRegions);
+    if (azureCatalog.status === 'fulfilled')
+      azureRegions = readRegionOptions(azureCatalog.value, azureRegions);
+  }
+
   async function loadRdsOptions(
     resource: Extract<(typeof workspace.project.resources)[number], { source_type: 'rds' }>
   ) {
@@ -210,32 +307,22 @@
     return warnings[0] ?? null;
   }
 
-  async function resolvePrices(): Promise<void> {
+  async function resolvePrices(operation: 'resolve' | 'refresh' = 'resolve'): Promise<void> {
     resolving = true;
     problem = null;
     try {
       const project = workspace.project;
+      const payload = {
+        currency: project.settings.currency,
+        aws_region: project.settings.aws_region,
+        azure_region: project.settings.azure_region,
+        resources: project.resources
+      };
       const awsRequest =
         project.settings.project_type === 'on_prem'
           ? Promise.resolve<unknown>({ status: 'not_required' })
-          : requestJson('/api/v1/pricing/aws/resolve', {
-              method: 'POST',
-              body: JSON.stringify({
-                currency: project.settings.currency,
-                aws_region: project.settings.aws_region,
-                azure_region: project.settings.azure_region,
-                resources: project.resources
-              })
-            });
-      const azureRequest = requestJson('/api/v1/pricing/azure/resolve', {
-        method: 'POST',
-        body: JSON.stringify({
-          currency: project.settings.currency,
-          aws_region: project.settings.aws_region,
-          azure_region: project.settings.azure_region,
-          resources: project.resources
-        })
-      });
+          : requestPriceResolution('aws', operation, payload);
+      const azureRequest = requestPriceResolution('azure', operation, payload);
       const [awsOutcome, azureOutcome] = await Promise.allSettled([awsRequest, azureRequest]);
       const awsResolution =
         awsOutcome.status === 'fulfilled'
@@ -257,6 +344,7 @@
       const azureRecord = asRecord(workspace.azure_resolution);
       workspace.project.aws_price_snapshot_id = readString(awsRecord, 'snapshot_id');
       workspace.project.azure_price_snapshot_id = readString(azureRecord, 'snapshot_id');
+      catalogWarning = catalogMessage(awsResolution) ?? catalogMessage(azureResolution);
       const resolutionFailures = [awsOutcome, azureOutcome]
         .filter((outcome) => outcome.status === 'rejected')
         .map((outcome) => messageFromError(outcome.reason, 'Price resolution failed.'));
@@ -267,6 +355,11 @@
     } finally {
       resolving = false;
     }
+  }
+
+  async function refreshPrices(): Promise<void> {
+    await resolvePrices('refresh');
+    await loadSourceCatalogs();
   }
 
   async function calculate() {
@@ -319,6 +412,7 @@
 
   onMount(() => {
     void loadSourceCatalogs();
+    void loadRegionCatalogs();
   });
 </script>
 
@@ -349,6 +443,18 @@
       {:else if dirty}
         <span class="save-state">Unsaved changes</span>
       {/if}
+      {#if mode === 'authenticated' && currentProjectId}
+        <button
+          class="secondary"
+          type="button"
+          title={dirty ? 'Save changes before sharing' : 'Share project'}
+          onclick={createShare}
+          disabled={dirty || saving || sharing}
+        >
+          <Share2 size={17} />
+          {sharing ? 'Sharing…' : 'Share'}
+        </button>
+      {/if}
       <button class="secondary" type="button" onclick={saveProject} disabled={saving}>
         <Save size={17} />
         {saving ? 'Saving…' : mode === 'guest' ? 'Save draft' : 'Save project'}
@@ -375,11 +481,11 @@
         <button
           class="secondary compact"
           type="button"
-          onclick={resolvePrices}
+          onclick={refreshPrices}
           disabled={resolving}
         >
           <span class:spin={resolving} aria-hidden="true"><RotateCw size={16} /></span>
-          {resolving ? 'Resolving…' : 'Resolve prices'}
+          {resolving ? 'Refreshing…' : 'Refresh prices'}
         </button>
       </div>
       <div class="scope-grid">
@@ -426,20 +532,30 @@
           /></label
         >
         {#if workspace.project.settings.project_type !== 'on_prem'}
-          <label
-            ><span>AWS region</span><input
+          <div class="region-field">
+            <SearchSelect
+              id="settings-aws-region"
+              label="AWS region"
+              options={awsRegions}
               bind:value={workspace.project.settings.aws_region}
-              oninput={markDirty}
-              onchange={() => void loadSourceCatalogs()}
-            /></label
-          >
+              required
+              onchange={() => {
+                markDirty();
+                void loadSourceCatalogs();
+              }}
+            />
+          </div>
         {/if}
-        <label
-          ><span>Azure region</span><input
+        <div class="region-field">
+          <SearchSelect
+            id="settings-azure-region"
+            label="Azure region"
+            options={azureRegions}
             bind:value={workspace.project.settings.azure_region}
-            oninput={markDirty}
-          /></label
-        >
+            required
+            onchange={markDirty}
+          />
+        </div>
         <label
           ><span>Source compute discount</span><input
             type="number"
@@ -617,6 +733,17 @@
   confirmLabel="Clear local data"
   onconfirm={clearLocalData}
   oncancel={() => (confirmClear = false)}
+/>
+
+<ProjectShareDialog
+  open={shareLink !== null}
+  link={shareLink ?? ''}
+  expiresAt={shareExpiresAt}
+  copied={shareCopied}
+  revoking={revokingShare}
+  oncopy={copyShare}
+  onrevoke={revokeShare}
+  onclose={closeShare}
 />
 
 <style>
@@ -834,6 +961,9 @@
     padding: 15px;
     border-top: 1px solid var(--line);
   }
+  .region-field {
+    min-width: 0;
+  }
   label {
     display: grid;
     gap: 6px;
@@ -926,7 +1056,7 @@
       padding-bottom: 5px;
     }
     .bar-actions button {
-      flex: 1;
+      flex: 1 1 140px;
     }
     .settings-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));

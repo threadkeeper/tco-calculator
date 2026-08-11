@@ -17,6 +17,7 @@ use crate::{
 };
 
 const REGIONS_INSTANCE: &str = "/api/v1/catalog/aws/regions";
+const AZURE_REGIONS: [(&str, &str); 1] = [("swedencentral", "Sweden Central")];
 const EC2_INSTANCE: &str = "/api/v1/catalog/aws/ec2/instances";
 const RDS_INSTANCE: &str = "/api/v1/catalog/aws/rds/instances";
 const RDS_OPTIONS_INSTANCE: &str = "/api/v1/catalog/aws/rds/options";
@@ -32,7 +33,7 @@ pub struct CatalogResponse<T> {
     items: T,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Region {
     code: String,
     label: String,
@@ -108,6 +109,23 @@ pub async fn aws_regions(
         })
         .collect();
     Ok(Json(combined_catalog(&snapshots, items)))
+}
+
+pub async fn azure_regions() -> Json<CatalogResponse<Vec<Region>>> {
+    Json(CatalogResponse {
+        status: ResolutionStatus::Fresh,
+        currency: "USD".to_owned(),
+        retrieved_at: None,
+        source_urls: Vec::new(),
+        warnings: Vec::new(),
+        items: AZURE_REGIONS
+            .iter()
+            .map(|(code, label)| Region {
+                code: (*code).to_owned(),
+                label: (*label).to_owned(),
+            })
+            .collect(),
+    })
 }
 
 pub async fn ec2_instances(
@@ -374,7 +392,14 @@ fn status_rank(status: ResolutionStatus) -> u8 {
 
 fn region_label(region: &str) -> &str {
     match region {
+        "eu-central-1" => "EU (Frankfurt)",
+        "eu-central-2" => "EU (Zurich)",
+        "eu-north-1" => "EU (Stockholm)",
+        "eu-south-1" => "EU (Milan)",
+        "eu-south-2" => "EU (Spain)",
         "eu-west-1" => "EU (Ireland)",
+        "eu-west-2" => "EU (London)",
+        "eu-west-3" => "EU (Paris)",
         _ => region,
     }
 }

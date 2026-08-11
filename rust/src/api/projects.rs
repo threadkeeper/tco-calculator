@@ -174,6 +174,11 @@ pub async fn delete(
     let principal = require_principal(&headers, &state, ITEM_INSTANCE)?;
     let project_id = project_id(path)?;
     state
+        .project_shares
+        .revoke_project(&principal.owner_id(), project_id)
+        .await
+        .map_err(|_| Problem::internal(ITEM_INSTANCE))?;
+    state
         .projects
         .delete(&principal.owner_id(), project_id)
         .await

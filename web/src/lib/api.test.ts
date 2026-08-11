@@ -10,6 +10,7 @@ import {
   readRecords,
   readString,
   requestJson,
+  requestPriceResolution,
   requestJsonResponse
 } from './api';
 
@@ -46,6 +47,26 @@ describe('API requests', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
 
     await expect(requestJson('/api/projects/project-1', { method: 'DELETE' })).resolves.toBeNull();
+  });
+
+  it('uses live refresh only when explicitly requested', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(
+        async () => new Response(JSON.stringify({ status: 'fresh' }), { status: 200 })
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const payload = { currency: 'USD', azure_region: 'swedencentral', resources: [] };
+
+    await requestPriceResolution('aws', 'resolve', payload);
+    await requestPriceResolution('azure', 'refresh', payload);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/pricing/aws/resolve');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/pricing/azure/refresh');
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
   });
 
   it('turns problem details and field errors into an ApiProblem', async () => {

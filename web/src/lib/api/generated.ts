@@ -36,6 +36,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/catalog/azure/regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAzureRegions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/catalog/aws/ec2/instances": {
         parameters: {
             query?: never;
@@ -225,6 +241,59 @@ export interface paths {
         put: operations["updateProject"];
         post?: never;
         delete: operations["deleteProject"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createProjectShare"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/shares/{share_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectId"];
+                share_id: components["parameters"]["ShareId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["revokeProjectShare"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/project-shares/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolveProjectShare"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -460,6 +529,19 @@ export interface components {
             message: string;
         };
         EditableProject: components["schemas"]["EditableProjectFields"];
+        ProjectShareCredentials: {
+            /** Format: uuid */
+            share_id: string;
+            /**
+             * Format: uuid
+             * @description Capability secret. Keep it in the URL fragment and request body only.
+             */
+            secret: string;
+        };
+        CreatedProjectShare: components["schemas"]["ProjectShareCredentials"] & {
+            /** Format: date-time */
+            expires_at: string;
+        };
         EditableProjectFields: {
             name: string;
             description?: string | null;
@@ -618,6 +700,7 @@ export interface components {
     parameters: {
         AwsRegion: string;
         ProjectId: string;
+        ShareId: string;
     };
     requestBodies: never;
     headers: never;
@@ -655,6 +738,26 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Supported AWS source regions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegionCatalog"];
+                };
+            };
+        };
+    };
+    listAzureRegions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Supported Azure target regions. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1022,6 +1125,78 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    createProjectShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A reusable project-share credential that expires after 30 days. */
+            201: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedProjectShare"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    revokeProjectShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectId"];
+                share_id: components["parameters"]["ShareId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project share revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    resolveProjectShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectShareCredentials"];
+            };
+        };
+        responses: {
+            /** @description Editable project snapshot with no source ownership metadata or revision. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditableProject"];
+                };
             };
             default: components["responses"]["Problem"];
         };

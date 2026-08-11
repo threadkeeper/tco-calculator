@@ -13,6 +13,7 @@ tags:
   - name: Pricing
   - name: Calculations
   - name: Projects
+  - name: Project Shares
 paths:
   /session:
     get:
@@ -32,6 +33,17 @@ paths:
       responses:
         '200':
           description: Supported AWS source regions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegionCatalog'
+  /catalog/azure/regions:
+    get:
+      operationId: listAzureRegions
+      tags: [Catalogs]
+      responses:
+        '200':
+          description: Supported Azure target regions.
           content:
             application/json:
               schema:
@@ -315,6 +327,68 @@ paths:
           description: Project deleted immediately.
         default:
           $ref: '#/components/responses/Problem'
+  /projects/{project_id}/shares:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      operationId: createProjectShare
+      tags: [Project Shares]
+      security:
+        - containerAppsAuth: []
+      responses:
+        '201':
+          description: A reusable project-share credential that expires after 30 days.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedProjectShare'
+        default:
+          $ref: '#/components/responses/Problem'
+  /projects/{project_id}/shares/{share_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ShareId'
+    delete:
+      operationId: revokeProjectShare
+      tags: [Project Shares]
+      security:
+        - containerAppsAuth: []
+      responses:
+        '204':
+          description: Project share revoked.
+        default:
+          $ref: '#/components/responses/Problem'
+  /project-shares/resolve:
+    post:
+      operationId: resolveProjectShare
+      tags: [Project Shares]
+      security:
+        - containerAppsAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectShareCredentials'
+      responses:
+        '200':
+          description: Editable project snapshot with no source ownership metadata or revision.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EditableProject'
+        default:
+          $ref: '#/components/responses/Problem'
 components:
   securitySchemes:
     containerAppsAuth:
@@ -330,6 +404,13 @@ components:
         type: string
     ProjectId:
       name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ShareId:
+      name: share_id
       in: path
       required: true
       schema:
@@ -875,6 +956,28 @@ components:
     EditableProject:
       allOf:
         - $ref: '#/components/schemas/EditableProjectFields'
+      unevaluatedProperties: false
+    ProjectShareCredentials:
+      type: object
+      additionalProperties: false
+      required: [share_id, secret]
+      properties:
+        share_id:
+          type: string
+          format: uuid
+        secret:
+          type: string
+          format: uuid
+          description: Capability secret. Keep it in the URL fragment and request body only.
+    CreatedProjectShare:
+      allOf:
+        - $ref: '#/components/schemas/ProjectShareCredentials'
+        - type: object
+          required: [expires_at]
+          properties:
+            expires_at:
+              type: string
+              format: date-time
       unevaluatedProperties: false
     EditableProjectFields:
       type: object

@@ -62,7 +62,7 @@ Priority: P1
 Question: Must projects be shareable with other users or teams?  
 Provisional default: No. Projects are private to one Entra principal.  
 Why it matters: Sharing requires roles, invitations, ownership transfer, and a different Cosmos partition strategy.  
-Decision: Projects remain private to one Entra principal in v1. Do not scaffold sharing, invitations, teams, or ownership transfer.
+Decision: Updated 2026-08-11 with repository-owner approval. V1 supports reusable capability links that expire after 30 days and may be opened by any authenticated Entra user who possesses the link. Recipients edit an unsaved snapshot and may save it only as a new project under their own principal. The source remains owner-private and cannot be modified through the share. Invitations, teams, roles, organization workspaces, and ownership transfer remain excluded.
 
 ### DC-007: Project deletion and retention
 

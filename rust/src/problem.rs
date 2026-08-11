@@ -63,6 +63,16 @@ impl Problem {
         )
     }
 
+    pub fn gone(instance: &str, detail: &str) -> Self {
+        Self::new(
+            StatusCode::GONE,
+            "urn:azure-sql-tco:problem:gone",
+            "Gone",
+            instance,
+            detail,
+        )
+    }
+
     pub fn validation(instance: &str, errors: Vec<ValidationIssue>) -> Self {
         let mut problem = Self::new(
             StatusCode::UNPROCESSABLE_ENTITY,
