@@ -39,16 +39,25 @@ pub async fn create(
     let project_id = path
         .map(|Path(project_id)| project_id)
         .map_err(|_| Problem::malformed_request(CREATE_INSTANCE))?;
+    let owner_id = principal.owner_id();
     let source = state
         .projects
-        .get(&principal.owner_id(), project_id)
+        .get(&owner_id, project_id)
         .await
         .map_err(|error| map_project_error(error, CREATE_INSTANCE))?;
     let created = state
         .project_shares
-        .create(&principal.owner_id(), project_id, editable_project(source))
+        .create(&owner_id, project_id, editable_project(source))
         .await
         .map_err(|error| map_share_error(error, CREATE_INSTANCE))?;
+    if let Err(error) = state.projects.get(&owner_id, project_id).await {
+        state
+            .project_shares
+            .revoke(&owner_id, project_id, created.credentials.share_id)
+            .await
+            .map_err(|cleanup_error| map_share_error(cleanup_error, CREATE_INSTANCE))?;
+        return Err(map_project_error(error, CREATE_INSTANCE));
+    }
     no_store_json(
         StatusCode::CREATED,
         CreatedProjectShareResponse::from(created),

@@ -172,7 +172,7 @@ Saved projects MUST NOT refresh prices automatically on open. Refresh prices onl
 ### 6.4 Delete Project
 
 - Delete MUST require confirmation containing the project name.
-- Delete MUST be owner-scoped and MUST revoke every outstanding share before deleting the source project.
+- Delete MUST be owner-scoped and MUST revoke every outstanding share before and after deleting the source project. Share creation MUST recheck the owner-scoped source after persisting the share and remove the share if a concurrent deletion won.
 - Successful deletion returns to the main screen.
 - MVP uses immediate hard delete with no recovery tombstone or retained application audit copy.
 

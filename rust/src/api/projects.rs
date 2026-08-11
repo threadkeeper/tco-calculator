@@ -183,6 +183,11 @@ pub async fn delete(
         .delete(&principal.owner_id(), project_id)
         .await
         .map_err(|error| map_repository_error(error, ITEM_INSTANCE))?;
+    state
+        .project_shares
+        .revoke_project(&principal.owner_id(), project_id)
+        .await
+        .map_err(|_| Problem::internal(ITEM_INSTANCE))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
