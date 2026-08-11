@@ -42,6 +42,12 @@
     );
   }
 
+  function closeOptions() {
+    open = false;
+    query = '';
+    input.setCustomValidity(value ? '' : 'Choose a region from the list.');
+  }
+
   function choose(option: RegionOption) {
     value = option.value;
     query = '';
@@ -59,8 +65,7 @@
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
-      open = false;
-      query = '';
+      closeOptions();
       return;
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -79,9 +84,7 @@
   function handleFocusOut(event: FocusEvent) {
     const container = event.currentTarget as HTMLElement;
     if (event.relatedTarget instanceof Node && container.contains(event.relatedTarget)) return;
-    open = false;
-    query = '';
-    input.setCustomValidity(value ? '' : 'Choose a region from the list.');
+    closeOptions();
   }
 </script>
 
@@ -111,8 +114,7 @@
       aria-label={`${open ? 'Close' : 'Open'} ${label} options`}
       onclick={() => {
         if (open) {
-          open = false;
-          query = '';
+          closeOptions();
         } else {
           input.focus();
           showOptions();
