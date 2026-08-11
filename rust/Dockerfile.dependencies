@@ -1,0 +1,15 @@
+ARG RUST_BUILD_IMAGE
+
+FROM ${RUST_BUILD_IMAGE} AS rust-dependencies
+WORKDIR /src
+COPY rust/Cargo.toml rust/Cargo.lock ./rust/
+RUN mkdir -p rust/src \
+    && printf 'pub fn dependency_placeholder() {}\n' > rust/src/lib.rs \
+    && printf 'fn main() {}\n' > rust/src/main.rs \
+    && cargo build --locked --release --manifest-path rust/Cargo.toml \
+    && rm -rf rust/src \
+    && rm -f rust/target/release/azure-sql-tco rust/target/release/libazure_sql_tco* \
+    && find rust/target/release/deps -maxdepth 1 -type f \
+        \( -name 'azure_sql_tco-*' -o -name 'libazure_sql_tco-*' \) -delete \
+    && find rust/target/release/.fingerprint -maxdepth 1 -type d \
+        -name 'azure-sql-tco-*' -exec rm -rf {} +

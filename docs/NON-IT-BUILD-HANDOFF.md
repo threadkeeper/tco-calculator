@@ -46,19 +46,22 @@ Record any failure exactly. Do not disable TLS, lint rules, tests, authenticatio
 
 ## 4. Build the Image
 
-The Dockerfile requires three approved, digest-pinned image arguments:
+The dependency and application Dockerfiles require three approved, digest-pinned upstream image arguments:
 
-- `WEB_BUILD_IMAGE`: Node.js 24 image containing pnpm 11.20.0.
+- `WEB_BUILD_IMAGE`: Node.js 24.19.0 image containing npm 11.17.0.
 - `RUST_BUILD_IMAGE`: stable Rust 1.97.1 build image.
 - `RUNTIME_IMAGE`: minimal Debian slim runtime image.
 
-Do not use mutable tags for a release build. Review image publisher, license, vulnerability results, and digest before supplying each argument.
+Do not use mutable tags for a release build. Review image publisher, license, vulnerability results, and digest before supplying each argument. Build the project-specific Rust dependency image first; it contains the locked third-party dependency artifacts but no application source.
 
 ```powershell
-docker build --build-arg WEB_BUILD_IMAGE=<approved-image@sha256:digest> --build-arg RUST_BUILD_IMAGE=<approved-image@sha256:digest> --build-arg RUNTIME_IMAGE=<approved-image@sha256:digest> --tag azure-sql-tco:local .
+docker build --file rust/Dockerfile.dependencies --build-arg RUST_BUILD_IMAGE=<approved-image@sha256:digest> --tag azure-sql-tco-rust-dependencies:local .
+docker build --build-arg WEB_BUILD_IMAGE=<approved-image@sha256:digest> --build-arg RUST_DEPENDENCY_IMAGE=azure-sql-tco-rust-dependencies:local --build-arg RUNTIME_IMAGE=<approved-image@sha256:digest> --tag azure-sql-tco:local .
 ```
 
-Inspect the final image to confirm it contains no Node.js runtime, package manager, compiler, source tree, credentials, or build secrets and runs as UID `10001`.
+The GitHub application workflow computes the dependency-image fingerprint from the Rust builder digest, toolchain manifest, dependency Dockerfile, `Cargo.toml`, and `Cargo.lock`. It reuses only a locked matching image and passes it to the application build by digest.
+
+Inspect the final application image to confirm it contains no Node.js runtime, package manager, compiler, source tree, credentials, or build secrets and runs as UID `10001`.
 
 ## 5. Do Not Deploy Yet
 
