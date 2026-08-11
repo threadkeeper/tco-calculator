@@ -214,6 +214,17 @@ jobs:
             throw 'Configured Cosmos identifiers do not describe the same foundation account.'
           }
 
+          $containerAppsSubnetId = [string]$managedEnvironment.properties.vnetConfiguration.infrastructureSubnetId
+          if ($containerAppsSubnetId -notmatch '^(?<vnetId>/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.Network/virtualNetworks/[^/]+)/subnets/[^/]+$') {
+            throw 'The managed environment does not identify its foundation virtual network subnet.'
+          }
+          $virtualNetworkId = $Matches.vnetId
+          $privateEndpointSubnetId = "$virtualNetworkId/subnets/private-endpoints"
+          $privateEndpointSubnet = az resource show --ids $privateEndpointSubnetId --api-version 2024-05-01 --only-show-errors --output json | ConvertFrom-Json
+          if ($privateEndpointSubnet.properties.privateEndpointNetworkPolicies -ne 'Disabled') {
+            throw 'The foundation private-endpoint subnet must disable private endpoint network policies.'
+          }
+
           $secretUri = [Uri]$env:ENTRA_CLIENT_SECRET_URI
           if ($secretUri.Host -notmatch '^(?<vault>[a-z0-9-]+)\.vault\.azure\.net$') {
             throw 'ENTRA_CLIENT_SECRET_URI does not identify an Azure Key Vault.'
@@ -229,6 +240,8 @@ jobs:
           "ENTRA_CLIENT_SECRET_KEY_VAULT_RESOURCE_GROUP=$($vault.resourceGroup)" >> $env:GITHUB_ENV
           "ENTRA_CLIENT_SECRET_KEY_VAULT_NAME=$($vault.name)" >> $env:GITHUB_ENV
           "ENTRA_CLIENT_SECRET_KEY_VAULT_ID=$($vault.id)" >> $env:GITHUB_ENV
+          "AZURE_PRIVATE_ENDPOINT_SUBNET_ID=$privateEndpointSubnetId" >> $env:GITHUB_ENV
+          "AZURE_VIRTUAL_NETWORK_ID=$virtualNetworkId" >> $env:GITHUB_ENV
 
       - name: Compile application Bicep
         shell: pwsh
@@ -314,16 +327,27 @@ jobs:
           }
           $foundationPatterns = @(
             '/providers/Microsoft\.App/managedEnvironments/',
-            '/providers/Microsoft\.Network/',
             '/providers/Microsoft\.OperationalInsights/workspaces/',
             '/providers/Microsoft\.ContainerRegistry/registries/[^/]+$',
             '/providers/Microsoft\.DocumentDB/databaseAccounts/[^/]+$'
+          )
+          $expectedKeyVaultNetworkPatterns = @(
+            "/providers/Microsoft\.Network/privateDnsZones/privatelink\.vaultcore\.azure\.net$",
+            "/providers/Microsoft\.Network/privateDnsZones/privatelink\.vaultcore\.azure\.net/virtualNetworkLinks/$([regex]::Escape($env:AZURE_NAME_PREFIX))-key-vault-link$",
+            "/providers/Microsoft\.Network/privateEndpoints/$([regex]::Escape($env:AZURE_NAME_PREFIX))-key-vault-pe$",
+            "/providers/Microsoft\.Network/privateEndpoints/$([regex]::Escape($env:AZURE_NAME_PREFIX))-key-vault-pe/privateDnsZoneGroups/default$"
           )
           $foundationChanges = @(
             $plan.changes | Where-Object {
               $resourceId = $_.resourceId
               $_.changeType -notin @('Ignore', 'NoChange') -and
-              $foundationPatterns.Where({ $resourceId -match $_ }).Count -gt 0
+              (
+                $foundationPatterns.Where({ $resourceId -match $_ }).Count -gt 0 -or
+                (
+                  $resourceId -match '/providers/Microsoft\.Network/' -and
+                  $expectedKeyVaultNetworkPatterns.Where({ $resourceId -match $_ }).Count -eq 0
+                )
+              )
             }
           )
           if ($foundationChanges.Count -gt 0) {

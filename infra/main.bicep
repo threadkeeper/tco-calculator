@@ -14,6 +14,10 @@ param registryServer string
 param cosmosAccountId string
 @description('Existing HTTPS Cosmos DB account endpoint from the foundation deployment.')
 param cosmosEndpoint string
+@description('Existing private-endpoint subnet resource ID from the foundation deployment.')
+param privateEndpointSubnetId string
+@description('Existing virtual network resource ID from the foundation deployment.')
+param virtualNetworkId string
 param containerImage string
 @minLength(36)
 @maxLength(36)
@@ -25,6 +29,8 @@ param entraClientSecretUri string
 param authKeyVaultResourceGroup string
 @description('Key Vault name referenced by entraClientSecretUri.')
 param authKeyVaultName string
+@description('Key Vault resource ID referenced by entraClientSecretUri.')
+param authKeyVaultId string
 @description('Apply the Key Vault-backed Container Apps Entra authentication configuration.')
 param configureAuthentication bool = true
 @minValue(0)
@@ -50,8 +56,23 @@ var containerAppName = '${namePrefix}-app'
 var registryName = last(split(registryId, '/'))
 var cosmosAccountName = last(split(cosmosAccountId, '/'))
 
+module keyVaultPrivateEndpoint 'modules/key-vault-private-endpoint.bicep' = {
+  name: 'key-vault-private-endpoint'
+  params: {
+    keyVaultId: authKeyVaultId
+    location: location
+    namePrefix: namePrefix
+    privateEndpointSubnetId: privateEndpointSubnetId
+    tags: tags
+    virtualNetworkId: virtualNetworkId
+  }
+}
+
 module containerApp 'modules/container-app.bicep' = {
   name: 'container-app'
+  dependsOn: [
+    keyVaultPrivateEndpoint
+  ]
   params: {
     applicationRegion: location
     containerImage: containerImage
@@ -114,3 +135,5 @@ output containerAppName string = containerApp.outputs.name
 output containerAppFqdn string = containerApp.outputs.fqdn
 output containerAppPrincipalId string = containerApp.outputs.principalId
 output containerImage string = containerImage
+output keyVaultPrivateEndpointId string = keyVaultPrivateEndpoint.outputs.privateEndpointId
+output keyVaultPrivateDnsZoneId string = keyVaultPrivateEndpoint.outputs.privateDnsZoneId
