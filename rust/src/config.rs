@@ -6,6 +6,7 @@ use uuid::Uuid;
 pub const APP_VERSION: &str = include_str!("../../VERSION").trim_ascii();
 pub const FORMULA_VERSION: &str = "1.0.0";
 pub const SCHEMA_VERSION: &str = "1.0.0";
+pub const MAX_PROVIDER_REFRESHES_PER_HOUR: u32 = 10_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AppEnvironment {
@@ -62,7 +63,7 @@ pub enum ConfigError {
     InvalidCosmosEndpoint,
     #[error("AZURE_REGION must be a valid Azure region name")]
     InvalidAzureRegion,
-    #[error("request quota settings must be positive integers")]
+    #[error("request quota settings must be within supported positive ranges")]
     InvalidQuota,
     #[error("PROVIDER_MAX_RESPONSE_BYTES must be between 1 MiB and 256 MiB")]
     InvalidProviderResponseLimit,
@@ -121,7 +122,8 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("rust/static"));
         let guest_requests_per_minute = positive_u32("GUEST_REQUESTS_PER_MINUTE", 60)?;
-        let provider_refreshes_per_hour = positive_u32("PROVIDER_REFRESHES_PER_HOUR", 6)?;
+        let provider_refreshes_per_hour =
+            validate_provider_refresh_quota(positive_u32("PROVIDER_REFRESHES_PER_HOUR", 6)?)?;
         let provider_max_response_bytes =
             provider_response_limit(env::var("PROVIDER_MAX_RESPONSE_BYTES").ok().as_deref())?;
         let calculation_concurrency = positive_u32("CALCULATION_CONCURRENCY", 10)? as usize;
@@ -196,6 +198,13 @@ fn positive_u32(name: &str, default: u32) -> Result<u32, ConfigError> {
     }
 }
 
+fn validate_provider_refresh_quota(value: u32) -> Result<u32, ConfigError> {
+    (1..=MAX_PROVIDER_REFRESHES_PER_HOUR)
+        .contains(&value)
+        .then_some(value)
+        .ok_or(ConfigError::InvalidQuota)
+}
+
 fn provider_response_limit(value: Option<&str>) -> Result<usize, ConfigError> {
     const MIB: usize = 1024 * 1024;
     let value = value.unwrap_or("67108864");
@@ -264,6 +273,23 @@ mod tests {
         assert!(matches!(
             provider_response_limit(Some("268435457")),
             Err(ConfigError::InvalidProviderResponseLimit)
+        ));
+    }
+
+    #[test]
+    fn provider_refresh_quota_is_bounded() {
+        assert!(matches!(validate_provider_refresh_quota(1), Ok(1)));
+        assert!(matches!(
+            validate_provider_refresh_quota(MAX_PROVIDER_REFRESHES_PER_HOUR),
+            Ok(MAX_PROVIDER_REFRESHES_PER_HOUR)
+        ));
+        assert!(matches!(
+            validate_provider_refresh_quota(0),
+            Err(ConfigError::InvalidQuota)
+        ));
+        assert!(matches!(
+            validate_provider_refresh_quota(MAX_PROVIDER_REFRESHES_PER_HOUR + 1),
+            Err(ConfigError::InvalidQuota)
         ));
     }
 }

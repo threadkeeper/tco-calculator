@@ -27,13 +27,15 @@ use crate::{
         },
         snapshot::{AwsPriceSnapshot, AzurePriceSnapshot},
     },
+    rate_limit::{RefreshQuotaDecision, RefreshQuotaError, RefreshQuotaRepository},
 };
 
 use super::{
     pricing_cache::{
         AWS_SNAPSHOT_DOCUMENT_TYPE, AZURE_SNAPSHOT_DOCUMENT_TYPE, AwsSnapshotDocument,
         AzureSnapshotDocument, PRICING_CACHE_CONTAINER_ID, PRICING_CACHE_PARTITION,
-        PricingCacheDocumentError, RefreshLeaseDocument,
+        PricingCacheDocumentError, RefreshLeaseDocument, RefreshQuotaDocument,
+        RefreshQuotaMutation,
     },
     repository::{
         PROJECT_DOCUMENT_TYPE, ProjectRepository, RepositoryError, current_timestamp,
@@ -438,6 +440,59 @@ impl CosmosSnapshotRepository {
             Err(error) => Err(map_snapshot_cosmos_error(error)),
         }
     }
+
+    async fn read_refresh_quota(
+        &self,
+        quota_id: &str,
+    ) -> Result<Option<(RefreshQuotaDocument, String)>, RefreshQuotaError> {
+        let response = match self
+            .container
+            .read_item(PRICING_CACHE_PARTITION, quota_id, None)
+            .await
+        {
+            Ok(response) => response,
+            Err(error) if error.status().is_not_found() => return Ok(None),
+            Err(error) => return Err(map_quota_cosmos_error(error)),
+        };
+        let etag = response
+            .headers()
+            .etag()
+            .map(ToString::to_string)
+            .filter(|etag| !etag.is_empty())
+            .ok_or(RefreshQuotaError::InvalidData)?;
+        let document = response
+            .into_model::<RefreshQuotaDocument>()
+            .map_err(|_| RefreshQuotaError::InvalidData)?;
+        document.validate().map_err(map_quota_document_error)?;
+        Ok(Some((document, etag)))
+    }
+
+    async fn replace_refresh_quota(
+        &self,
+        document: &RefreshQuotaDocument,
+        etag: &str,
+    ) -> Result<bool, RefreshQuotaError> {
+        document.validate().map_err(map_quota_document_error)?;
+        let options = ItemWriteOptions::default().with_precondition(Precondition::if_match(etag));
+        match self
+            .container
+            .replace_item(
+                PRICING_CACHE_PARTITION,
+                &document.id,
+                document,
+                Some(options),
+            )
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(error)
+                if error.status().is_precondition_failed() || error.status().is_not_found() =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(map_quota_cosmos_error(error)),
+        }
+    }
 }
 
 #[async_trait]
@@ -613,6 +668,87 @@ impl RefreshLeaseRepository for CosmosSnapshotRepository {
     }
 }
 
+#[async_trait]
+impl RefreshQuotaRepository for CosmosSnapshotRepository {
+    async fn consume_refresh_quota(
+        &self,
+        identity_sha256: &str,
+        operation_token: &str,
+        limit: u32,
+    ) -> Result<RefreshQuotaDecision, RefreshQuotaError> {
+        let initial = RefreshQuotaDocument::new(
+            identity_sha256,
+            operation_token,
+            limit,
+            OffsetDateTime::now_utc(),
+        )
+        .map_err(map_quota_document_error)?;
+        let quota_id = initial.id.clone();
+
+        for _ in 0..CONDITIONAL_WRITE_ATTEMPTS {
+            let current = match self.read_refresh_quota(&quota_id).await {
+                Ok(current) => current,
+                Err(RefreshQuotaError::Unavailable) => continue,
+                Err(error) => return Err(error),
+            };
+            let Some((current, etag)) = current else {
+                let candidate = RefreshQuotaDocument::new(
+                    identity_sha256,
+                    operation_token,
+                    limit,
+                    OffsetDateTime::now_utc(),
+                )
+                .map_err(map_quota_document_error)?;
+                let options =
+                    ItemWriteOptions::default().with_precondition(Precondition::if_none_match("*"));
+                match self
+                    .container
+                    .create_item(
+                        PRICING_CACHE_PARTITION,
+                        &candidate.id,
+                        &candidate,
+                        Some(options),
+                    )
+                    .await
+                {
+                    Ok(_) => return Ok(RefreshQuotaDecision::Allowed),
+                    Err(error)
+                        if is_conflict(&error) || error.status().is_precondition_failed() => {}
+                    Err(error) => {
+                        map_quota_cosmos_error(error);
+                    }
+                }
+                continue;
+            };
+
+            match current
+                .consume(
+                    identity_sha256,
+                    operation_token,
+                    limit,
+                    OffsetDateTime::now_utc(),
+                )
+                .map_err(map_quota_document_error)?
+            {
+                RefreshQuotaMutation::Allowed => return Ok(RefreshQuotaDecision::Allowed),
+                RefreshQuotaMutation::Limited(retry_after_seconds) => {
+                    return Ok(RefreshQuotaDecision::Limited {
+                        retry_after_seconds,
+                    });
+                }
+                RefreshQuotaMutation::Replace(updated) => {
+                    match self.replace_refresh_quota(&updated, &etag).await {
+                        Ok(true) => return Ok(RefreshQuotaDecision::Allowed),
+                        Ok(false) | Err(RefreshQuotaError::Unavailable) => continue,
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+        }
+        Err(RefreshQuotaError::Unavailable)
+    }
+}
+
 trait SnapshotDocument: Clone {
     fn id(&self) -> &str;
     fn retrieved_at(&self) -> &str;
@@ -709,6 +845,20 @@ fn map_snapshot_cosmos_error(error: CosmosError) -> SnapshotRepositoryError {
 
 fn map_cache_document_error(_error: PricingCacheDocumentError) -> SnapshotRepositoryError {
     SnapshotRepositoryError::InvalidData
+}
+
+fn map_quota_cosmos_error(error: CosmosError) -> RefreshQuotaError {
+    let status = error.status();
+    tracing::warn!(
+        status_code = u16::from(status.status_code()),
+        sub_status = status.sub_status().map(|value| value.value()),
+        "Cosmos refresh-quota operation failed"
+    );
+    RefreshQuotaError::Unavailable
+}
+
+fn map_quota_document_error(_error: PricingCacheDocumentError) -> RefreshQuotaError {
+    RefreshQuotaError::InvalidData
 }
 
 #[cfg(test)]

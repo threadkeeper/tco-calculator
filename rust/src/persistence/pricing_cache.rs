@@ -1,14 +1,19 @@
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
-use crate::pricing::{
-    provider::{Provider, ProviderError},
-    repository::{RefreshLeaseDecision, RefreshLeaseOutcome},
-    snapshot::{
-        AwsPriceSnapshot, AzurePriceSnapshot, SnapshotError, validate_stored_aws_snapshot,
-        validate_stored_azure_snapshot,
+use crate::{
+    config::MAX_PROVIDER_REFRESHES_PER_HOUR,
+    pricing::{
+        provider::{Provider, ProviderError},
+        repository::{RefreshLeaseDecision, RefreshLeaseOutcome},
+        snapshot::{
+            AwsPriceSnapshot, AzurePriceSnapshot, SnapshotError, validate_stored_aws_snapshot,
+            validate_stored_azure_snapshot,
+        },
     },
 };
 
@@ -18,11 +23,14 @@ pub(crate) const AWS_SNAPSHOT_DOCUMENT_TYPE: &str = "aws_price_snapshot";
 pub(crate) const AZURE_SNAPSHOT_DOCUMENT_TYPE: &str = "azure_price_snapshot";
 pub(crate) const REFRESH_LEASE_DOCUMENT_TYPE: &str = "pricing_refresh_lease";
 pub(crate) const REFRESH_LEASE_TTL_SECONDS: i32 = 150;
+pub(crate) const REFRESH_QUOTA_DOCUMENT_TYPE: &str = "pricing_refresh_quota";
+pub(crate) const REFRESH_QUOTA_TTL_SECONDS: i32 = 60 * 60;
 const REFRESH_LEASE_ID_PREFIX: &str = "refresh-lease-";
+const REFRESH_QUOTA_ID_PREFIX: &str = "refresh-quota-";
 
 #[derive(Debug, Error)]
 pub(crate) enum PricingCacheDocumentError {
-    #[error("pricing cache document envelope does not match its snapshot")]
+    #[error("pricing cache document envelope is invalid")]
     EnvelopeMismatch,
     #[error(transparent)]
     Snapshot(#[from] SnapshotError),
@@ -285,6 +293,155 @@ impl RefreshLeaseDocument {
     }
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct RefreshQuotaDocument {
+    pub id: String,
+    pub document_type: String,
+    pub cache_partition: String,
+    pub identity_sha256: String,
+    pub window_started_at: String,
+    pub expires_at: String,
+    pub limit: u32,
+    pub count: u32,
+    pub operation_tokens: Vec<String>,
+    pub ttl: i32,
+}
+
+pub(crate) enum RefreshQuotaMutation {
+    Allowed,
+    Limited(u64),
+    Replace(RefreshQuotaDocument),
+}
+
+impl RefreshQuotaDocument {
+    pub fn new(
+        identity_sha256: &str,
+        operation_token: &str,
+        limit: u32,
+        now: OffsetDateTime,
+    ) -> Result<Self, PricingCacheDocumentError> {
+        validate_quota_inputs(identity_sha256, operation_token, limit)?;
+        let document = Self {
+            id: format!("{REFRESH_QUOTA_ID_PREFIX}{identity_sha256}"),
+            document_type: REFRESH_QUOTA_DOCUMENT_TYPE.to_owned(),
+            cache_partition: PRICING_CACHE_PARTITION.to_owned(),
+            identity_sha256: identity_sha256.to_owned(),
+            window_started_at: format_timestamp(now)?,
+            expires_at: format_timestamp(
+                now + Duration::seconds(i64::from(REFRESH_QUOTA_TTL_SECONDS)),
+            )?,
+            limit,
+            count: 1,
+            operation_tokens: vec![operation_token.to_owned()],
+            ttl: REFRESH_QUOTA_TTL_SECONDS,
+        };
+        document.validate()?;
+        Ok(document)
+    }
+
+    pub fn validate(&self) -> Result<(), PricingCacheDocumentError> {
+        let window_started_at = parse_timestamp(&self.window_started_at)?;
+        let expires_at = parse_timestamp(&self.expires_at)?;
+        let operations = self.operation_tokens.iter().collect::<BTreeSet<_>>();
+        let valid_operations = operations.len() == self.operation_tokens.len()
+            && self.operation_tokens.iter().all(|operation| {
+                Uuid::parse_str(operation)
+                    .ok()
+                    .is_some_and(|value| value.to_string() == *operation)
+            });
+        if !valid_hash(&self.identity_sha256)
+            || self.id != format!("{REFRESH_QUOTA_ID_PREFIX}{}", self.identity_sha256)
+            || self.document_type != REFRESH_QUOTA_DOCUMENT_TYPE
+            || self.cache_partition != PRICING_CACHE_PARTITION
+            || self.limit == 0
+            || self.limit > MAX_PROVIDER_REFRESHES_PER_HOUR
+            || self.count == 0
+            || usize::try_from(self.count).ok() != Some(self.operation_tokens.len())
+            || self.count > self.limit
+            || !valid_operations
+            || expires_at - window_started_at
+                != Duration::seconds(i64::from(REFRESH_QUOTA_TTL_SECONDS))
+            || !(1..=REFRESH_QUOTA_TTL_SECONDS).contains(&self.ttl)
+        {
+            return Err(PricingCacheDocumentError::EnvelopeMismatch);
+        }
+        Ok(())
+    }
+
+    pub fn consume(
+        &self,
+        identity_sha256: &str,
+        operation_token: &str,
+        limit: u32,
+        now: OffsetDateTime,
+    ) -> Result<RefreshQuotaMutation, PricingCacheDocumentError> {
+        self.validate()?;
+        validate_quota_inputs(identity_sha256, operation_token, limit)?;
+        if self.identity_sha256 != identity_sha256 {
+            return Err(PricingCacheDocumentError::EnvelopeMismatch);
+        }
+        if self
+            .operation_tokens
+            .iter()
+            .any(|applied| applied == operation_token)
+        {
+            return Ok(RefreshQuotaMutation::Allowed);
+        }
+        let expires_at = parse_timestamp(&self.expires_at)?;
+        if expires_at <= now {
+            return Self::new(identity_sha256, operation_token, limit, now)
+                .map(RefreshQuotaMutation::Replace);
+        }
+        let retry_after = remaining_seconds(expires_at, now)?;
+        if self.count >= self.limit.min(limit) {
+            return Ok(RefreshQuotaMutation::Limited(retry_after));
+        }
+        let mut updated = self.clone();
+        updated.count += 1;
+        updated.operation_tokens.push(operation_token.to_owned());
+        updated.ttl =
+            i32::try_from(retry_after).map_err(|_| PricingCacheDocumentError::EnvelopeMismatch)?;
+        updated.validate()?;
+        Ok(RefreshQuotaMutation::Replace(updated))
+    }
+}
+
+fn validate_quota_inputs(
+    identity_sha256: &str,
+    operation_token: &str,
+    limit: u32,
+) -> Result<(), PricingCacheDocumentError> {
+    let valid_operation = Uuid::parse_str(operation_token)
+        .ok()
+        .is_some_and(|value| value.to_string() == operation_token);
+    if valid_hash(identity_sha256)
+        && valid_operation
+        && (1..=MAX_PROVIDER_REFRESHES_PER_HOUR).contains(&limit)
+    {
+        Ok(())
+    } else {
+        Err(PricingCacheDocumentError::EnvelopeMismatch)
+    }
+}
+
+fn remaining_seconds(
+    expires_at: OffsetDateTime,
+    now: OffsetDateTime,
+) -> Result<u64, PricingCacheDocumentError> {
+    let remaining = expires_at - now;
+    if remaining <= Duration::ZERO {
+        return Ok(0);
+    }
+    let whole_seconds = remaining.whole_seconds();
+    let rounded_seconds = if remaining > Duration::seconds(whole_seconds) {
+        whole_seconds + 1
+    } else {
+        whole_seconds
+    };
+    u64::try_from(rounded_seconds.min(i64::from(REFRESH_QUOTA_TTL_SECONDS)))
+        .map_err(|_| PricingCacheDocumentError::EnvelopeMismatch)
+}
+
 fn valid_hash(value: &str) -> bool {
     value.len() == 64
         && value
@@ -458,6 +615,142 @@ mod tests {
         };
         future_completion.completed_at = Some("2026-08-10T12:02:31Z".to_owned());
         assert!(future_completion.validate().is_err());
+    }
+
+    #[test]
+    fn refresh_quota_is_idempotent_bounded_and_resets_after_expiry() {
+        let identity = "a".repeat(64);
+        let first_operation = "11111111-1111-4111-8111-111111111111";
+        let second_operation = "22222222-2222-4222-8222-222222222222";
+        let third_operation = "33333333-3333-4333-8333-333333333333";
+        let started_at = timestamp("2026-08-10T12:00:00Z");
+        let document = RefreshQuotaDocument::new(&identity, first_operation, 2, started_at)
+            .expect("valid quota document");
+        assert!(matches!(
+            document
+                .consume(&identity, first_operation, 2, started_at)
+                .expect("idempotent operation"),
+            RefreshQuotaMutation::Allowed
+        ));
+
+        let updated = match document
+            .consume(
+                &identity,
+                second_operation,
+                2,
+                timestamp("2026-08-10T12:00:00.5Z"),
+            )
+            .expect("second operation")
+        {
+            RefreshQuotaMutation::Replace(updated) => updated,
+            _ => panic!("second operation must update the counter"),
+        };
+        assert_eq!(updated.count, 2);
+        assert_eq!(updated.ttl, 3_600);
+        assert!(matches!(
+            updated
+                .consume(
+                    &identity,
+                    second_operation,
+                    2,
+                    timestamp("2026-08-10T12:00:01Z")
+                )
+                .expect("retried operation"),
+            RefreshQuotaMutation::Allowed
+        ));
+        assert!(matches!(
+            updated
+                .consume(
+                    &identity,
+                    third_operation,
+                    2,
+                    timestamp("2026-08-10T12:00:01Z")
+                )
+                .expect("limited operation"),
+            RefreshQuotaMutation::Limited(3_599)
+        ));
+
+        let reset = match updated
+            .consume(
+                &identity,
+                third_operation,
+                2,
+                timestamp("2026-08-10T13:00:00Z"),
+            )
+            .expect("reset operation")
+        {
+            RefreshQuotaMutation::Replace(reset) => reset,
+            _ => panic!("expired window must be replaced"),
+        };
+        assert_eq!(reset.count, 1);
+        assert_eq!(reset.operation_tokens, vec![third_operation]);
+    }
+
+    #[test]
+    fn refresh_quota_merges_an_operation_after_a_conditional_write_conflict() {
+        let identity = "a".repeat(64);
+        let first_operation = "11111111-1111-4111-8111-111111111111";
+        let competing_operation = "22222222-2222-4222-8222-222222222222";
+        let retried_operation = "33333333-3333-4333-8333-333333333333";
+        let now = timestamp("2026-08-10T12:00:00Z");
+        let original = RefreshQuotaDocument::new(&identity, first_operation, 3, now)
+            .expect("valid quota document");
+        let winner = match original
+            .consume(&identity, competing_operation, 3, now)
+            .expect("competing operation")
+        {
+            RefreshQuotaMutation::Replace(updated) => updated,
+            _ => panic!("competing operation must update the counter"),
+        };
+        let merged = match winner
+            .consume(&identity, retried_operation, 3, now)
+            .expect("operation retried after conflict")
+        {
+            RefreshQuotaMutation::Replace(updated) => updated,
+            _ => panic!("retried operation must merge with the winner"),
+        };
+
+        assert_eq!(merged.count, 3);
+        assert_eq!(
+            merged.operation_tokens,
+            vec![first_operation, competing_operation, retried_operation]
+        );
+        assert!(matches!(
+            merged
+                .consume(&identity, retried_operation, 3, now)
+                .expect("replayed merged operation"),
+            RefreshQuotaMutation::Allowed
+        ));
+    }
+
+    #[test]
+    fn refresh_quota_rejects_tampered_or_unbounded_documents() {
+        let identity = "a".repeat(64);
+        let operation = "11111111-1111-4111-8111-111111111111";
+        let mut document =
+            RefreshQuotaDocument::new(&identity, operation, 2, timestamp("2026-08-10T12:00:00Z"))
+                .expect("valid quota document");
+        document.operation_tokens.push(operation.to_owned());
+        document.count += 1;
+        assert!(document.validate().is_err());
+        assert!(
+            RefreshQuotaDocument::new(
+                &identity,
+                operation,
+                MAX_PROVIDER_REFRESHES_PER_HOUR + 1,
+                timestamp("2026-08-10T12:00:00Z")
+            )
+            .is_err()
+        );
+
+        let other = RefreshQuotaDocument::new(
+            &"b".repeat(64),
+            "22222222-2222-4222-8222-222222222222",
+            2,
+            timestamp("2026-08-10T12:00:00Z"),
+        )
+        .expect("independent identity quota");
+        assert_ne!(document.id, other.id);
     }
 
     fn timestamp(value: &str) -> OffsetDateTime {

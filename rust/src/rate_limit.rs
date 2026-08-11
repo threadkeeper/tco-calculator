@@ -1,10 +1,12 @@
 use std::{
     collections::HashMap,
+    fmt::Write,
     net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
+use async_trait::async_trait;
 use axum::{
     body::Body,
     extract::{ConnectInfo, State},
@@ -13,6 +15,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sha2::{Digest, Sha256};
+use thiserror::Error;
+use uuid::Uuid;
 
 use crate::{
     auth::resolve_principal,
@@ -22,6 +26,71 @@ use crate::{
 };
 
 const MAX_TRACKED_KEYS: usize = 10_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RefreshQuotaDecision {
+    Allowed,
+    Limited { retry_after_seconds: u64 },
+}
+
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum RefreshQuotaError {
+    #[error("refresh quota repository is unavailable")]
+    Unavailable,
+    #[error("stored refresh quota is invalid")]
+    InvalidData,
+}
+
+#[async_trait]
+pub trait RefreshQuotaRepository: Send + Sync {
+    async fn consume_refresh_quota(
+        &self,
+        identity_sha256: &str,
+        operation_token: &str,
+        limit: u32,
+    ) -> Result<RefreshQuotaDecision, RefreshQuotaError>;
+}
+
+#[derive(Clone)]
+pub struct RefreshQuota {
+    limit: u32,
+    local: Option<TokenBucket>,
+    distributed: Option<Arc<dyn RefreshQuotaRepository>>,
+}
+
+impl RefreshQuota {
+    pub fn new(limit: u32, distributed: Option<Arc<dyn RefreshQuotaRepository>>) -> Self {
+        let local = distributed
+            .is_none()
+            .then(|| TokenBucket::new(limit, Duration::from_secs(60 * 60)));
+        Self {
+            limit,
+            local,
+            distributed,
+        }
+    }
+
+    async fn check(&self, identity: &str) -> Result<Option<u64>, RefreshQuotaError> {
+        if let Some(repository) = &self.distributed {
+            let identity_sha256 = digest_hex(identity);
+            let operation_token = Uuid::new_v4().to_string();
+            return repository
+                .consume_refresh_quota(&identity_sha256, &operation_token, self.limit)
+                .await
+                .map(|decision| match decision {
+                    RefreshQuotaDecision::Allowed => None,
+                    RefreshQuotaDecision::Limited {
+                        retry_after_seconds,
+                    } => Some(retry_after_seconds),
+                });
+        }
+        self.local
+            .as_ref()
+            .ok_or(RefreshQuotaError::Unavailable)?
+            .check(identity)
+            .map_err(|_| RefreshQuotaError::Unavailable)
+    }
+}
 
 #[derive(Clone)]
 pub struct TokenBucket {
@@ -112,13 +181,25 @@ pub async fn enforce_refresh_quota(
         .flatten()
         .map(|principal| format!("principal:{}", principal.owner_id()))
         .unwrap_or_else(|| requester_key(request.headers(), request.extensions(), &state.config));
-    match state.refresh_rate_limit.check(&key) {
+    match state.refresh_rate_limit.check(&key).await {
         Ok(Some(retry_after)) => {
             Problem::rate_limited(request.uri().path(), retry_after).into_response()
         }
-        Err(TokenBucketError) => Problem::internal(request.uri().path()).into_response(),
+        Err(error) => {
+            tracing::warn!(error = %error, "refresh quota check failed");
+            Problem::internal(request.uri().path()).into_response()
+        }
         Ok(None) => next.run(request).await,
     }
+}
+
+fn digest_hex(value: &str) -> String {
+    let digest = Sha256::digest(value.as_bytes());
+    let mut encoded = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded
 }
 
 fn requester_key(
@@ -143,9 +224,39 @@ fn requester_key(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
-    use super::TokenBucket;
+    use async_trait::async_trait;
+    use uuid::Uuid;
+
+    use super::{
+        RefreshQuota, RefreshQuotaDecision, RefreshQuotaError, RefreshQuotaRepository, TokenBucket,
+    };
+
+    struct RecordingQuotaRepository {
+        calls: Mutex<Vec<(String, String, u32)>>,
+        decision: RefreshQuotaDecision,
+    }
+
+    #[async_trait]
+    impl RefreshQuotaRepository for RecordingQuotaRepository {
+        async fn consume_refresh_quota(
+            &self,
+            identity_sha256: &str,
+            operation_token: &str,
+            limit: u32,
+        ) -> Result<RefreshQuotaDecision, RefreshQuotaError> {
+            self.calls.lock().expect("calls lock").push((
+                identity_sha256.to_owned(),
+                operation_token.to_owned(),
+                limit,
+            ));
+            Ok(self.decision)
+        }
+    }
 
     #[test]
     fn token_bucket_rejects_after_capacity_is_consumed() {
@@ -155,5 +266,41 @@ mod tests {
         assert_eq!(bucket.check("client").expect("second request"), None);
         assert!(bucket.check("client").expect("limited request").is_some());
         assert_eq!(bucket.check("other client").expect("independent key"), None);
+    }
+
+    #[tokio::test]
+    async fn distributed_quota_sends_only_distinct_identity_digests() {
+        let repository = Arc::new(RecordingQuotaRepository {
+            calls: Mutex::new(Vec::new()),
+            decision: RefreshQuotaDecision::Allowed,
+        });
+        let quota = RefreshQuota::new(6, Some(repository.clone()));
+
+        assert_eq!(quota.check("principal:tenant:owner").await, Ok(None));
+        assert_eq!(quota.check("ip:192.0.2.10").await, Ok(None));
+
+        let calls = repository.calls.lock().expect("calls lock");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0.len(), 64);
+        assert_eq!(calls[1].0.len(), 64);
+        assert_ne!(calls[0].0, calls[1].0);
+        assert!(!calls[0].0.contains("tenant"));
+        assert!(!calls[1].0.contains("192.0.2.10"));
+        assert_eq!(calls[0].2, 6);
+        assert_eq!(calls[1].2, 6);
+        assert!(calls.iter().all(|call| Uuid::parse_str(&call.1).is_ok()));
+    }
+
+    #[tokio::test]
+    async fn distributed_quota_preserves_retry_after() {
+        let repository = Arc::new(RecordingQuotaRepository {
+            calls: Mutex::new(Vec::new()),
+            decision: RefreshQuotaDecision::Limited {
+                retry_after_seconds: 3_599,
+            },
+        });
+        let quota = RefreshQuota::new(6, Some(repository));
+
+        assert_eq!(quota.check("ip:192.0.2.10").await, Ok(Some(3_599)));
     }
 }

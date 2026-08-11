@@ -23,7 +23,7 @@ use crate::{
             SnapshotRepositoryError,
         },
     },
-    rate_limit::TokenBucket,
+    rate_limit::{RefreshQuota, RefreshQuotaRepository, TokenBucket},
 };
 
 #[derive(Debug, Error)]
@@ -57,7 +57,7 @@ pub struct AppState {
     pub pricing: PricingCoordinator,
     pub live_pricing: Option<LivePricingLoader>,
     pub guest_rate_limit: TokenBucket,
-    pub refresh_rate_limit: TokenBucket,
+    pub refresh_rate_limit: RefreshQuota,
     pub calculation_slots: Arc<tokio::sync::Semaphore>,
 }
 
@@ -74,12 +74,14 @@ impl AppState {
             CosmosSnapshotRepository::new(&cosmos.endpoint, &cosmos.application_region).await?,
         );
         let snapshots: Arc<dyn DurableSnapshotRepository> = pricing_cache.clone();
-        let leases: Arc<dyn RefreshLeaseRepository> = pricing_cache;
+        let leases: Arc<dyn RefreshLeaseRepository> = pricing_cache.clone();
+        let refresh_quota: Arc<dyn RefreshQuotaRepository> = pricing_cache;
         Self::with_projects(
             config,
             projects,
             Some(snapshots),
             Some(leases),
+            Some(refresh_quota),
             PersistenceBackend::Cosmos,
         )
     }
@@ -88,6 +90,7 @@ impl AppState {
         Self::with_projects(
             config,
             Arc::new(InMemoryProjectRepository::new()),
+            None,
             None,
             None,
             PersistenceBackend::MemoryLocal,
@@ -99,6 +102,7 @@ impl AppState {
         projects: Arc<dyn ProjectRepository>,
         durable_snapshots: Option<Arc<dyn DurableSnapshotRepository>>,
         refresh_leases: Option<Arc<dyn RefreshLeaseRepository>>,
+        refresh_quota_repository: Option<Arc<dyn RefreshQuotaRepository>>,
         persistence_backend: PersistenceBackend,
     ) -> Result<Self, StateError> {
         let capabilities = Arc::new(serde_json::from_str::<CapabilityCatalog>(include_str!(
@@ -127,10 +131,8 @@ impl AppState {
         );
         let guest_rate_limit =
             TokenBucket::new(config.guest_requests_per_minute, Duration::from_secs(60));
-        let refresh_rate_limit = TokenBucket::new(
-            config.provider_refreshes_per_hour,
-            Duration::from_secs(60 * 60),
-        );
+        let refresh_rate_limit =
+            RefreshQuota::new(config.provider_refreshes_per_hour, refresh_quota_repository);
         let calculation_slots =
             Arc::new(tokio::sync::Semaphore::new(config.calculation_concurrency));
 
