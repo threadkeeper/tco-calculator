@@ -466,7 +466,8 @@ impl DurableSnapshotRepository for CosmosSnapshotRepository {
         let query = Query::from("SELECT * FROM c WHERE c.document_type = @document_type")
             .with_parameter("@document_type", AWS_SNAPSHOT_DOCUMENT_TYPE)
             .map_err(map_snapshot_cosmos_error)?;
-        let mut latest = std::collections::BTreeMap::new();
+        let mut latest: std::collections::BTreeMap<(String, String), AwsSnapshotDocument> =
+            std::collections::BTreeMap::new();
         for document in self.query_documents::<AwsSnapshotDocument>(query).await? {
             let key = (document.currency.clone(), document.source_region.clone());
             match latest.get(&key) {
@@ -526,7 +527,7 @@ impl SnapshotDocument for AzureSnapshotDocument {
 fn newest_document<T: SnapshotDocument>(
     documents: Vec<T>,
 ) -> Result<Option<T>, SnapshotRepositoryError> {
-    let mut newest = None;
+    let mut newest: Option<T> = None;
     for document in documents {
         match newest.as_ref() {
             Some(current) if !retrieved_later(document.retrieved_at(), current.retrieved_at())? => {
