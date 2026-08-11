@@ -9,6 +9,8 @@ servers:
   - url: /api/v1
 tags:
   - name: Session
+  - name: Privacy
+  - name: Assistant
   - name: Catalogs
   - name: Pricing
   - name: Calculations
@@ -22,10 +24,66 @@ paths:
       responses:
         '200':
           description: Current guest or authenticated principal summary.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Session'
+  /privacy-consent:
+    put:
+      operationId: savePrivacyConsent
+      tags: [Privacy]
+      security:
+        - containerAppsAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavePrivacyConsentRequest'
+      responses:
+        '200':
+          description: Current owner-scoped privacy acceptance and contact preference.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyConsentStatus'
+        default:
+          $ref: '#/components/responses/Problem'
+  /assistant/help:
+    post:
+      operationId: getAssistantHelp
+      tags: [Assistant]
+      summary: Answer a question from the reviewed application-help catalog.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantHelpRequest'
+      responses:
+        '200':
+          description: Deterministic application help with matched control references.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantHelpResponse'
+        default:
+          $ref: '#/components/responses/Problem'
   /catalog/aws/regions:
     get:
       operationId: listAwsRegions
@@ -442,13 +500,81 @@ components:
       enum: [fresh, cached, stale, unavailable]
     Session:
       type: object
-      required: [mode, display_name]
+      required: [mode, display_name, email_address, privacy_consent]
       properties:
         mode:
           type: string
           enum: [guest, authenticated]
         display_name:
           type: [string, 'null']
+        email_address:
+          type: [string, 'null']
+          format: email
+          description: Optional email-like value supplied by the identity provider for contact-form prefill only.
+        privacy_consent:
+          $ref: '#/components/schemas/PrivacyConsentStatus'
+    PrivacyConsentStatus:
+      type: object
+      required: [notice_version, required, accepted_at, allow_contact, email_address]
+      properties:
+        notice_version:
+          type: string
+        required:
+          type: boolean
+        accepted_at:
+          type: [string, 'null']
+          format: date-time
+        allow_contact:
+          type: boolean
+        email_address:
+          type: [string, 'null']
+          format: email
+          description: Stored only when Azure SQL contact permission is enabled.
+    SavePrivacyConsentRequest:
+      type: object
+      additionalProperties: false
+      required: [notice_version, accepted, allow_contact, email_address]
+      properties:
+        notice_version:
+          type: string
+        accepted:
+          type: boolean
+          const: true
+        allow_contact:
+          type: boolean
+        email_address:
+          type: [string, 'null']
+          format: email
+    AssistantHelpRequest:
+      type: object
+      additionalProperties: false
+      required: [question]
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    AssistantHelpResponse:
+      type: object
+      additionalProperties: false
+      required: [answer, references]
+      properties:
+        answer:
+          type: string
+        references:
+          type: array
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/AssistantHelpReference'
+    AssistantHelpReference:
+      type: object
+      additionalProperties: false
+      required: [control_id, label]
+      properties:
+        control_id:
+          type: string
+        label:
+          type: string
     Region:
       type: object
       required: [code, label]

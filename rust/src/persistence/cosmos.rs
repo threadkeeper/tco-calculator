@@ -32,10 +32,16 @@ use crate::{
 
 use super::{
     pricing_cache::{
-        AWS_SNAPSHOT_DOCUMENT_TYPE, AZURE_SNAPSHOT_DOCUMENT_TYPE, AwsSnapshotDocument,
+        AWS_STATE_DOCUMENT_TYPE, AZURE_SNAPSHOT_DOCUMENT_TYPE, AwsEbsPriceDocument,
+        AwsEc2PriceDocument, AwsPriceDocuments, AwsRdsPriceDocument, AwsSnapshotStateDocument,
         AzureSnapshotDocument, PRICING_CACHE_CONTAINER_ID, PRICING_CACHE_PARTITION,
         PricingCacheDocumentError, RefreshLeaseDocument, RefreshQuotaDocument,
-        RefreshQuotaMutation,
+        RefreshQuotaMutation, aws_component_document_id, aws_state_document_id,
+    },
+    privacy_consent::{
+        PRIVACY_CONSENT_DOCUMENT_ID, PrivacyConsentDocument, PrivacyConsentError,
+        PrivacyConsentProfile, PrivacyConsentRepository, new_document as new_consent_document,
+        validate_document as validate_consent_document,
     },
     project_share::{
         CreatedProjectShare, PROJECT_SHARE_DOCUMENT_TYPE, ProjectShareCredentials,
@@ -53,6 +59,7 @@ const PROJECTS_CONTAINER_ID: &str = "projects";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(20);
 const SNAPSHOT_WRITE_ATTEMPTS: usize = 3;
 const CONDITIONAL_WRITE_ATTEMPTS: usize = 5;
+const MAX_COSMOS_ITEM_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct CosmosProjectRepository {
@@ -247,6 +254,47 @@ impl ProjectRepository for CosmosProjectRepository {
 }
 
 #[async_trait]
+impl PrivacyConsentRepository for CosmosProjectRepository {
+    async fn get(
+        &self,
+        owner_id: &str,
+    ) -> Result<Option<PrivacyConsentDocument>, PrivacyConsentError> {
+        let response = match self
+            .container
+            .read_item(owner_id.to_owned(), PRIVACY_CONSENT_DOCUMENT_ID, None)
+            .await
+        {
+            Ok(response) => response,
+            Err(error) if error.status().is_not_found() => return Ok(None),
+            Err(error) => return Err(map_consent_cosmos_error(error)),
+        };
+        let document = response
+            .into_model::<PrivacyConsentDocument>()
+            .map_err(map_consent_cosmos_error)?;
+        validate_consent_document(&document, owner_id)?;
+        Ok(Some(document))
+    }
+
+    async fn save(
+        &self,
+        owner_id: &str,
+        profile: PrivacyConsentProfile,
+    ) -> Result<PrivacyConsentDocument, PrivacyConsentError> {
+        let document = new_consent_document(owner_id, profile)?;
+        self.container
+            .upsert_item(
+                owner_id.to_owned(),
+                PRIVACY_CONSENT_DOCUMENT_ID,
+                &document,
+                None,
+            )
+            .await
+            .map_err(map_consent_cosmos_error)?;
+        Ok(document)
+    }
+}
+
+#[async_trait]
 impl ProjectShareRepository for CosmosProjectRepository {
     async fn create(
         &self,
@@ -405,6 +453,16 @@ fn map_share_cosmos_error(error: CosmosError) -> ProjectShareError {
     }
 }
 
+fn map_consent_cosmos_error(error: CosmosError) -> PrivacyConsentError {
+    let status = error.status();
+    tracing::warn!(
+        status_code = u16::from(status.status_code()),
+        sub_status = status.sub_status().map(|value| value.value()),
+        "Cosmos privacy consent operation failed"
+    );
+    PrivacyConsentError::Unavailable
+}
+
 #[derive(Clone)]
 pub struct CosmosSnapshotRepository {
     container: ContainerClient,
@@ -493,9 +551,36 @@ impl CosmosSnapshotRepository {
         Err(SnapshotRepositoryError::Unavailable)
     }
 
+    async fn put_aws_component<T>(&self, document: T) -> Result<T, SnapshotRepositoryError>
+    where
+        T: AwsComponentPersistenceDocument + DeserializeOwned + Serialize,
+    {
+        document.clone().validate()?;
+        validate_cosmos_item_size(&document)?;
+        let options =
+            ItemWriteOptions::default().with_precondition(Precondition::if_none_match("*"));
+        match self
+            .container
+            .create_item(
+                PRICING_CACHE_PARTITION,
+                document.id(),
+                &document,
+                Some(options),
+            )
+            .await
+        {
+            Ok(_) => Ok(document),
+            Err(error) if is_conflict(&error) || error.status().is_precondition_failed() => self
+                .get_document::<T>(document.id())
+                .await?
+                .ok_or(SnapshotRepositoryError::Unavailable),
+            Err(error) => Err(map_snapshot_cosmos_error(error)),
+        }
+    }
+
     async fn get_document<T>(&self, snapshot_id: &str) -> Result<Option<T>, SnapshotRepositoryError>
     where
-        T: SnapshotDocument + DeserializeOwned,
+        T: ValidatedDocument + DeserializeOwned,
     {
         let response = match self
             .container
@@ -515,7 +600,7 @@ impl CosmosSnapshotRepository {
 
     async fn query_documents<T>(&self, query: Query) -> Result<Vec<T>, SnapshotRepositoryError>
     where
-        T: SnapshotDocument + DeserializeOwned + Send + 'static,
+        T: ValidatedDocument + DeserializeOwned + Send + 'static,
     {
         let mut items = self
             .container
@@ -532,6 +617,74 @@ impl CosmosSnapshotRepository {
             documents.push(document);
         }
         Ok(documents)
+    }
+
+    async fn load_aws_state(
+        &self,
+        state: AwsSnapshotStateDocument,
+    ) -> Result<AwsPriceSnapshot, SnapshotRepositoryError> {
+        AwsSnapshotStateDocument::validate(&state).map_err(map_cache_document_error)?;
+        let ec2_id = aws_component_document_id("ec2", &state.ec2_content_sha256);
+        let rds_id = aws_component_document_id("rds", &state.rds_content_sha256);
+        let ebs_id = aws_component_document_id("ebs", &state.ebs_content_sha256);
+        let (ec2, rds, ebs) = tokio::try_join!(
+            self.get_document::<AwsEc2PriceDocument>(&ec2_id),
+            self.get_document::<AwsRdsPriceDocument>(&rds_id),
+            self.get_document::<AwsEbsPriceDocument>(&ebs_id),
+        )?;
+        state
+            .into_snapshot(
+                ec2.ok_or(SnapshotRepositoryError::InvalidData)?,
+                rds.ok_or(SnapshotRepositoryError::InvalidData)?,
+                ebs.ok_or(SnapshotRepositoryError::InvalidData)?,
+            )
+            .map_err(map_cache_document_error)
+    }
+
+    async fn delete_superseded_aws_components(
+        &self,
+        previous: Option<&AwsSnapshotStateDocument>,
+        current: &AwsSnapshotStateDocument,
+    ) {
+        let Some(previous) = previous else {
+            return;
+        };
+        for (service, previous_hash, current_hash) in [
+            (
+                "ec2",
+                &previous.ec2_content_sha256,
+                &current.ec2_content_sha256,
+            ),
+            (
+                "rds",
+                &previous.rds_content_sha256,
+                &current.rds_content_sha256,
+            ),
+            (
+                "ebs",
+                &previous.ebs_content_sha256,
+                &current.ebs_content_sha256,
+            ),
+        ] {
+            if previous_hash == current_hash {
+                continue;
+            }
+            let id = aws_component_document_id(service, previous_hash);
+            if let Err(error) = self
+                .container
+                .delete_item(PRICING_CACHE_PARTITION, &id, None)
+                .await
+                && !error.status().is_not_found()
+            {
+                let status = error.status();
+                tracing::warn!(
+                    status_code = u16::from(status.status_code()),
+                    sub_status = status.sub_status().map(|value| value.value()),
+                    service,
+                    "Superseded AWS price component cleanup failed"
+                );
+            }
+        }
     }
 
     async fn read_refresh_lease(
@@ -643,9 +796,33 @@ impl CosmosSnapshotRepository {
 
 #[async_trait]
 impl DurableSnapshotRepository for CosmosSnapshotRepository {
-    async fn put_aws(&self, snapshot: &AwsPriceSnapshot) -> Result<(), SnapshotRepositoryError> {
-        self.put_document(AwsSnapshotDocument::new(snapshot.clone()))
-            .await
+    async fn put_aws(
+        &self,
+        snapshot: &AwsPriceSnapshot,
+    ) -> Result<AwsPriceSnapshot, SnapshotRepositoryError> {
+        let documents = AwsPriceDocuments::new(snapshot).map_err(map_cache_document_error)?;
+        let previous = self
+            .get_document::<AwsSnapshotStateDocument>(&documents.state.id)
+            .await?;
+        let (ec2, rds, ebs) = tokio::try_join!(
+            self.put_aws_component(documents.ec2),
+            self.put_aws_component(documents.rds),
+            self.put_aws_component(documents.ebs),
+        )?;
+        let (published_state, _) =
+            AwsPriceDocuments::state_for_components(snapshot, &ec2, &rds, &ebs)
+                .map_err(map_cache_document_error)?;
+        self.put_document(published_state.clone()).await?;
+        let current = self
+            .get_document::<AwsSnapshotStateDocument>(&published_state.id)
+            .await?
+            .ok_or(SnapshotRepositoryError::Unavailable)?;
+        let current_snapshot = self.load_aws_state(current.clone()).await?;
+        if same_aws_state_version(&current, &published_state) {
+            self.delete_superseded_aws_components(previous.as_ref(), &current)
+                .await;
+        }
+        Ok(current_snapshot)
     }
 
     async fn put_azure(
@@ -663,11 +840,20 @@ impl DurableSnapshotRepository for CosmosSnapshotRepository {
         if !valid_snapshot_id(snapshot_id, "aws-") {
             return Ok(None);
         }
-        self.get_document::<AwsSnapshotDocument>(snapshot_id)
-            .await?
-            .map(AwsSnapshotDocument::into_snapshot)
-            .transpose()
-            .map_err(map_cache_document_error)
+        let query = Query::from(
+            "SELECT * FROM c WHERE c.document_type = @document_type AND c.snapshot_id = @snapshot_id",
+        )
+        .with_parameter("@document_type", AWS_STATE_DOCUMENT_TYPE)
+        .and_then(|query| query.with_parameter("@snapshot_id", snapshot_id))
+        .map_err(map_snapshot_cosmos_error)?;
+        let mut states = self
+            .query_documents::<AwsSnapshotStateDocument>(query)
+            .await?;
+        match states.pop() {
+            Some(state) if states.is_empty() => self.load_aws_state(state).await.map(Some),
+            Some(_) => Err(SnapshotRepositoryError::InvalidData),
+            None => Ok(None),
+        }
     }
 
     async fn get_azure(
@@ -689,17 +875,16 @@ impl DurableSnapshotRepository for CosmosSnapshotRepository {
         currency: &str,
         source_region: &str,
     ) -> Result<Option<AwsPriceSnapshot>, SnapshotRepositoryError> {
-        let query = Query::from(
-            "SELECT * FROM c WHERE c.document_type = @document_type AND c.currency = @currency AND c.source_region = @source_region",
-        )
-        .with_parameter("@document_type", AWS_SNAPSHOT_DOCUMENT_TYPE)
-        .and_then(|query| query.with_parameter("@currency", currency))
-        .and_then(|query| query.with_parameter("@source_region", source_region))
-        .map_err(map_snapshot_cosmos_error)?;
-        newest_document(self.query_documents::<AwsSnapshotDocument>(query).await?)?
-            .map(AwsSnapshotDocument::into_snapshot)
-            .transpose()
-            .map_err(map_cache_document_error)
+        let state = self
+            .get_document::<AwsSnapshotStateDocument>(&aws_state_document_id(
+                currency,
+                source_region,
+            ))
+            .await?;
+        match state {
+            Some(state) => self.load_aws_state(state).await.map(Some),
+            None => Ok(None),
+        }
     }
 
     async fn find_azure(
@@ -722,25 +907,16 @@ impl DurableSnapshotRepository for CosmosSnapshotRepository {
 
     async fn list_latest_aws(&self) -> Result<Vec<AwsPriceSnapshot>, SnapshotRepositoryError> {
         let query = Query::from("SELECT * FROM c WHERE c.document_type = @document_type")
-            .with_parameter("@document_type", AWS_SNAPSHOT_DOCUMENT_TYPE)
+            .with_parameter("@document_type", AWS_STATE_DOCUMENT_TYPE)
             .map_err(map_snapshot_cosmos_error)?;
-        let mut latest: std::collections::BTreeMap<(String, String), AwsSnapshotDocument> =
-            std::collections::BTreeMap::new();
-        for document in self.query_documents::<AwsSnapshotDocument>(query).await? {
-            let key = (document.currency.clone(), document.source_region.clone());
-            match latest.get(&key) {
-                Some(current)
-                    if !retrieved_later(document.retrieved_at(), current.retrieved_at())? => {}
-                _ => {
-                    latest.insert(key, document);
-                }
-            }
+        let states = self
+            .query_documents::<AwsSnapshotStateDocument>(query)
+            .await?;
+        let mut snapshots = Vec::with_capacity(states.len());
+        for state in states {
+            snapshots.push(self.load_aws_state(state).await?);
         }
-        latest
-            .into_values()
-            .map(AwsSnapshotDocument::into_snapshot)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(map_cache_document_error)
+        Ok(snapshots)
     }
 }
 
@@ -895,19 +1071,56 @@ impl RefreshQuotaRepository for CosmosSnapshotRepository {
     }
 }
 
-trait SnapshotDocument: Clone {
+trait ValidatedDocument: Clone {
     fn id(&self) -> &str;
-    fn retrieved_at(&self) -> &str;
     fn validate(self) -> Result<(), SnapshotRepositoryError>;
 }
 
-impl SnapshotDocument for AwsSnapshotDocument {
+trait SnapshotDocument: ValidatedDocument {
+    fn retrieved_at(&self) -> &str;
+}
+
+impl ValidatedDocument for AwsSnapshotStateDocument {
     fn id(&self) -> &str {
         &self.id
     }
 
+    fn validate(self) -> Result<(), SnapshotRepositoryError> {
+        AwsSnapshotStateDocument::validate(&self).map_err(map_cache_document_error)
+    }
+}
+
+impl SnapshotDocument for AwsSnapshotStateDocument {
     fn retrieved_at(&self) -> &str {
-        &self.retrieved_at
+        &self.metadata.retrieved_at
+    }
+}
+
+trait AwsComponentPersistenceDocument: ValidatedDocument {}
+
+macro_rules! impl_aws_component_persistence_document {
+    ($type:ty) => {
+        impl ValidatedDocument for $type {
+            fn id(&self) -> &str {
+                &self.id
+            }
+
+            fn validate(self) -> Result<(), SnapshotRepositoryError> {
+                <$type>::validate(&self).map_err(map_cache_document_error)
+            }
+        }
+
+        impl AwsComponentPersistenceDocument for $type {}
+    };
+}
+
+impl_aws_component_persistence_document!(AwsEc2PriceDocument);
+impl_aws_component_persistence_document!(AwsRdsPriceDocument);
+impl_aws_component_persistence_document!(AwsEbsPriceDocument);
+
+impl ValidatedDocument for AzureSnapshotDocument {
+    fn id(&self) -> &str {
+        &self.id
     }
 
     fn validate(self) -> Result<(), SnapshotRepositoryError> {
@@ -918,18 +1131,8 @@ impl SnapshotDocument for AwsSnapshotDocument {
 }
 
 impl SnapshotDocument for AzureSnapshotDocument {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
     fn retrieved_at(&self) -> &str {
         &self.retrieved_at
-    }
-
-    fn validate(self) -> Result<(), SnapshotRepositoryError> {
-        self.into_snapshot()
-            .map(|_| ())
-            .map_err(map_cache_document_error)
     }
 }
 
@@ -969,6 +1172,25 @@ fn valid_snapshot_id(value: &str, prefix: &str) -> bool {
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     })
+}
+
+fn same_aws_state_version(
+    current: &AwsSnapshotStateDocument,
+    published: &AwsSnapshotStateDocument,
+) -> bool {
+    current.snapshot_id == published.snapshot_id
+        && current.ec2_content_sha256 == published.ec2_content_sha256
+        && current.rds_content_sha256 == published.rds_content_sha256
+        && current.ebs_content_sha256 == published.ebs_content_sha256
+}
+
+fn validate_cosmos_item_size(value: &impl Serialize) -> Result<(), SnapshotRepositoryError> {
+    let bytes = serde_json::to_vec(value).map_err(|_| SnapshotRepositoryError::InvalidData)?;
+    if bytes.len() >= MAX_COSMOS_ITEM_BYTES {
+        Err(SnapshotRepositoryError::PayloadTooLarge)
+    } else {
+        Ok(())
+    }
 }
 
 fn is_conflict(error: &CosmosError) -> bool {
@@ -1046,5 +1268,29 @@ mod pricing_cache_tests {
             &format!("aws-{}", "A".repeat(64)),
             "aws-"
         ));
+    }
+
+    #[test]
+    fn oversized_component_documents_are_rejected_before_cosmos() {
+        assert!(validate_cosmos_item_size(&vec![0_u8; 16]).is_ok());
+        assert_eq!(
+            validate_cosmos_item_size(&"x".repeat(MAX_COSMOS_ITEM_BYTES)),
+            Err(SnapshotRepositoryError::PayloadTooLarge)
+        );
+    }
+
+    #[test]
+    fn older_writer_cannot_clean_components_after_newer_state_wins() {
+        let (aws, _) = crate::pricing::local_fixture::load().expect("valid local snapshot");
+        let published = AwsPriceDocuments::new(&aws)
+            .expect("published documents")
+            .state;
+        let mut current = published.clone();
+        current.snapshot_id = format!("aws-{}", "0".repeat(64));
+        current.metadata.snapshot_id = current.snapshot_id.clone();
+        current.metadata.content_sha256 = "0".repeat(64);
+
+        assert!(!same_aws_state_version(&current, &published));
+        assert!(same_aws_state_version(&published, &published));
     }
 }

@@ -511,7 +511,7 @@ async fn owner_refresh_aws(
 ) -> Result<Arc<AwsPriceSnapshot>, RefreshFailure> {
     match load_aws_before(context.loader, source_region, deadline).await {
         Ok(snapshot) => {
-            context
+            let snapshot = context
                 .durable
                 .put_aws(&snapshot)
                 .await
@@ -737,10 +737,10 @@ async fn wait_for_lease(
 async fn persist_aws(
     repository: &InMemorySnapshotRepository,
     durable: Option<&dyn DurableSnapshotRepository>,
-    snapshot: AwsPriceSnapshot,
+    mut snapshot: AwsPriceSnapshot,
 ) -> Result<Arc<AwsPriceSnapshot>, SnapshotRepositoryError> {
     if let Some(durable) = durable {
-        durable.put_aws(&snapshot).await?;
+        snapshot = durable.put_aws(&snapshot).await?;
     }
     repository.put_aws(snapshot.clone())?;
     Ok(Arc::new(snapshot))
@@ -1036,7 +1036,7 @@ mod tests {
         async fn put_aws(
             &self,
             snapshot: &AwsPriceSnapshot,
-        ) -> Result<(), SnapshotRepositoryError> {
+        ) -> Result<AwsPriceSnapshot, SnapshotRepositoryError> {
             self.aws_writes.fetch_add(1, Ordering::SeqCst);
             if self.fail_writes.load(Ordering::SeqCst) {
                 return Err(SnapshotRepositoryError::Unavailable);
@@ -1045,7 +1045,7 @@ mod tests {
                 .lock()
                 .await
                 .insert(snapshot.metadata.snapshot_id.clone(), snapshot.clone());
-            Ok(())
+            Ok(snapshot.clone())
         }
 
         async fn put_azure(

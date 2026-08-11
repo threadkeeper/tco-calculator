@@ -5,14 +5,18 @@
     ApiProblem,
     asRecord,
     asRecords,
+    readBoolean,
+    readRecord,
     readString,
     requestJson,
     requestJsonResponse,
     type JsonRecord
   } from '$lib/api';
   import AppShell from '$lib/components/AppShell.svelte';
+  import AssistantPanel from '$lib/components/AssistantPanel.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import ProblemBanner from '$lib/components/ProblemBanner.svelte';
+  import PrivacyNotice from '$lib/components/PrivacyNotice.svelte';
   import ProjectList from '$lib/components/ProjectList.svelte';
   import ProjectWorkspace from '$lib/components/ProjectWorkspace.svelte';
   import SearchSelect from '$lib/components/SearchSelect.svelte';
@@ -57,6 +61,16 @@
   let problem = $state<string | null>(null);
   let deleteTarget = $state<{ id: string; name: string } | null>(null);
   let clearLocalConfirm = $state(false);
+  let privacyOpen = $state(false);
+  let privacyRequired = $state(false);
+  let privacyNoticeVersion = $state('');
+  let privacyAcceptedAt = $state<string | null>(null);
+  let privacyAllowContact = $state(false);
+  let privacyEmailAddress = $state<string | null>(null);
+  let identityEmailAddress = $state<string | null>(null);
+  let privacySaving = $state(false);
+  let privacyProblem = $state<string | null>(null);
+  let pendingSharedCredentials = $state<ProjectShareCredentials | null>(null);
 
   onMount(() => {
     void initialize();
@@ -87,11 +101,26 @@
     try {
       const session = asRecord(await requestJson('/api/v1/session'));
       const sessionMode = readString(session, 'mode');
+      const consent = readRecord(session, 'privacy_consent');
       mode = sessionMode === 'authenticated' ? 'authenticated' : 'guest';
       displayName = readString(session, 'display_name');
+      privacyNoticeVersion = readString(consent, 'notice_version') ?? '';
       if (mode === 'authenticated') {
-        await loadProjects();
-        if (sharedCredentials) await openSharedProject(sharedCredentials);
+        privacyRequired = readBoolean(consent, 'required') !== false;
+        privacyAcceptedAt = readString(consent, 'accepted_at');
+        privacyAllowContact = readBoolean(consent, 'allow_contact') === true;
+        identityEmailAddress = readString(session, 'email_address');
+        privacyEmailAddress = readString(consent, 'email_address') ?? identityEmailAddress;
+        pendingSharedCredentials = sharedCredentials;
+        if (privacyRequired) {
+          privacyOpen = true;
+        } else {
+          await loadProjects();
+          if (sharedCredentials) {
+            pendingSharedCredentials = null;
+            await openSharedProject(sharedCredentials);
+          }
+        }
       } else if (sharedCredentials) {
         problem = 'Sign in with Microsoft, then open the shared project link again.';
       }
@@ -100,6 +129,41 @@
       mode = 'offline';
       if (!(error instanceof TypeError))
         problem = messageFromError(error, 'The application session is unavailable.');
+    }
+  }
+
+  async function acceptPrivacy(allowContact: boolean, emailAddress: string | null) {
+    privacySaving = true;
+    privacyProblem = null;
+    try {
+      const consent = asRecord(
+        await requestJson('/api/v1/privacy-consent', {
+          method: 'PUT',
+          body: JSON.stringify({
+            notice_version: privacyNoticeVersion,
+            accepted: true,
+            allow_contact: allowContact,
+            email_address: emailAddress
+          })
+        })
+      );
+      privacyNoticeVersion = readString(consent, 'notice_version') ?? privacyNoticeVersion;
+      privacyRequired = readBoolean(consent, 'required') !== false;
+      privacyAcceptedAt = readString(consent, 'accepted_at');
+      privacyAllowContact = readBoolean(consent, 'allow_contact') === true;
+      privacyEmailAddress = readString(consent, 'email_address') ?? identityEmailAddress;
+      if (privacyRequired) throw new Error('The current privacy notice was not accepted.');
+      privacyOpen = false;
+      await loadProjects();
+      if (pendingSharedCredentials) {
+        const credentials = pendingSharedCredentials;
+        pendingSharedCredentials = null;
+        await openSharedProject(credentials);
+      }
+    } catch (error) {
+      privacyProblem = messageFromError(error, 'Privacy acceptance could not be saved.');
+    } finally {
+      privacySaving = false;
     }
   }
 
@@ -260,7 +324,15 @@
   />
 </svelte:head>
 
-<AppShell {mode} {displayName} currentProject={activeWorkspace?.project.name ?? null}>
+<AppShell
+  {mode}
+  {displayName}
+  currentProject={activeWorkspace?.project.name ?? null}
+  onprivacy={() => {
+    privacyProblem = null;
+    privacyOpen = true;
+  }}
+>
   {#if activeWorkspace}
     <ProjectWorkspace
       workspace={activeWorkspace}
@@ -441,6 +513,27 @@
     </main>
   {/if}
 </AppShell>
+
+{#if mode === 'guest' || (mode === 'authenticated' && !privacyRequired)}
+  <AssistantPanel />
+{/if}
+
+{#if privacyOpen}
+  <PrivacyNotice
+    required={privacyRequired}
+    authenticated={mode === 'authenticated'}
+    noticeVersion={privacyNoticeVersion}
+    acceptedAt={privacyAcceptedAt}
+    initialAllowContact={privacyAllowContact}
+    initialEmailAddress={privacyEmailAddress ?? identityEmailAddress}
+    saving={privacySaving}
+    error={privacyProblem}
+    onaccept={(allowContact, emailAddress) => void acceptPrivacy(allowContact, emailAddress)}
+    onclose={() => {
+      if (!privacyRequired) privacyOpen = false;
+    }}
+  />
+{/if}
 
 <ConfirmDialog
   open={deleteTarget !== null}

@@ -26,6 +26,10 @@ The Azure calculator endpoint is public but not a stable contract. Schema drift 
 
 Azure Container Apps built-in authentication performs sign-in and token validation. The browser uses platform login and logout routes. The Rust application receives only platform-validated principal claims at the protected ingress boundary and derives ownership from both `tid` and `oid`. It does not store or forward access tokens.
 
+For signed-in privacy acceptance, the application stores the current notice version and acceptance time, optional Entra display name, and the independent Azure SQL contact choice. An email-like Entra value may prefill the contact field. The email is persisted only when contact permission is enabled; otherwise it is discarded. These fields stay in the user's owner-partitioned Cosmos record and are not sent to Entra, pricing providers, analytics services, or a CRM by this application.
+
+The application has no endpoint to list or export contact opt-ins. Any future operator retrieval, CRM integration, or campaign flow is a new personal-data egress that requires documented purpose, authorized recipients, retention, access controls, audit evidence, and written Privacy, Security, architecture, and service-owner approval before implementation.
+
 ## Operational Telemetry
 
 Structured application logs go to the environment's Azure Log Analytics workspace. Logs contain request IDs, route templates, status, duration, auth mode, provider/cache outcomes, formula version, and aggregate mapping counts. They must not contain workload names, raw identity headers, tokens, credentials, or full project payloads. No third-party analytics or behavioral tracking is used.

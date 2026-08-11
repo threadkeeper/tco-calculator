@@ -91,10 +91,10 @@ Decision: Limit each project to 100 resources and each EC2 resource to 50 EBS vo
 ### DC-010: Import, export, and duplication
 
 Priority: P1  
-Question: Must users import CSV/Excel inventories, export project results, or duplicate projects in MVP?  
-Provisional default: None are included in MVP. Resources are added through the form.  
-Why it matters: The existing workbook and source CSVs make bulk import/export a likely workflow, but it was not requested explicitly.  
-Decision: Do not include CSV/Excel import, result export, or project duplication in the first scaffold. Users add resources through the type-specific form.
+Question: Must users import images, CSV/Excel inventories, or PDFs, export project results, or duplicate projects in v1?
+Provisional default: None were included in the first scaffold. Resources were added through the form.
+Why it matters: File intake processes confidential workload data and changes model, parser, validation, privacy, security, and user-review requirements.
+Decision: Updated 2026-08-11 with repository-owner approval. JPEG and PNG upload through the Foundry-backed assistant is the primary v1 assisted project-input method. It produces a typed, validated draft or patch for explicit user review and never saves automatically. Defer CSV, Excel, and PDF import, result export, and project duplication. Users may continue to add resources through the type-specific form.
 
 ## 3. Regions and Currency
 
@@ -533,6 +533,14 @@ Question: How should one-time server hardware, SQL License plus Software Assuran
 Provisional default: None; this project type was added after the original register.  
 Why it matters: These inputs define the On-prem API contract, annual source total, AHB context, and parity comparison.  
 Decision: The user enters one final net server CAPEX amount in USD, including compute and storage hardware but excluding SQL licensing, plus depreciation years. Do not apply source compute or storage discounts. The user enters separate vCPU and licensable-core counts, Enterprise and Standard License + SA prices per two-core pack, source SQL license discount, and 12/24/36 remaining coverage months. The user enters electricity directly in USD/kWh. Estimate server kW with a versioned formula based on vCPU, RAM, and SQL data storage, allow a per-resource kW override, and disclose all coefficients and values. Do not perform foreign-exchange conversion.
+
+### DC-064: Signed-in privacy acceptance and Azure SQL contact
+
+Priority: P0
+Question: What notice, acceptance gate, profile fields, contact choice, retrieval path, and lifecycle apply to authenticated pilot users?
+Provisional default: Do not collect additional profile or marketing-consent data until the controller, notice, retention, and authorized use are approved.
+Why it matters: This adds personal data to Cosmos, gates authenticated use, and creates a potential marketing purpose and operator-access path.
+Decision: Updated 2026-08-11 with repository-owner direction. Use an app-specific internal-pilot notice that supplements the Microsoft Privacy Statement and requires Privacy/Legal approval before external or production use. Require versioned acceptance after Entra sign-in and before other authenticated application use; guests only display the notice. Keep the Azure SQL contact checkbox separate, optional, and off by default. Save one owner-partitioned Cosmos profile containing acceptance version/time, contact choice, optional Entra display name, and email only when contact is allowed. Prefer an email-like Entra value for prefill and otherwise request a user-entered email only when opted in. Do not build an app retrieval/export endpoint or CRM egress. Fulfill correction, deletion, and withdrawal through the approved Microsoft privacy-request process and remove remaining records when pilot data is decommissioned. Use scoped disclosure language; do not promise that data is never disclosed to third parties because explicit project sharing, Azure processors, and legal disclosures exist.
 
 ## 10. Recommended Decision Order
 

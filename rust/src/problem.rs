@@ -95,6 +95,16 @@ impl Problem {
         )
     }
 
+    pub fn privacy_consent_required(instance: &str) -> Self {
+        Self::new(
+            StatusCode::PRECONDITION_REQUIRED,
+            "urn:azure-sql-tco:problem:privacy-consent-required",
+            "Privacy Consent Required",
+            instance,
+            "Review and accept the current privacy notice before using the signed-in application.",
+        )
+    }
+
     pub fn precondition_failed(instance: &str, current_etag: Option<&str>) -> Self {
         let mut problem = Self::new(
             StatusCode::PRECONDITION_FAILED,

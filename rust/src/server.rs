@@ -7,7 +7,7 @@ use axum::{
     http::{HeaderValue, Method, Request, StatusCode, header},
     middleware,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256};
@@ -41,8 +41,8 @@ pub async fn router(mut config: crate::config::Config) -> Result<Router, ServerE
     config.web_asset_dir = validate_asset_root(&config)?;
     let content_security_policy = content_security_policy(&config)?;
     let state = AppState::new(config).await?;
-    let api_router = Router::new()
-        .route("/session", get(api::session::get_session))
+    let consent_gated_router = Router::new()
+        .route("/assistant/help", post(api::assistant::help))
         .route("/catalog/aws/regions", get(api::catalog::aws_regions))
         .route("/catalog/azure/regions", get(api::catalog::azure_regions))
         .route(
@@ -98,6 +98,14 @@ pub async fn router(mut config: crate::config::Config) -> Result<Router, ServerE
             "/project-shares/resolve",
             post(api::project_shares::resolve),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api::privacy::enforce_accepted_consent,
+        ));
+    let api_router = Router::new()
+        .route("/session", get(api::session::get_session))
+        .route("/privacy-consent", put(api::privacy::save))
+        .merge(consent_gated_router)
         .fallback(api_not_found)
         .layer(middleware::from_fn_with_state(
             state.clone(),

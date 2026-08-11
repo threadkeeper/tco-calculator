@@ -1,6 +1,8 @@
+pub mod assistant;
 pub mod calculations;
 pub mod catalog;
 pub mod pricing;
+pub mod privacy;
 pub mod project_shares;
 pub mod projects;
 pub mod session;

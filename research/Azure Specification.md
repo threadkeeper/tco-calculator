@@ -21,6 +21,7 @@ The application must:
 6. Let Microsoft Entra-authenticated users create, open, update, and delete saved projects.
 7. Explain, per resource, exactly why an Azure SKU was selected or why no valid mapping exists.
 8. Deploy as one Azure Container App containing a Rust API and a statically built Svelte frontend.
+9. Provide Entra-authenticated users with a Foundry-backed assistant that explains the application, accepts an image as the primary v1 assisted project-input method, and performs allowlisted application actions through server-owned controls.
 
 This is an operational calculator, not a marketing site. The first screen must be the usable project screen or project list.
 
@@ -64,8 +65,26 @@ Useful engineering practices reviewed in `C:\Repos\gaia-robot` and adopted here 
 - Anonymous guest calculations with browser-local drafts and no server-side project persistence.
 - Deterministic per-resource calculation explanations.
 - Live public-list pricing with cached fallback and price provenance.
+- A bottom-right assistant for Entra-authenticated users, implemented as an application-owned bounded tool loop backed by an approved Azure AI Foundry Model Router deployment.
+- JPEG and PNG upload as the primary v1 assisted-input path. The assistant produces a validated, user-reviewable project draft or patch and MUST NOT save it automatically.
+- Allowlisted assistant actions that reuse the same server-side identity, owner scoping, validation, decimal calculation, ETag, persistence, and confirmation boundaries as the normal UI.
 
-### 4.2 Explicitly Excluded from MVP
+### 4.2 Assistant Boundaries
+
+- The Rust application owns the autonomous loop, capability registry, authorization, deadlines, confirmation state, and side effects. Foundry supplies inference only.
+- Model-generated output is untrusted input. It MUST NOT calculate or supply authoritative money, rates, savings, adjustments, target SKUs, eligibility, totals, revisions, or deterministic explanations.
+- Every financial result and target selection MUST come from the existing server-side decimal calculation and target-selection modules.
+- Assistant model calls, image upload, and application actions require an Entra-authenticated principal. Guest users MAY receive deterministic local help but MUST NOT cause model or file egress.
+- The v1 image path accepts one bounded JPEG or PNG, removes metadata, constrains decoded dimensions, sends only the minimum normalized image and context to the approved Foundry deployment, and discards raw and normalized bytes when the request ends.
+- Image extraction produces a typed candidate project draft or patch. The normal domain validator MUST reject unsupported, ambiguous, or invalid fields, and the UI MUST show mappings, omissions, uncertainty, and a field-level preview before applying changes to a draft.
+- Persisted, destructive, sharing, and other high-impact actions require a separate host-validated confirmation. A natural-language request alone is not confirmation.
+- Tool schemas MUST be closed and typed. Identity, owner, partition, ETag, confirmation, endpoint, credential, and authorization data MUST come from immutable host context and MUST NOT be model-authored.
+- The loop MUST enforce model-call, tool-call, batch, token, output, concurrency, cancellation, and whole-turn time budgets. It MUST stop on stale state, authorization failure, malformed output, guardrail response, unavailable dependency, or exhausted budget.
+- Conversation and upload content MUST remain request-scoped in v1. Do not add server-side transcripts, browser-durable chat history, embeddings, vector indexes, or retrieval stores.
+- Treat project text, uploaded content, model output, and tool results as untrusted data rather than instructions. Do not expose arbitrary HTTP, DOM selectors, script, SQL, shell, provider-console, credential, or Azure control-plane capabilities.
+- Use the exact data-flow, threat, egress, testing, rollout, and approval controls in `docs/FOUNDRY-ASSISTANT-APPROVAL-PROPOSAL.md` as normative implementation requirements where they do not conflict with this specification.
+
+### 4.3 Explicitly Excluded from MVP
 
 - AWS report-server workloads that were removed from the workbook.
 - Azure SQL Database, SQL Server on Azure VM, PostgreSQL, MySQL, Oracle, or non-SQL workloads.
@@ -74,10 +93,10 @@ Useful engineering practices reviewed in `C:\Repos\gaia-robot` and adopted here 
 - Network, backup, snapshot, support, migration-labor, or operational cost modeling.
 - RDS provisioned IOPS and throughput charges. IOPS affects Azure tier selection but is not added to AWS RDS cost in MVP.
 - Taxes and foreign-exchange conversion. Currency is USD.
-- AI-generated sizing advice. Explanations are deterministic calculation traces.
+- Model-generated financial calculations, sizing decisions, target selections, prices, or licensing advice. Explanations remain deterministic calculation traces.
 - Application administrator UI, privileged project access, and global price-cache controls.
 - Collaboration, organization workspaces, invitations, role assignment, and ownership transfer. Authenticated capability-link sharing is included only as specified in section 6.5.
-- CSV/Excel inventory import, result export, and project duplication in the first scaffold.
+- CSV, Excel, and PDF import, result export, and project duplication. JPEG and PNG assisted input is included only as specified in section 4.2.
 - AWS or Azure write access.
 - Provider-console login in MVP. Public price feeds are sufficient for the modeled retail prices.
 
@@ -122,6 +141,12 @@ Authentication MUST use Microsoft Entra ID through Azure Container Apps built-in
 
 For local development only, a clearly marked mock principal MAY be enabled with `APP_ENV=local`, `LOCAL_AUTH_TENANT_ID`, `LOCAL_AUTH_OWNER_ID`, and `LOCAL_AUTH_DISPLAY_NAME`. The mock path bypasses header parsing but MUST construct the same tenant-plus-object owner identifier and preserve owner-scoped persistence tests. Startup MUST fail if any local-auth setting is present while `APP_ENV` is not `local`.
 
+Before a newly authenticated user can use any application API other than session and privacy-consent endpoints, the user MUST review and accept the current version of the app-specific privacy and data-use notice. A changed notice version requires acceptance again. The acceptance control and the optional `Microsoft may contact me about my interest in Azure SQL` control MUST be separate; contact permission defaults to false and MUST NOT be required to continue. Guests can display the notice but MUST NOT be prompted to accept it.
+
+The consent record MUST persist in Cosmos under the server-derived owner ID. It contains the notice version, acceptance timestamp, contact choice, optional Entra display name, and an email address only when contact permission is true. Prefer an email-like Entra claim for form prefill; if unavailable, permit the user to enter the contact address. Email is contact metadata, never an authorization key. The app MUST discard rather than persist an email when contact permission is false. No application endpoint may list or export contact opt-ins in v1; any operator retrieval requires a separately reviewed, authorized, and audited process.
+
+The notice is an internal-pilot, app-specific disclosure that supplements the Microsoft Privacy Statement. It MUST accurately disclose user-created project shares, Azure/service-provider processing, and legally required disclosures, and MUST NOT promise that data is never disclosed to any third party. Privacy and Legal approval of the controller identity, notice wording, privacy contact, and retention terms is required before external or production use.
+
 ### 5.3 Provider Credentials
 
 The MVP MUST NOT request an AWS console login, Azure portal login, AWS access key, Azure subscription credential, or Azure Calculator login from an end user.
@@ -137,6 +162,8 @@ The main screen MUST show:
 - Product name `Azure SQL TCO` with a neutral text wordmark, plus build version.
 - Current identity state: `Guest` or the Entra display name.
 - `Sign in with Microsoft` or `Sign out` action.
+- Privacy/data-use icon that opens the current notice without requiring guest acceptance.
+- Repository icon linking to `https://github.com/threadkeeper/tco-calculator`.
 - Primary `New project` action.
 - For authenticated users, a project table with name, project type, modified time, source region where applicable, Azure region, resource count, source annual total, Azure annual total, and actions.
 - Open action for each saved project.
@@ -499,7 +526,7 @@ Default freshness policy:
 
 A user-requested refresh MUST attempt live retrieval even if a fresh cache exists. Concurrent identical refreshes MUST be coalesced by cache key.
 
-Do not deploy a scheduled provider-refresh job in v1. Prices refresh only through explicit user requests and cache coalescing. Scheduled CI assurance remains separate and MUST NOT mutate the runtime price cache.
+The `Pull AWS Pricing Data` GitHub Actions workflow refreshes all eight supported AWS regions daily at 01:00 UTC and also supports manual dispatch. It MUST call the application refresh API over HTTPS, send only currency and reviewed region identifiers, and MUST NOT access Cosmos DB directly or contain credentials. The workflow is current-data ingestion, not historical collection; it fails when any region does not return a fresh snapshot.
 
 Cache key includes provider, currency, source region, target region, service, normalized filter, and parser schema version.
 
@@ -524,7 +551,9 @@ Each snapshot MUST include:
 
 `snapshot_id` MUST be `{provider}-{sha256}`, where `sha256` is the full lowercase SHA-256 of a canonical normalized payload containing provider, currency, scope, parser schema version, and rate records sorted by stable rate key. Retrieval timestamps and cache status are excluded from the hash. Identical normalized price content therefore has the same ID. Golden tests MUST lock canonicalization behavior.
 
-The full normalized snapshot is stored only in `pricing-cache`. Saved projects reference its ID, while the latest calculation revision embeds the exact resolved rates and provenance used by each resource. Therefore, a saved revision remains displayable and auditable after the cache document expires; recalculation requires a current usable snapshot.
+AWS persistence MUST split the aggregate domain snapshot into one current-state document and separate EC2, RDS, and EBS component documents. Each component ID uses a lowercase SHA-256 of its canonical core normalized data, including currency, AWS region, parser schema version, stable keys, dimensions, and rates while excluding retrieval metadata and record provenance. A separate full-record SHA-256 protects the persisted component, including provenance, from corruption. If the core hash is unchanged, retain the existing component rather than rewriting provenance-only changes. Build the state and aggregate snapshot from the components actually retained, then publish the state last.
+
+Only current AWS provider data is retained. After a new state is published, delete superseded service components; do not retain historical AWS component or state records. Consequently, an old AWS snapshot ID is not a durable lookup key after current prices change. Saved projects reference the current snapshot ID, while the latest calculation revision embeds the exact resolved rates and provenance used by each resource. A saved revision therefore remains displayable and auditable, but recalculation requires a current usable snapshot.
 
 ## 10. Deterministic Calculation Engine
 
@@ -866,6 +895,9 @@ All JSON uses `snake_case`. Dates are RFC 3339 UTC. Decimal values are JSON stri
 - `GET /readyz`: verifies configuration and Cosmos access; reports price providers as configured without downloading full catalogs.
 - `GET /version`: build version and formula version.
 - `GET /api/v1/session`: returns guest or authenticated principal summary.
+- `PUT /api/v1/privacy-consent`: authenticated point update for the current notice acceptance and independent Azure SQL contact choice; responses use `Cache-Control: no-store`.
+
+`GET /api/v1/session` includes the current notice version, whether acceptance is required, acceptance time, contact choice, optional stored contact email, optional Entra display name, and optional email-like Entra value for contact-form prefill. Session responses use `Cache-Control: no-store`. When a valid authenticated principal has not accepted the current notice, every other API returns `428 Privacy Consent Required`; guest requests remain available without acceptance.
 
 ### 12.2 Catalog APIs
 
@@ -959,6 +991,7 @@ Stable problem types and statuses:
 | `not-found` | 404 | Owner-scoped project or route not found |
 | `validation-error` | 422 | Valid JSON with invalid fields or limits |
 | `precondition-required` | 428 | Missing `If-Match` |
+| `privacy-consent-required` | 428 | Authenticated principal has not accepted the current notice version |
 | `precondition-failed` | 412 | Stale ETag |
 | `payload-too-large` | 413 | Request or persisted document exceeds limit |
 | `rate-limited` | 429 | Guest/principal quota exceeded; include `Retry-After` |
@@ -1000,12 +1033,18 @@ Do not persist guest projects.
 
 Share documents use the same container and `/owner_id` partition definition without changing deployment topology. Their partition value is the fixed `project-shares` value so credential resolution is a point read and all links for a deleted source can be found with a single-partition query. A share document contains `document_type = "project_share"`, source owner and project IDs, a SHA-256 secret digest, the editable project snapshot, and creation/expiry timestamps. It MUST NOT contain an ETag from the source response or a calculation revision. Share API responses use `Cache-Control: no-store`.
 
+Each authenticated owner partition MAY also contain one fixed-ID `privacy_consent` document. Its fields are `id = "privacy-consent"`, `document_type`, `owner_id`, `notice_version`, `accepted_at`, optional `display_name`, optional `email_address`, and `allow_contact`. `email_address` MUST be present if and only if `allow_contact` is true. Project queries MUST continue filtering by `document_type = "project"`, and consent access MUST use an owner-partition point read/upsert rather than a cross-partition query.
+
 ### 13.2 `pricing-cache` Container
 
 - Partition key: `/cache_partition`.
-- Stores normalized provider snapshots and refresh locks.
+- Stores normalized provider data, current-state pointers, refresh locks, and distributed refresh-rate counters.
 - TTL enabled; default 30 days.
-- Snapshot IDs are content-addressed exactly as defined in section 9.5.
+- AWS EC2, RDS, and EBS use separate persistent component documents with `ttl = -1`; each ID is content-addressed from service core data as defined in section 9.5.
+- One deterministic persistent AWS state document per currency and source region references the current three component hashes and reconstructable aggregate snapshot ID.
+- Publish all validated components before conditionally replacing state. After confirming the published state is still current, delete only superseded components; an older concurrent writer MUST NOT delete components referenced by newer state.
+- Reject a serialized component at or above the Cosmos 2 MiB item limit before sending it. Do not silently truncate or split a service record set further without a reviewed specification change.
+- Azure snapshot IDs remain content-addressed exactly as defined in section 9.5.
 - Refresh leases and distributed refresh-rate counters use short TTLs and distinct `document_type` values.
 
 ### 13.3 Data Limits
@@ -1130,12 +1169,15 @@ Do not implement financial calculations in TypeScript. Formatting and view-only 
 - Disable the ACR admin account. Grant only `AcrPull` to the Container App SAMI.
 - Every deployed Azure environment, including development, MUST use a VNet-integrated Container Apps environment, a Cosmos private endpoint, and private DNS. Cosmos public network access MUST be disabled. Local workstation development MAY use the Cosmos emulator.
 - Treat project settings, workload names, server identifiers, and cost assumptions as confidential business data. Do not log workload names or server identifiers. Use Azure encryption at rest with Microsoft-managed keys; customer-managed keys and application field encryption are not required for v1.
+- Treat display names, email addresses, notice acceptance, and contact choices as personal data. Do not place them in application logs, telemetry, provider requests, share documents, or project API responses.
+- Persist contact email only with an affirmative, separate Azure SQL contact choice. Do not add a contact export endpoint, CRM integration, analytics destination, or other egress without written Privacy, Security, architecture, and service-owner approval.
+- Retain the consent profile while the signed-in pilot profile is in use. Delete or correct it through the approved Microsoft privacy-request process, or delete it when pilot data is decommissioned. A fixed production retention period and accountable policy owner require Privacy/Legal approval before external use.
 - Store any required Entra provider secret as a versioned Key Vault secret reference; never in GitHub or source.
 - Use GitHub OIDC for deployment; no Azure client secret in GitHub.
 - Apply body-size, timeouts, concurrency, and per-IP rate limits to guest endpoints.
 - Apply stricter per-principal limits to authenticated mutation endpoints as needed.
 - Enforce general guest quotas with a bounded in-process token bucket keyed by the trusted client IP from Container Apps ingress. Enforce the costlier live-refresh hourly quota with a TTL counter in `pricing-cache` keyed by a one-way hash of client IP or principal ID so it remains effective across replicas. Quota failures return `429` with `Retry-After`.
-- Default guest quotas are 60 API requests per minute per IP, 6 live provider refreshes per hour per IP, and 10 concurrent calculation requests per application replica. Expose all three as validated deployment configuration; do not hard-code them in handlers.
+- Default guest quotas are 60 API requests per minute per IP, 8 live provider refreshes per hour per IP, and 10 concurrent calculation requests per application replica. Eight refreshes permit exactly one scheduled sweep of the supported AWS regions per requester identity. Expose all three as validated deployment configuration; do not hard-code them in handlers.
 - Set CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`, and frame restrictions.
 - Do not log workload names at info level because they may reveal customer systems.
 - Do not send project data to AWS or Azure price APIs; send only SKU/region filters required for prices.
@@ -1187,11 +1229,13 @@ Provision one development environment only for v1. Production and test deploymen
 - System-assigned managed identity on the Container App.
 - SAMI role assignments for Cosmos data access, ACR pull, and optional Key Vault secret reads.
 - Virtual network, delegated Container Apps subnet, Cosmos private endpoint, and private DNS.
+- Azure AI Foundry resource with one approved custom Model Router deployment, private endpoint, and private DNS.
+- Least-privilege model-inference role assignment for the Container App system-assigned identity.
 - Optional Key Vault reference for Entra provider configuration secret.
 
 All runtime role assignments MUST use the Container App's system-assigned identity principal ID. Bicep MUST NOT deploy a user-assigned managed identity. Native Azure platform integrations that do not expose a workload RBAC principal MUST keep their credentials out of the Container App configuration and image.
 
-Do not deploy Azure AI Foundry, embeddings, Speech, search, cards, background jobs, or vector indexes.
+Do not deploy embeddings, Speech, search, cards, assistant background jobs, vector indexes, or another application runtime for the assistant. Disable Foundry public data-plane and local/key authentication. The application runtime MUST use only its system-assigned managed identity for model inference and MUST NOT receive model-management control-plane permissions.
 
 ### 18.2 Container App Defaults
 
@@ -1259,12 +1303,13 @@ Root `VERSION` is the single application-version source. Vite injects it into th
 - Fast CI gates plus scheduled coverage and supply-chain assurance.
 - Separate cheap liveness and dependency-aware readiness endpoints.
 - Structured logs to Azure's native logging path.
+- Gaia's application-owned bounded model/tool loop, closed typed tool schemas, host-owned identity scope, all-or-nothing batch preflight, structured tool results, Model Router integration, managed-identity inference, and private Foundry networking, adapted to the stricter TCO boundaries in section 4.2.
 
 ### 20.2 Deliberately Not Copied
 
 - Gaia's hand-written blocking HTTP server: use Axum/Tokio because live pricing needs bounded concurrent I/O.
 - Google/GitHub OAuth: use Entra plus guest mode.
-- AI Foundry, model routing, embeddings, wisdom, cards, voice, web search, MCP, WhatsApp, and conversational persistence.
+- Gaia's embeddings, wisdom, cards, voice, web search, MCP, WhatsApp, alternate identity providers, public posting, and conversational persistence.
 - Seven-container/vector Cosmos topology: use two simple containers.
 - Field-level application encryption in MVP: rely on Azure encryption at rest, private networking, Entra, and managed identity unless data-classification requirements change.
 - Automatic per-commit version bumping: use explicit semantic version changes or release automation to avoid unrelated version churn.
@@ -1444,6 +1489,10 @@ Live tests assert schema and non-negative prices, never exact current amounts.
 - Authenticated user can CRUD own projects.
 - Authenticated principals with the same object ID in different Entra tenants resolve to different owners.
 - An authenticated user requires no paid entitlement, role, or group to save a project.
+- A newly authenticated user cannot use project, share, pricing, catalog, or calculation APIs until accepting the current privacy notice; session and consent endpoints remain available.
+- Guests can calculate and display the privacy notice without accepting it.
+- Contact permission defaults off, is independent of required notice acceptance, and requires a valid email only when enabled.
+- Consent records are owner-scoped, store the current notice version and optional trusted display name, and never retain email when contact permission is false.
 - User cannot read/update/delete another owner's project.
 - ETag conflict returns `412`.
 - Invalid decimals, enum values, and limits return Problem Details.

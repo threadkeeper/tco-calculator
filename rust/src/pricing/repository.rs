@@ -31,7 +31,10 @@ pub enum SnapshotRepositoryError {
 
 #[async_trait]
 pub trait DurableSnapshotRepository: Send + Sync {
-    async fn put_aws(&self, snapshot: &AwsPriceSnapshot) -> Result<(), SnapshotRepositoryError>;
+    async fn put_aws(
+        &self,
+        snapshot: &AwsPriceSnapshot,
+    ) -> Result<AwsPriceSnapshot, SnapshotRepositoryError>;
 
     async fn put_azure(&self, snapshot: &AzurePriceSnapshot)
     -> Result<(), SnapshotRepositoryError>;

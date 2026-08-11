@@ -8,7 +8,7 @@ The Bicep templates define one development environment in South Africa North. Th
 - Log Analytics workspace with 30-day retention.
 - Azure Container Registry Basic with the admin account disabled.
 - Cosmos DB for NoSQL with `EnableServerless`, no provisioned throughput, local/key auth disabled, and public network access disabled.
-- `projects` and TTL-enabled `pricing-cache` containers.
+- `projects` and TTL-enabled `pricing-cache` containers. Current AWS state and service components opt out of the default TTL; superseded components are deleted by the application.
 - Cosmos private endpoint and private DNS.
 - VNet-integrated Azure Container Apps managed environment.
 
@@ -22,7 +22,19 @@ The separate application workflow owns the OCI image, `infra/main.bicep` applica
 
 Copy [.env.example](.env.example) to the ignored `.env` only for local command preparation. Never commit real values. The foundation workflow needs only the `AZURE_*` deployment identifiers and settings already configured as GitHub `dev` environment variables. It uses GitHub OIDC and no Azure client secret.
 
-Application deployment later requires an independently reviewed Entra registration and a versioned `ENTRA_CLIENT_SECRET_URI`; the URI is a Key Vault secret reference, not the secret itself. `CONTAINER_IMAGE` must be immutable. The Entra registration uses the `AzureADMultipleOrgs` audience and the Container App callback URL; personal Microsoft accounts are excluded.
+Application deployment later requires an independently reviewed Entra registration and a versioned `ENTRA_CLIENT_SECRET_URI`; the URI is a Key Vault secret reference, not the secret itself. `CONTAINER_IMAGE` must be immutable. The Entra registration uses the `AzureADMultipleOrgs` audience and the Container App callback URL `<app-url>/.auth/login/aad/callback` registered on the **Web** platform; personal Microsoft accounts are excluded.
+
+The registration MUST enable ID-token issuance for implicit and hybrid flows, because Container Apps authenticates with `response_type=code id_token`; without it the callback fails with `AADSTS700054`. Leave access-token implicit issuance disabled. The registration MUST NOT request Microsoft Graph or any other API permission: sign-in uses only the `openid`, `profile`, and `email` scopes, and the backend reads the platform-injected principal claims rather than calling Graph. Superfluous permissions widen the consent prompt and can block sign-in in tenants that restrict user consent.
+
+The `Pull AWS Pricing Data` workflow requires a `TCO_CALCULATOR_URL` variable in the GitHub `dev` environment. Set it to the deployed Container App HTTPS origin. The workflow sends only reviewed AWS region codes to the public, quota-protected application refresh API and has no direct Cosmos permission or application credential.
+
+To bootstrap the Entra credential while the vault public endpoint remains disabled, put the newly generated credential ID and value temporarily in the ignored `infra/.env` as `APP_SECRET_ID` and `APP_SECRET_VALUE`, then run:
+
+```powershell
+./infra/Set-EntraClientSecret.ps1 -PublishGitHub
+```
+
+The script validates that the credential belongs to `ENTRA_CLIENT_ID`, writes it through the Azure Resource Manager Key Vault secret resource, records only the returned versioned URI, and removes both temporary plaintext fields after Azure confirms the write. It never opens the vault firewall or prints the credential. If a credential is ever exposed in terminal, chat, logs, or source control, revoke it and generate a replacement before running the script.
 
 ## Validate
 

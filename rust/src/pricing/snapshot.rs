@@ -47,6 +47,13 @@ pub struct AwsPriceSnapshot {
     pub ebs_rates: Vec<AwsEbsRateRecord>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AwsServiceContentHashes {
+    pub ec2: String,
+    pub rds: String,
+    pub ebs: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AzurePriceSnapshot {
     pub metadata: SnapshotMetadata,
@@ -341,6 +348,103 @@ pub fn validate_stored_azure_snapshot(
     Ok(rebuilt)
 }
 
+pub(crate) fn aws_service_content_hashes(
+    snapshot: &AwsPriceSnapshot,
+) -> Result<AwsServiceContentHashes, SnapshotError> {
+    Ok(AwsServiceContentHashes {
+        ec2: aws_ec2_content_hash(
+            &snapshot.metadata.currency,
+            &snapshot.source_region,
+            &snapshot.metadata.parser_schema_version,
+            &snapshot.ec2_rates,
+        )?,
+        rds: aws_rds_content_hash(
+            &snapshot.metadata.currency,
+            &snapshot.source_region,
+            &snapshot.metadata.parser_schema_version,
+            &snapshot.rds_rates,
+        )?,
+        ebs: aws_ebs_content_hash(
+            &snapshot.metadata.currency,
+            &snapshot.source_region,
+            &snapshot.metadata.parser_schema_version,
+            &snapshot.ebs_rates,
+        )?,
+    })
+}
+
+pub(crate) fn aws_ec2_content_hash(
+    currency: &str,
+    source_region: &str,
+    parser_schema_version: &str,
+    records: &[AwsEc2RateRecord],
+) -> Result<String, SnapshotError> {
+    hash_canonical(&AwsEc2ServiceCanonicalPayload {
+        scope: aws_service_scope(currency, source_region, parser_schema_version),
+        records: records
+            .iter()
+            .map(|record| AwsEc2CoreRecord {
+                stable_key: &record.stable_key,
+                instance_type: &record.instance_type,
+                rate: &record.rate,
+            })
+            .collect(),
+    })
+}
+
+pub(crate) fn aws_rds_content_hash(
+    currency: &str,
+    source_region: &str,
+    parser_schema_version: &str,
+    records: &[AwsRdsRateRecord],
+) -> Result<String, SnapshotError> {
+    hash_canonical(&AwsRdsServiceCanonicalPayload {
+        scope: aws_service_scope(currency, source_region, parser_schema_version),
+        records: records
+            .iter()
+            .map(|record| AwsRdsCoreRecord {
+                stable_key: &record.stable_key,
+                instance_type: &record.instance_type,
+                deployment: record.deployment,
+                commercial_term: &record.commercial_term,
+                storage_class: &record.storage_class,
+                rate: &record.rate,
+            })
+            .collect(),
+    })
+}
+
+pub(crate) fn aws_ebs_content_hash(
+    currency: &str,
+    source_region: &str,
+    parser_schema_version: &str,
+    records: &[AwsEbsRateRecord],
+) -> Result<String, SnapshotError> {
+    hash_canonical(&AwsEbsServiceCanonicalPayload {
+        scope: aws_service_scope(currency, source_region, parser_schema_version),
+        records: records
+            .iter()
+            .map(|record| AwsEbsCoreRecord {
+                stable_key: &record.stable_key,
+                rate: &record.rate,
+            })
+            .collect(),
+    })
+}
+
+fn aws_service_scope<'a>(
+    currency: &'a str,
+    source_region: &'a str,
+    parser_schema_version: &'a str,
+) -> AwsServiceCanonicalScope<'a> {
+    AwsServiceCanonicalScope {
+        provider: Provider::Aws,
+        currency,
+        source_region,
+        parser_schema_version,
+    }
+}
+
 fn creation_metadata(metadata: SnapshotMetadata) -> SnapshotCreationMetadata {
     SnapshotCreationMetadata {
         status: metadata.status,
@@ -362,6 +466,61 @@ struct AwsCanonicalPayload<'a> {
     ec2_rates: &'a [AwsEc2RateRecord],
     rds_rates: &'a [AwsRdsRateRecord],
     ebs_rates: &'a [AwsEbsRateRecord],
+}
+
+#[derive(Clone, Copy, Serialize)]
+struct AwsServiceCanonicalScope<'a> {
+    provider: Provider,
+    currency: &'a str,
+    source_region: &'a str,
+    parser_schema_version: &'a str,
+}
+
+#[derive(Serialize)]
+struct AwsEc2ServiceCanonicalPayload<'a> {
+    #[serde(flatten)]
+    scope: AwsServiceCanonicalScope<'a>,
+    records: Vec<AwsEc2CoreRecord<'a>>,
+}
+
+#[derive(Serialize)]
+struct AwsEc2CoreRecord<'a> {
+    stable_key: &'a str,
+    instance_type: &'a str,
+    #[serde(flatten)]
+    rate: &'a Ec2Rate,
+}
+
+#[derive(Serialize)]
+struct AwsRdsServiceCanonicalPayload<'a> {
+    #[serde(flatten)]
+    scope: AwsServiceCanonicalScope<'a>,
+    records: Vec<AwsRdsCoreRecord<'a>>,
+}
+
+#[derive(Serialize)]
+struct AwsRdsCoreRecord<'a> {
+    stable_key: &'a str,
+    instance_type: &'a str,
+    deployment: RdsDeployment,
+    commercial_term: &'a str,
+    storage_class: &'a str,
+    #[serde(flatten)]
+    rate: &'a RdsRate,
+}
+
+#[derive(Serialize)]
+struct AwsEbsServiceCanonicalPayload<'a> {
+    #[serde(flatten)]
+    scope: AwsServiceCanonicalScope<'a>,
+    records: Vec<AwsEbsCoreRecord<'a>>,
+}
+
+#[derive(Serialize)]
+struct AwsEbsCoreRecord<'a> {
+    stable_key: &'a str,
+    #[serde(flatten)]
+    rate: &'a EbsRate,
 }
 
 #[derive(Serialize)]
@@ -594,6 +753,26 @@ mod tests {
 
     use super::*;
     use crate::{calculation::cost::Ec2Rate, domain::decimal::DecimalValue};
+
+    #[test]
+    fn aws_service_hashes_change_only_with_that_services_core_data() {
+        let (snapshot, _) = crate::pricing::local_fixture::load().expect("valid local fixture");
+        let original = aws_service_content_hashes(&snapshot).expect("service hashes");
+
+        let mut provenance_only = snapshot.clone();
+        provenance_only.ec2_rates[0].provenance.source_version = Some("new-version".to_owned());
+        assert_eq!(
+            aws_service_content_hashes(&provenance_only).expect("provenance-only hashes"),
+            original
+        );
+
+        let mut changed_ec2 = snapshot;
+        changed_ec2.ec2_rates[0].rate.compute_hourly.0 += Decimal::ONE;
+        let changed = aws_service_content_hashes(&changed_ec2).expect("changed hashes");
+        assert_ne!(changed.ec2, original.ec2);
+        assert_eq!(changed.rds, original.rds);
+        assert_eq!(changed.ebs, original.ebs);
+    }
 
     #[test]
     fn equivalent_content_has_the_same_snapshot_id() {

@@ -20,6 +20,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/privacy-consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["savePrivacyConsent"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/help": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer a question from the reviewed application-help catalog. */
+        post: operations["getAssistantHelp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/catalog/aws/regions": {
         parameters: {
             query?: never;
@@ -315,6 +348,43 @@ export interface components {
             /** @enum {string} */
             mode: "guest" | "authenticated";
             display_name: string | null;
+            /**
+             * Format: email
+             * @description Optional email-like value supplied by the identity provider for contact-form prefill only.
+             */
+            email_address: string | null;
+            privacy_consent: components["schemas"]["PrivacyConsentStatus"];
+        };
+        PrivacyConsentStatus: {
+            notice_version: string;
+            required: boolean;
+            /** Format: date-time */
+            accepted_at: string | null;
+            allow_contact: boolean;
+            /**
+             * Format: email
+             * @description Stored only when Azure SQL contact permission is enabled.
+             */
+            email_address: string | null;
+        };
+        SavePrivacyConsentRequest: {
+            notice_version: string;
+            /** @constant */
+            accepted: true;
+            allow_contact: boolean;
+            /** Format: email */
+            email_address: string | null;
+        };
+        AssistantHelpRequest: {
+            question: string;
+        };
+        AssistantHelpResponse: {
+            answer: string;
+            references: components["schemas"]["AssistantHelpReference"][];
+        };
+        AssistantHelpReference: {
+            control_id: string;
+            label: string;
         };
         Region: {
             code: string;
@@ -720,12 +790,65 @@ export interface operations {
             /** @description Current guest or authenticated principal summary. */
             200: {
                 headers: {
+                    "Cache-Control"?: "no-store";
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Session"];
                 };
             };
+        };
+    };
+    savePrivacyConsent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavePrivacyConsentRequest"];
+            };
+        };
+        responses: {
+            /** @description Current owner-scoped privacy acceptance and contact preference. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyConsentStatus"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getAssistantHelp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantHelpRequest"];
+            };
+        };
+        responses: {
+            /** @description Deterministic application help with matched control references. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantHelpResponse"];
+                };
+            };
+            default: components["responses"]["Problem"];
         };
     };
     listAwsRegions: {

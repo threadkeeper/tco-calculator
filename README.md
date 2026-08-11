@@ -111,4 +111,8 @@ No Azure deployment is performed by local validation. Azure `what-if` also requi
 
 Project settings, workload names, infrastructure details, and commercial assumptions are confidential business data. The service must not log workload names, server identifiers, raw identity headers, credentials, or complete project payloads. Browser, API, provider, identity-header, file, and environment input is untrusted.
 
+Guests can display the app-specific privacy notice without accepting it. After Entra sign-in, the current notice version must be accepted before the rest of the application is available; the separate Azure SQL contact choice is optional and off by default. Acceptance time/version, contact choice, optional Entra display name, and email only when contact is enabled are stored in one fixed-ID document in the server-derived owner partition. There is no application contact-list export endpoint.
+
+The in-app wording is an internal-pilot notice, not a claim of Microsoft-wide approval or a replacement for the Microsoft Privacy Statement. Privacy and Legal must approve the controller identity, final wording, privacy contact, retention terms, and contact-use process before external or production use.
+
 See [THIRD-PARTY-DATA-EGRESS.md](THIRD-PARTY-DATA-EGRESS.md) for external data flows and [research/Azure Specification.md](research/Azure%20Specification.md) for the normative product and security requirements.

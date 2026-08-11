@@ -57,9 +57,7 @@ Before accepting the live HTTP implementation for production, verify:
 - Certificate-validation behavior, proxy behavior, redirect policy, response-size limits, connect/read/overall timeouts, decompression limits, and cancellation behavior.
 - The descriptive product/version `User-Agent`, maximum three-attempt retry policy, `Retry-After` handling, and bounded jitter implementation.
 - Allowed destinations from [THIRD-PARTY-DATA-EGRESS.md](../THIRD-PARTY-DATA-EGRESS.md), rollback plan, and approving owner.
-The implementation uses the Container App system-assigned managed identity and Azure RBAC. It does not accept account keys, connection strings, service-principal secrets, or client-supplied owner IDs. Remaining production behavior includes:
-
-- Store immutable normalized snapshots in `pricing-cache`; saved projects reference snapshot IDs and revisions embed the exact rates used.
+The implementation uses the Container App system-assigned managed identity and Azure RBAC. It does not accept account keys, connection strings, service-principal secrets, or client-supplied owner IDs. AWS provider data is stored as current-state plus content-addressed EC2, RDS, and EBS component documents; superseded components are removed after state publication. Saved revisions embed the exact rates used even though historical provider records are not retained.
 
 Production readiness remains blocked until all of these are evidenced:
 

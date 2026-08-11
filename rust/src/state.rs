@@ -10,6 +10,7 @@ use crate::{
     config::{AppEnvironment, Config, FORMULA_VERSION},
     persistence::{
         cosmos::{CosmosProjectRepository, CosmosSnapshotRepository},
+        privacy_consent::{InMemoryPrivacyConsentRepository, PrivacyConsentRepository},
         project_share::{InMemoryProjectShareRepository, ProjectShareRepository},
         repository::{InMemoryProjectRepository, ProjectRepository, RepositoryError},
     },
@@ -54,6 +55,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub calculations: CalculationEngine,
     pub projects: Arc<dyn ProjectRepository>,
+    pub privacy_consents: Arc<dyn PrivacyConsentRepository>,
     pub project_shares: Arc<dyn ProjectShareRepository>,
     pub persistence_backend: PersistenceBackend,
     pub pricing: PricingCoordinator,
@@ -72,6 +74,8 @@ impl AppState {
         let project_repository =
             CosmosProjectRepository::new(&cosmos.endpoint, &cosmos.application_region).await?;
         let projects: Arc<dyn ProjectRepository> = Arc::new(project_repository.clone());
+        let privacy_consents: Arc<dyn PrivacyConsentRepository> =
+            Arc::new(project_repository.clone());
         let project_shares: Arc<dyn ProjectShareRepository> = Arc::new(project_repository);
         let pricing_cache = Arc::new(
             CosmosSnapshotRepository::new(&cosmos.endpoint, &cosmos.application_region).await?,
@@ -82,6 +86,7 @@ impl AppState {
         Self::with_projects(
             config,
             projects,
+            privacy_consents,
             project_shares,
             Some(snapshots),
             Some(leases),
@@ -94,6 +99,7 @@ impl AppState {
         Self::with_projects(
             config,
             Arc::new(InMemoryProjectRepository::new()),
+            Arc::new(InMemoryPrivacyConsentRepository::new()),
             Arc::new(InMemoryProjectShareRepository::new()),
             None,
             None,
@@ -105,6 +111,7 @@ impl AppState {
     fn with_projects(
         config: Config,
         projects: Arc<dyn ProjectRepository>,
+        privacy_consents: Arc<dyn PrivacyConsentRepository>,
         project_shares: Arc<dyn ProjectShareRepository>,
         durable_snapshots: Option<Arc<dyn DurableSnapshotRepository>>,
         refresh_leases: Option<Arc<dyn RefreshLeaseRepository>>,
@@ -146,6 +153,7 @@ impl AppState {
             config: Arc::new(config),
             calculations,
             projects,
+            privacy_consents,
             project_shares,
             persistence_backend,
             pricing,
