@@ -471,8 +471,8 @@
           >
         </section>
         <aside class="guest-notice">
-          <strong>Guest draft</strong><span
-            >Inputs and the latest result stay in IndexedDB on this device until you clear them.</span
+          <strong>Guest mode</strong><span
+            >To save and manage your projects to the Azure cloud please sign in.</span
           >
         </aside>
         {#if availableGuestWorkspace}
