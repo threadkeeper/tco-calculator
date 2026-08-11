@@ -200,6 +200,14 @@ impl LivePricingLoader {
             rds.records,
             ebs.records,
         )
+        .inspect_err(|error| {
+            tracing::warn!(
+                provider = "aws",
+                component = "snapshot",
+                reason = ?error,
+                "AWS pricing snapshot creation failed"
+            );
+        })
         .map_err(map_snapshot_error)
     }
 
