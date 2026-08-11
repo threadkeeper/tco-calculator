@@ -166,9 +166,13 @@ jobs:
           }
 
           $jobs = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:PREVIEW_RUN_ID/jobs?per_page=100" | ConvertFrom-Json
+          $dependencyStep = $jobs.jobs.steps | Where-Object name -eq 'Build or reuse Rust dependency image' | Select-Object -First 1
           $buildStep = $jobs.jobs.steps | Where-Object name -eq 'Build or reuse immutable image' | Select-Object -First 1
           $previewStep = $jobs.jobs.steps | Where-Object name -eq 'Preview application deployment' | Select-Object -First 1
           $deployStep = $jobs.jobs.steps | Where-Object name -eq 'Deploy application' | Select-Object -First 1
+          if ($null -eq $dependencyStep -or $dependencyStep.conclusion -ne 'success') {
+            throw 'The supplied run did not build or verify the immutable Rust dependency image.'
+          }
           if ($null -eq $buildStep -or $buildStep.conclusion -ne 'success') {
             throw 'The supplied run did not build or verify the immutable application image.'
           }
@@ -248,6 +252,81 @@ jobs:
         run: |
           az bicep build --file infra/main.bicep --stdout | Out-Null
 
+      - name: Build or reuse Rust dependency image
+        if: inputs.operation == 'build-preview'
+        shell: pwsh
+        run: |
+          $dependencyInputs = @(
+            'rust/Dockerfile.dependencies',
+            'rust/Cargo.toml',
+            'rust/Cargo.lock',
+            'rust/rust-toolchain.toml'
+          )
+          $fingerprintLines = @(
+            'schema=tco-rust-dependencies-v1',
+            'platform=linux/amd64',
+            "rustBuildImage=$env:RUST_BUILD_IMAGE"
+          )
+          foreach ($path in $dependencyInputs) {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $path).Hash.ToLowerInvariant()
+            $fingerprintLines += "$path=$hash"
+          }
+          $fingerprintBytes = [Text.Encoding]::UTF8.GetBytes(($fingerprintLines -join "`n"))
+          $fingerprint = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData($fingerprintBytes)
+          ).ToLowerInvariant()
+          $dependencyRepository = 'tco-calculator-build/rust-dependencies'
+          $dependencyImage = "${dependencyRepository}:$fingerprint"
+
+          $existingOutput = @(& az acr manifest show-metadata `
+            --registry $env:AZURE_CONTAINER_REGISTRY_NAME `
+            --name $dependencyImage `
+            --only-show-errors `
+            --output json 2>$null)
+          if ($LASTEXITCODE -eq 0) {
+            $existing = ($existingOutput -join [Environment]::NewLine) | ConvertFrom-Json
+            if ($existing.changeableAttributes.writeEnabled -ne $false -or $existing.changeableAttributes.deleteEnabled -ne $false) {
+              throw 'The existing Rust dependency image is not immutable.'
+            }
+            Write-Host 'Reusing the locked Rust dependency image.'
+          } else {
+            az acr build `
+              --registry $env:AZURE_CONTAINER_REGISTRY_NAME `
+              --image $dependencyImage `
+              --file rust/Dockerfile.dependencies `
+              --platform linux/amd64 `
+              --build-arg "RUST_BUILD_IMAGE=$env:RUST_BUILD_IMAGE" `
+              --only-show-errors `
+              .
+            if ($LASTEXITCODE -ne 0) {
+              throw 'ACR Rust dependency image build failed.'
+            }
+            az acr repository update `
+              --name $env:AZURE_CONTAINER_REGISTRY_NAME `
+              --image $dependencyImage `
+              --write-enabled false `
+              --delete-enabled false `
+              --only-show-errors `
+              --output none
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Could not lock the Rust dependency image.'
+            }
+          }
+
+          $metadata = az acr manifest show-metadata `
+            --registry $env:AZURE_CONTAINER_REGISTRY_NAME `
+            --name $dependencyImage `
+            --only-show-errors `
+            --output json | ConvertFrom-Json
+          if ($metadata.digest -notmatch '^sha256:[0-9a-f]{64}$') {
+            throw 'ACR did not return a sha256 Rust dependency image digest.'
+          }
+          if ($metadata.changeableAttributes.writeEnabled -ne $false -or $metadata.changeableAttributes.deleteEnabled -ne $false) {
+            throw 'The Rust dependency image is not locked against overwrite and deletion.'
+          }
+          $dependencyReference = "$env:AZURE_CONTAINER_REGISTRY/$dependencyRepository@$($metadata.digest)"
+          "RUST_DEPENDENCY_IMAGE=$dependencyReference" >> $env:GITHUB_ENV
+
       - name: Build or reuse immutable image
         if: inputs.operation == 'build-preview'
         shell: pwsh
@@ -266,9 +345,9 @@ jobs:
               --registry $env:AZURE_CONTAINER_REGISTRY_NAME `
               --image $image `
               --file Dockerfile `
-              --platform linux `
+              --platform linux/amd64 `
               --build-arg "WEB_BUILD_IMAGE=$env:WEB_BUILD_IMAGE" `
-              --build-arg "RUST_BUILD_IMAGE=$env:RUST_BUILD_IMAGE" `
+              --build-arg "RUST_DEPENDENCY_IMAGE=$env:RUST_DEPENDENCY_IMAGE" `
               --build-arg "RUNTIME_IMAGE=$env:RUNTIME_IMAGE" `
               --only-show-errors `
               .

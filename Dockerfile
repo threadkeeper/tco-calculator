@@ -1,7 +1,15 @@
 # Supply only reviewed, digest-pinned images. Mutable defaults are intentionally absent.
 ARG WEB_BUILD_IMAGE
-ARG RUST_BUILD_IMAGE
+ARG RUST_DEPENDENCY_IMAGE
 ARG RUNTIME_IMAGE
+
+FROM ${RUST_DEPENDENCY_IMAGE} AS rust-build
+WORKDIR /src
+COPY VERSION ./VERSION
+COPY rust/src ./rust/src
+COPY rust/static ./rust/static
+COPY app/catalogs ./app/catalogs
+RUN cargo build --locked --release --manifest-path rust/Cargo.toml
 
 FROM ${WEB_BUILD_IMAGE} AS web-build
 WORKDIR /src
@@ -20,15 +28,6 @@ RUN npm run api:generate --prefix web \
     && npm run check --prefix web \
     && npm run test --prefix web \
     && npm run build --prefix web
-
-FROM ${RUST_BUILD_IMAGE} AS rust-build
-WORKDIR /src
-COPY VERSION ./VERSION
-COPY rust/Cargo.toml rust/Cargo.lock ./rust/
-COPY rust/src ./rust/src
-COPY rust/static ./rust/static
-COPY app/catalogs ./app/catalogs
-RUN cargo build --locked --release --manifest-path rust/Cargo.toml
 
 FROM ${RUNTIME_IMAGE} AS runtime
 RUN apt-get update \
