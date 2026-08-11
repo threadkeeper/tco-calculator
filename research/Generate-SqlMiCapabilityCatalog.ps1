@@ -8,7 +8,37 @@ $ErrorActionPreference = 'Stop'
 
 $resourceLimitsUrl = 'https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql'
 $regionAvailabilityUrl = 'https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/region-availability?view=azuresql'
-$reviewedDate = '2026-07-31'
+$reviewedDate = '2026-08-11'
+$azureRegions = @(
+    'australiaeast',
+    'australiasoutheast',
+    'brazilsouth',
+    'canadacentral',
+    'canadaeast',
+    'centralindia',
+    'centralus',
+    'eastasia',
+    'eastus',
+    'eastus2',
+    'francecentral',
+    'germanywestcentral',
+    'italynorth',
+    'japaneast',
+    'japanwest',
+    'northcentralus',
+    'northeurope',
+    'polandcentral',
+    'qatarcentral',
+    'southcentralus',
+    'southeastasia',
+    'swedencentral',
+    'switzerlandnorth',
+    'uksouth',
+    'westcentralus',
+    'westeurope',
+    'westus',
+    'westus2'
+)
 $vcores = @(4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 56, 64, 80, 96, 128)
 $memoryOptions = [ordered]@{
     '4' = @('28', '32', '40', '48')
@@ -49,48 +79,52 @@ function Get-BcMaximumStorageGb {
 }
 
 $candidates = [System.Collections.Generic.List[object]]::new()
-foreach ($vcore in $vcores) {
-    $supportedMemory = @($memoryOptions[[string]$vcore])
-    $candidates.Add([ordered]@{
-        configuration_key = "managed-vcore-next-gen-general-purpose-premium-series-$vcore"
-        azure_region = 'swedencentral'
-        service_tier = 'next_generation_general_purpose'
-        hardware_family = 'Premium Series'
-        vcores = $vcore
-        zone_redundant = $false
-        included_memory_gb = $supportedMemory[0]
-        supported_memory_gb = $supportedMemory
-        storage_architecture = 'Remote LRS'
-        maximum_storage_gb = Get-NggpMaximumStorageGb -Vcores $vcore
-        source_url = $resourceLimitsUrl
-        reviewed_date = $reviewedDate
-    })
+foreach ($azureRegion in $azureRegions) {
+    foreach ($vcore in $vcores) {
+        $supportedMemory = @($memoryOptions[[string]$vcore])
+        $candidates.Add([ordered]@{
+            configuration_key = "managed-vcore-next-gen-general-purpose-premium-series-$vcore"
+            azure_region = $azureRegion
+            service_tier = 'next_generation_general_purpose'
+            hardware_family = 'Premium Series'
+            vcores = $vcore
+            zone_redundant = $false
+            included_memory_gb = $supportedMemory[0]
+            supported_memory_gb = $supportedMemory
+            storage_architecture = 'Remote LRS'
+            maximum_storage_gb = Get-NggpMaximumStorageGb -Vcores $vcore
+            source_url = $resourceLimitsUrl
+            reviewed_date = $reviewedDate
+        })
 
-    $includedMemory = $supportedMemory[0]
-    $candidates.Add([ordered]@{
-        configuration_key = "managed-vcore-business-critical-premium-series-$vcore"
-        azure_region = 'swedencentral'
-        service_tier = 'business_critical'
-        hardware_family = 'Premium Series'
-        vcores = $vcore
-        zone_redundant = $false
-        included_memory_gb = $includedMemory
-        supported_memory_gb = @($includedMemory)
-        storage_architecture = 'BC local SSD'
-        maximum_storage_gb = Get-BcMaximumStorageGb -Vcores $vcore
-        source_url = $resourceLimitsUrl
-        reviewed_date = $reviewedDate
-    })
+        $includedMemory = $supportedMemory[0]
+        $candidates.Add([ordered]@{
+            configuration_key = "managed-vcore-business-critical-premium-series-$vcore"
+            azure_region = $azureRegion
+            service_tier = 'business_critical'
+            hardware_family = 'Premium Series'
+            vcores = $vcore
+            zone_redundant = $false
+            included_memory_gb = $includedMemory
+            supported_memory_gb = @($includedMemory)
+            storage_architecture = 'BC local SSD'
+            maximum_storage_gb = Get-BcMaximumStorageGb -Vcores $vcore
+            source_url = $resourceLimitsUrl
+            reviewed_date = $reviewedDate
+        })
+    }
 }
 
 $anchor = $candidates | Where-Object {
+    $_.azure_region -eq 'swedencentral' -and
     $_.configuration_key -eq 'managed-vcore-next-gen-general-purpose-premium-series-32'
 }
 if ($null -eq $anchor -or $anchor.included_memory_gb -ne '224' -or '256' -notin $anchor.supported_memory_gb) {
     throw 'The required Sweden Central 32-vCore, 224/256-GB parity anchor is missing.'
 }
-if ($candidates.Count -ne 32) {
-    throw "Expected 32 reviewed capability records, found $($candidates.Count)."
+$expectedCandidateCount = $azureRegions.Count * $vcores.Count * 2
+if ($candidates.Count -ne $expectedCandidateCount) {
+    throw "Expected $expectedCandidateCount reviewed capability records, found $($candidates.Count)."
 }
 
 $catalog = [ordered]@{
@@ -99,8 +133,9 @@ $catalog = [ordered]@{
     reviewed_date = $reviewedDate
     source_urls = @($resourceLimitsUrl, $regionAvailabilityUrl)
     assumptions = @(
-        'The v1 Azure region selector exposes Sweden Central only.'
-        'Sweden Central is listed for Premium-series hardware with 16-TB storage.'
+        'The catalog includes the 28 public USD regions listed for Premium-series hardware with 16-TB storage and supported by both approved pricing endpoints.'
+        'China North 3 is excluded because the approved global USD Retail Prices and Azure SQL calculator endpoints do not provide a compatible price feed for that sovereign-cloud region.'
+        'East Asia can have temporary Premium-series capacity constraints; catalog inclusion does not promise deployable capacity.'
         'Business Critical flexible memory is excluded because the reviewed source marks it preview.'
         'Storage values convert documented TiB-scale limits to GB using 1 TiB = 1024 GB.'
     )

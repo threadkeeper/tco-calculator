@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     domain::resource::{EbsVolumeType, RdsDeployment},
     pricing::{
+        live::AZURE_REGION_SCOPES,
         provider::ResolutionStatus,
         snapshot::{AwsPriceSnapshot, SnapshotMetadata},
     },
@@ -17,7 +18,6 @@ use crate::{
 };
 
 const REGIONS_INSTANCE: &str = "/api/v1/catalog/aws/regions";
-const AZURE_REGIONS: [(&str, &str); 1] = [("swedencentral", "Sweden Central")];
 const EC2_INSTANCE: &str = "/api/v1/catalog/aws/ec2/instances";
 const RDS_INSTANCE: &str = "/api/v1/catalog/aws/rds/instances";
 const RDS_OPTIONS_INSTANCE: &str = "/api/v1/catalog/aws/rds/options";
@@ -118,11 +118,11 @@ pub async fn azure_regions() -> Json<CatalogResponse<Vec<Region>>> {
         retrieved_at: None,
         source_urls: Vec::new(),
         warnings: Vec::new(),
-        items: AZURE_REGIONS
+        items: AZURE_REGION_SCOPES
             .iter()
-            .map(|(code, label)| Region {
-                code: (*code).to_owned(),
-                label: (*label).to_owned(),
+            .map(|scope| Region {
+                code: scope.arm_name.to_owned(),
+                label: scope.display_name.to_owned(),
             })
             .collect(),
     })
@@ -401,5 +401,27 @@ fn region_label(region: &str) -> &str {
         "eu-west-2" => "EU (London)",
         "eu-west-3" => "EU (Paris)",
         _ => region,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn azure_region_catalog_exposes_every_reviewed_priceable_region() {
+        let Json(catalog) = azure_regions().await;
+        let codes = catalog
+            .items
+            .iter()
+            .map(|region| region.code.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(catalog.status, ResolutionStatus::Fresh);
+        assert_eq!(codes.len(), 28);
+        assert!(codes.contains("australiaeast"));
+        assert!(codes.contains("swedencentral"));
+        assert!(codes.contains("westus2"));
+        assert!(!codes.contains("chinanorth3"));
     }
 }

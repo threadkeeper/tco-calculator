@@ -123,7 +123,7 @@ impl Config {
             .unwrap_or_else(|| PathBuf::from("rust/static"));
         let guest_requests_per_minute = positive_u32("GUEST_REQUESTS_PER_MINUTE", 60)?;
         let provider_refreshes_per_hour =
-            validate_provider_refresh_quota(positive_u32("PROVIDER_REFRESHES_PER_HOUR", 8)?)?;
+            validate_provider_refresh_quota(positive_u32("PROVIDER_REFRESHES_PER_HOUR", 40)?)?;
         let provider_max_response_bytes =
             provider_response_limit(env::var("PROVIDER_MAX_RESPONSE_BYTES").ok().as_deref())?;
         let calculation_concurrency = positive_u32("CALCULATION_CONCURRENCY", 10)? as usize;
