@@ -9,7 +9,7 @@ use thiserror::Error;
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::{
-    provider::ResolutionStatus,
+    provider::{ProviderError, ResolutionStatus},
     snapshot::{AwsPriceSnapshot, AzurePriceSnapshot, SnapshotMetadata},
 };
 
@@ -59,6 +59,37 @@ pub trait DurableSnapshotRepository: Send + Sync {
     ) -> Result<Option<AzurePriceSnapshot>, SnapshotRepositoryError>;
 
     async fn list_latest_aws(&self) -> Result<Vec<AwsPriceSnapshot>, SnapshotRepositoryError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RefreshLeaseDecision {
+    Acquired,
+    Pending,
+    Succeeded(String),
+    Failed(ProviderError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RefreshLeaseOutcome {
+    Succeeded(String),
+    Failed(ProviderError),
+}
+
+#[async_trait]
+pub trait RefreshLeaseRepository: Send + Sync {
+    async fn claim_refresh_lease(
+        &self,
+        cache_key_sha256: &str,
+        owner_token: &str,
+        request_started_at: &str,
+    ) -> Result<RefreshLeaseDecision, SnapshotRepositoryError>;
+
+    async fn publish_refresh_lease(
+        &self,
+        cache_key_sha256: &str,
+        owner_token: &str,
+        outcome: &RefreshLeaseOutcome,
+    ) -> Result<(), SnapshotRepositoryError>;
 }
 
 #[derive(Clone, Default)]

@@ -1,23 +1,31 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Write, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::{Mutex, Notify};
+use uuid::Uuid;
 
 use crate::calculation::target_selector::CapabilityCatalog;
 
 use super::{
     live::PARSER_SCHEMA_VERSION,
     loader::LivePricingLoader,
-    provider::{Provider, ProviderError},
-    repository::{DurableSnapshotRepository, InMemorySnapshotRepository, SnapshotRepositoryError},
-    snapshot::{AwsPriceSnapshot, AzurePriceSnapshot},
+    provider::{Provider, ProviderError, ResolutionStatus},
+    repository::{
+        DurableSnapshotRepository, InMemorySnapshotRepository, RefreshLeaseDecision,
+        RefreshLeaseOutcome, RefreshLeaseRepository, SnapshotRepositoryError,
+    },
+    snapshot::{AwsPriceSnapshot, AzurePriceSnapshot, utc_now_rfc3339},
 };
 
 const AWS_SERVICE: &str = "Amazon EC2, RDS, and EBS";
 const AWS_FILTER: &str = "current SQL Server compute and reviewed storage meters";
 const AZURE_SERVICE: &str = "Azure SQL Managed Instance";
 const AZURE_FILTER: &str = "reviewed SQL MI capability configurations and eight purchase options";
+const DISTRIBUTED_WAIT_BUDGET: Duration = Duration::from_secs(120);
+const INITIAL_LEASE_BACKOFF: Duration = Duration::from_millis(250);
+const MAX_LEASE_BACKOFF: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Error)]
 pub enum PricingCoordinatorError {
@@ -67,6 +75,7 @@ impl SnapshotLoader for LivePricingLoader {
 pub struct PricingCoordinator {
     repository: InMemorySnapshotRepository,
     durable: Option<Arc<dyn DurableSnapshotRepository>>,
+    leases: Option<Arc<dyn RefreshLeaseRepository>>,
     loader: Option<Arc<dyn SnapshotLoader>>,
     capabilities: Arc<CapabilityCatalog>,
     aws_flights: Arc<Mutex<HashMap<RefreshKey, Arc<Flight<AwsPriceSnapshot>>>>>,
@@ -77,12 +86,14 @@ impl PricingCoordinator {
     pub fn new(
         repository: InMemorySnapshotRepository,
         durable: Option<Arc<dyn DurableSnapshotRepository>>,
+        leases: Option<Arc<dyn RefreshLeaseRepository>>,
         loader: Option<LivePricingLoader>,
         capabilities: Arc<CapabilityCatalog>,
     ) -> Self {
         Self::with_loader(
             repository,
             durable,
+            leases,
             loader.map(|loader| Arc::new(loader) as Arc<dyn SnapshotLoader>),
             capabilities,
         )
@@ -91,12 +102,14 @@ impl PricingCoordinator {
     fn with_loader(
         repository: InMemorySnapshotRepository,
         durable: Option<Arc<dyn DurableSnapshotRepository>>,
+        leases: Option<Arc<dyn RefreshLeaseRepository>>,
         loader: Option<Arc<dyn SnapshotLoader>>,
         capabilities: Arc<CapabilityCatalog>,
     ) -> Self {
         Self {
             repository,
             durable,
+            leases,
             loader,
             capabilities,
             aws_flights: Arc::new(Mutex::new(HashMap::new())),
@@ -204,7 +217,12 @@ impl PricingCoordinator {
             AWS_FILTER,
         );
         let flight = self
-            .start_aws_flight(key, Arc::clone(loader), source_region.to_owned())
+            .start_aws_flight(
+                key,
+                Arc::clone(loader),
+                currency.to_owned(),
+                source_region.to_owned(),
+            )
             .await;
         match flight.wait().await {
             Ok(snapshot) => Ok(SnapshotResolution {
@@ -216,7 +234,10 @@ impl PricingCoordinator {
                 Ok(provider_fallback(snapshot, Provider::Aws, error))
             }
             Err(RefreshFailure::Repository) => {
-                let snapshot = self.repository.find_aws(currency, source_region)?;
+                let snapshot = match self.find_aws_snapshot(currency, source_region).await {
+                    Ok(snapshot) => snapshot,
+                    Err(_) => self.repository.find_aws(currency, source_region)?,
+                };
                 Ok(repository_fallback(snapshot, Provider::Aws))
             }
         }
@@ -241,7 +262,12 @@ impl PricingCoordinator {
             AZURE_FILTER,
         );
         let flight = self
-            .start_azure_flight(key, Arc::clone(loader), target_region.to_owned())
+            .start_azure_flight(
+                key,
+                Arc::clone(loader),
+                currency.to_owned(),
+                target_region.to_owned(),
+            )
             .await;
         match flight.wait().await {
             Ok(snapshot) => Ok(SnapshotResolution {
@@ -253,7 +279,10 @@ impl PricingCoordinator {
                 Ok(provider_fallback(snapshot, Provider::Azure, error))
             }
             Err(RefreshFailure::Repository) => {
-                let snapshot = self.repository.find_azure(currency, target_region)?;
+                let snapshot = match self.find_azure_snapshot(currency, target_region).await {
+                    Ok(snapshot) => snapshot,
+                    Err(_) => self.repository.find_azure(currency, target_region)?,
+                };
                 Ok(repository_fallback(snapshot, Provider::Azure))
             }
         }
@@ -323,6 +352,7 @@ impl PricingCoordinator {
         &self,
         key: RefreshKey,
         loader: Arc<dyn SnapshotLoader>,
+        currency: String,
         source_region: String,
     ) -> Arc<Flight<AwsPriceSnapshot>> {
         let mut flights = self.aws_flights.lock().await;
@@ -335,18 +365,23 @@ impl PricingCoordinator {
 
         let repository = self.repository.clone();
         let durable = self.durable.clone();
+        let leases = self.leases.clone();
         let flights = Arc::clone(&self.aws_flights);
         let task_flight = Arc::clone(&flight);
+        let cache_key_sha256 = key.sha256();
         tokio::spawn(async move {
-            let result = match loader.load_aws_snapshot(&source_region).await {
-                Ok(snapshot) => {
-                    match persist_aws(&repository, durable.as_deref(), snapshot).await {
-                        Ok(snapshot) => Ok(snapshot),
-                        Err(_) => Err(RefreshFailure::Repository),
-                    }
-                }
-                Err(error) => Err(RefreshFailure::Provider(error)),
-            };
+            let result = refresh_aws_task(
+                RefreshTaskContext {
+                    repository: &repository,
+                    durable: durable.as_deref(),
+                    leases: leases.as_deref(),
+                    loader: loader.as_ref(),
+                    cache_key_sha256: &cache_key_sha256,
+                },
+                &currency,
+                &source_region,
+            )
+            .await;
             task_flight.complete(result).await;
             flights.lock().await.remove(&key);
         });
@@ -357,6 +392,7 @@ impl PricingCoordinator {
         &self,
         key: RefreshKey,
         loader: Arc<dyn SnapshotLoader>,
+        currency: String,
         target_region: String,
     ) -> Arc<Flight<AzurePriceSnapshot>> {
         let mut flights = self.azure_flights.lock().await;
@@ -369,26 +405,332 @@ impl PricingCoordinator {
 
         let repository = self.repository.clone();
         let durable = self.durable.clone();
+        let leases = self.leases.clone();
         let capabilities = Arc::clone(&self.capabilities);
         let flights = Arc::clone(&self.azure_flights);
         let task_flight = Arc::clone(&flight);
+        let cache_key_sha256 = key.sha256();
         tokio::spawn(async move {
-            let result = match loader
-                .load_azure_snapshot(&target_region, &capabilities)
-                .await
-            {
-                Ok(snapshot) => {
-                    match persist_azure(&repository, durable.as_deref(), snapshot).await {
-                        Ok(snapshot) => Ok(snapshot),
-                        Err(_) => Err(RefreshFailure::Repository),
-                    }
-                }
-                Err(error) => Err(RefreshFailure::Provider(error)),
-            };
+            let result = refresh_azure_task(
+                RefreshTaskContext {
+                    repository: &repository,
+                    durable: durable.as_deref(),
+                    leases: leases.as_deref(),
+                    loader: loader.as_ref(),
+                    cache_key_sha256: &cache_key_sha256,
+                },
+                &capabilities,
+                &currency,
+                &target_region,
+            )
+            .await;
             task_flight.complete(result).await;
             flights.lock().await.remove(&key);
         });
         flight
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RefreshTaskContext<'a> {
+    repository: &'a InMemorySnapshotRepository,
+    durable: Option<&'a dyn DurableSnapshotRepository>,
+    leases: Option<&'a dyn RefreshLeaseRepository>,
+    loader: &'a dyn SnapshotLoader,
+    cache_key_sha256: &'a str,
+}
+
+#[derive(Clone, Copy)]
+struct DistributedRefreshContext<'a> {
+    repository: &'a InMemorySnapshotRepository,
+    durable: &'a dyn DurableSnapshotRepository,
+    leases: &'a dyn RefreshLeaseRepository,
+    loader: &'a dyn SnapshotLoader,
+    cache_key_sha256: &'a str,
+}
+
+impl<'a> RefreshTaskContext<'a> {
+    fn distributed(self) -> Option<DistributedRefreshContext<'a>> {
+        Some(DistributedRefreshContext {
+            repository: self.repository,
+            durable: self.durable?,
+            leases: self.leases?,
+            loader: self.loader,
+            cache_key_sha256: self.cache_key_sha256,
+        })
+    }
+}
+
+async fn refresh_aws_task(
+    context: RefreshTaskContext<'_>,
+    currency: &str,
+    source_region: &str,
+) -> Result<Arc<AwsPriceSnapshot>, RefreshFailure> {
+    let deadline = tokio::time::Instant::now() + DISTRIBUTED_WAIT_BUDGET;
+    let Some(distributed) = context.distributed() else {
+        let snapshot = load_aws_before(context.loader, source_region, deadline)
+            .await
+            .map_err(RefreshFailure::Provider)?;
+        return persist_aws(context.repository, context.durable, snapshot)
+            .await
+            .map_err(|_| RefreshFailure::Repository);
+    };
+    let request_started_at = utc_now_rfc3339().map_err(|_| RefreshFailure::Repository)?;
+    let owner_token = Uuid::new_v4().to_string();
+    let mut backoff = INITIAL_LEASE_BACKOFF;
+    loop {
+        let decision =
+            claim_before_deadline(distributed, &owner_token, &request_started_at, deadline).await?;
+        match decision {
+            RefreshLeaseDecision::Acquired => {
+                return owner_refresh_aws(distributed, &owner_token, source_region, deadline).await;
+            }
+            RefreshLeaseDecision::Succeeded(snapshot_id) => {
+                let snapshot =
+                    tokio::time::timeout_at(deadline, distributed.durable.get_aws(&snapshot_id))
+                        .await
+                        .map_err(|_| refresh_timeout())?
+                        .map_err(|_| RefreshFailure::Repository)?
+                        .filter(|snapshot| snapshot.matches_scope(currency, source_region))
+                        .ok_or(RefreshFailure::Repository)?;
+                return cache_waiter_aws(distributed.repository, snapshot);
+            }
+            RefreshLeaseDecision::Failed(error) => {
+                return Err(RefreshFailure::Provider(error));
+            }
+            RefreshLeaseDecision::Pending => wait_for_lease(&mut backoff, deadline).await?,
+        }
+    }
+}
+
+async fn owner_refresh_aws(
+    context: DistributedRefreshContext<'_>,
+    owner_token: &str,
+    source_region: &str,
+    deadline: tokio::time::Instant,
+) -> Result<Arc<AwsPriceSnapshot>, RefreshFailure> {
+    match load_aws_before(context.loader, source_region, deadline).await {
+        Ok(snapshot) => {
+            context
+                .durable
+                .put_aws(&snapshot)
+                .await
+                .map_err(|_| RefreshFailure::Repository)?;
+            context
+                .leases
+                .publish_refresh_lease(
+                    context.cache_key_sha256,
+                    owner_token,
+                    &RefreshLeaseOutcome::Succeeded(snapshot.metadata.snapshot_id.clone()),
+                )
+                .await
+                .map_err(|_| RefreshFailure::Repository)?;
+            context
+                .repository
+                .put_aws(snapshot.clone())
+                .map_err(|_| RefreshFailure::Repository)?;
+            Ok(Arc::new(snapshot))
+        }
+        Err(error) => {
+            context
+                .leases
+                .publish_refresh_lease(
+                    context.cache_key_sha256,
+                    owner_token,
+                    &RefreshLeaseOutcome::Failed(error),
+                )
+                .await
+                .map_err(|_| RefreshFailure::Repository)?;
+            Err(RefreshFailure::Provider(error))
+        }
+    }
+}
+
+async fn refresh_azure_task(
+    context: RefreshTaskContext<'_>,
+    capabilities: &CapabilityCatalog,
+    currency: &str,
+    target_region: &str,
+) -> Result<Arc<AzurePriceSnapshot>, RefreshFailure> {
+    let deadline = tokio::time::Instant::now() + DISTRIBUTED_WAIT_BUDGET;
+    let Some(distributed) = context.distributed() else {
+        let snapshot = load_azure_before(context.loader, target_region, capabilities, deadline)
+            .await
+            .map_err(RefreshFailure::Provider)?;
+        return persist_azure(context.repository, context.durable, snapshot)
+            .await
+            .map_err(|_| RefreshFailure::Repository);
+    };
+    let request_started_at = utc_now_rfc3339().map_err(|_| RefreshFailure::Repository)?;
+    let owner_token = Uuid::new_v4().to_string();
+    let mut backoff = INITIAL_LEASE_BACKOFF;
+    loop {
+        let decision =
+            claim_before_deadline(distributed, &owner_token, &request_started_at, deadline).await?;
+        match decision {
+            RefreshLeaseDecision::Acquired => {
+                return owner_refresh_azure(
+                    distributed,
+                    capabilities,
+                    &owner_token,
+                    target_region,
+                    deadline,
+                )
+                .await;
+            }
+            RefreshLeaseDecision::Succeeded(snapshot_id) => {
+                let snapshot =
+                    tokio::time::timeout_at(deadline, distributed.durable.get_azure(&snapshot_id))
+                        .await
+                        .map_err(|_| refresh_timeout())?
+                        .map_err(|_| RefreshFailure::Repository)?
+                        .filter(|snapshot| snapshot.matches_scope(currency, target_region))
+                        .ok_or(RefreshFailure::Repository)?;
+                return cache_waiter_azure(distributed.repository, snapshot);
+            }
+            RefreshLeaseDecision::Failed(error) => {
+                return Err(RefreshFailure::Provider(error));
+            }
+            RefreshLeaseDecision::Pending => wait_for_lease(&mut backoff, deadline).await?,
+        }
+    }
+}
+
+async fn owner_refresh_azure(
+    context: DistributedRefreshContext<'_>,
+    capabilities: &CapabilityCatalog,
+    owner_token: &str,
+    target_region: &str,
+    deadline: tokio::time::Instant,
+) -> Result<Arc<AzurePriceSnapshot>, RefreshFailure> {
+    match load_azure_before(context.loader, target_region, capabilities, deadline).await {
+        Ok(snapshot) => {
+            context
+                .durable
+                .put_azure(&snapshot)
+                .await
+                .map_err(|_| RefreshFailure::Repository)?;
+            context
+                .leases
+                .publish_refresh_lease(
+                    context.cache_key_sha256,
+                    owner_token,
+                    &RefreshLeaseOutcome::Succeeded(snapshot.metadata.snapshot_id.clone()),
+                )
+                .await
+                .map_err(|_| RefreshFailure::Repository)?;
+            context
+                .repository
+                .put_azure(snapshot.clone())
+                .map_err(|_| RefreshFailure::Repository)?;
+            Ok(Arc::new(snapshot))
+        }
+        Err(error) => {
+            context
+                .leases
+                .publish_refresh_lease(
+                    context.cache_key_sha256,
+                    owner_token,
+                    &RefreshLeaseOutcome::Failed(error),
+                )
+                .await
+                .map_err(|_| RefreshFailure::Repository)?;
+            Err(RefreshFailure::Provider(error))
+        }
+    }
+}
+
+async fn claim_before_deadline(
+    context: DistributedRefreshContext<'_>,
+    owner_token: &str,
+    request_started_at: &str,
+    deadline: tokio::time::Instant,
+) -> Result<RefreshLeaseDecision, RefreshFailure> {
+    tokio::time::timeout_at(
+        deadline,
+        context.leases.claim_refresh_lease(
+            context.cache_key_sha256,
+            owner_token,
+            request_started_at,
+        ),
+    )
+    .await
+    .map_err(|_| refresh_timeout())?
+    .map_err(|_| RefreshFailure::Repository)
+}
+
+async fn load_aws_before(
+    loader: &dyn SnapshotLoader,
+    source_region: &str,
+    deadline: tokio::time::Instant,
+) -> Result<AwsPriceSnapshot, ProviderError> {
+    tokio::time::timeout_at(deadline, loader.load_aws_snapshot(source_region))
+        .await
+        .unwrap_or(Err(ProviderError::TemporarilyUnavailable))
+}
+
+async fn load_azure_before(
+    loader: &dyn SnapshotLoader,
+    target_region: &str,
+    capabilities: &CapabilityCatalog,
+    deadline: tokio::time::Instant,
+) -> Result<AzurePriceSnapshot, ProviderError> {
+    tokio::time::timeout_at(
+        deadline,
+        loader.load_azure_snapshot(target_region, capabilities),
+    )
+    .await
+    .unwrap_or(Err(ProviderError::TemporarilyUnavailable))
+}
+
+fn refresh_timeout() -> RefreshFailure {
+    RefreshFailure::Provider(ProviderError::TemporarilyUnavailable)
+}
+
+fn cache_waiter_aws(
+    repository: &InMemorySnapshotRepository,
+    mut snapshot: AwsPriceSnapshot,
+) -> Result<Arc<AwsPriceSnapshot>, RefreshFailure> {
+    let snapshot_id = snapshot.metadata.snapshot_id.clone();
+    snapshot.metadata.status = ResolutionStatus::Cached;
+    repository
+        .put_aws(snapshot)
+        .map_err(|_| RefreshFailure::Repository)?;
+    repository
+        .get_aws(&snapshot_id)
+        .map_err(|_| RefreshFailure::Repository)?
+        .ok_or(RefreshFailure::Repository)
+}
+
+fn cache_waiter_azure(
+    repository: &InMemorySnapshotRepository,
+    mut snapshot: AzurePriceSnapshot,
+) -> Result<Arc<AzurePriceSnapshot>, RefreshFailure> {
+    let snapshot_id = snapshot.metadata.snapshot_id.clone();
+    snapshot.metadata.status = ResolutionStatus::Cached;
+    repository
+        .put_azure(snapshot)
+        .map_err(|_| RefreshFailure::Repository)?;
+    repository
+        .get_azure(&snapshot_id)
+        .map_err(|_| RefreshFailure::Repository)?
+        .ok_or(RefreshFailure::Repository)
+}
+
+async fn wait_for_lease(
+    backoff: &mut Duration,
+    deadline: tokio::time::Instant,
+) -> Result<(), RefreshFailure> {
+    let now = tokio::time::Instant::now();
+    if now >= deadline {
+        return Err(refresh_timeout());
+    }
+    tokio::time::sleep((*backoff).min(deadline - now)).await;
+    *backoff = backoff.saturating_mul(2).min(MAX_LEASE_BACKOFF);
+    if tokio::time::Instant::now() >= deadline {
+        Err(refresh_timeout())
+    } else {
+        Ok(())
     }
 }
 
@@ -445,6 +787,39 @@ impl RefreshKey {
             normalized_filter,
             parser_schema_version: PARSER_SCHEMA_VERSION,
         }
+    }
+
+    fn sha256(&self) -> String {
+        let mut hasher = Sha256::new();
+        hash_component(
+            &mut hasher,
+            Some(match self.provider {
+                Provider::Aws => "aws",
+                Provider::Azure => "azure",
+            }),
+        );
+        hash_component(&mut hasher, Some(&self.currency));
+        hash_component(&mut hasher, self.source_region.as_deref());
+        hash_component(&mut hasher, Some(&self.target_region));
+        hash_component(&mut hasher, Some(self.service));
+        hash_component(&mut hasher, Some(self.normalized_filter));
+        hash_component(&mut hasher, Some(self.parser_schema_version));
+        let mut encoded = String::with_capacity(64);
+        for byte in hasher.finalize() {
+            write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
+        }
+        encoded
+    }
+}
+
+fn hash_component(hasher: &mut Sha256, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hasher.update([1]);
+            hasher.update((value.len() as u64).to_be_bytes());
+            hasher.update(value.as_bytes());
+        }
+        None => hasher.update([0]),
     }
 }
 
@@ -567,7 +942,10 @@ fn provider_error_code(error: ProviderError) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::{
+        collections::VecDeque,
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
 
     use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
     use tokio::sync::Semaphore;
@@ -602,6 +980,55 @@ mod tests {
         fail_writes: AtomicBool,
         reads: AtomicUsize,
         aws_writes: AtomicUsize,
+    }
+
+    struct TestLeaseRepository {
+        decisions: Mutex<VecDeque<RefreshLeaseDecision>>,
+        fail_claims: AtomicBool,
+        claims: AtomicUsize,
+        published: Mutex<Vec<RefreshLeaseOutcome>>,
+    }
+
+    impl TestLeaseRepository {
+        fn new(decisions: impl IntoIterator<Item = RefreshLeaseDecision>) -> Arc<Self> {
+            Arc::new(Self {
+                decisions: Mutex::new(decisions.into_iter().collect()),
+                fail_claims: AtomicBool::new(false),
+                claims: AtomicUsize::new(0),
+                published: Mutex::new(Vec::new()),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl RefreshLeaseRepository for TestLeaseRepository {
+        async fn claim_refresh_lease(
+            &self,
+            _cache_key_sha256: &str,
+            _owner_token: &str,
+            _request_started_at: &str,
+        ) -> Result<RefreshLeaseDecision, SnapshotRepositoryError> {
+            self.claims.fetch_add(1, Ordering::SeqCst);
+            if self.fail_claims.load(Ordering::SeqCst) {
+                return Err(SnapshotRepositoryError::Unavailable);
+            }
+            Ok(self
+                .decisions
+                .lock()
+                .await
+                .pop_front()
+                .unwrap_or(RefreshLeaseDecision::Pending))
+        }
+
+        async fn publish_refresh_lease(
+            &self,
+            _cache_key_sha256: &str,
+            _owner_token: &str,
+            outcome: &RefreshLeaseOutcome,
+        ) -> Result<(), SnapshotRepositoryError> {
+            self.published.lock().await.push(outcome.clone());
+            Ok(())
+        }
     }
 
     #[async_trait]
@@ -1116,6 +1543,181 @@ mod tests {
         assert_eq!(durable.reads.load(Ordering::SeqCst), 1);
     }
 
+    #[tokio::test]
+    async fn distributed_lease_owner_refreshes_persists_and_publishes() {
+        let repository = InMemorySnapshotRepository::new();
+        let durable = Arc::new(TestDurableRepository::default());
+        let leases = TestLeaseRepository::new([RefreshLeaseDecision::Acquired]);
+        let loader = TestLoader::new(TestBehavior::Success, TestBehavior::Success);
+        let coordinator = coordinator_with_lease(
+            repository,
+            Arc::clone(&loader),
+            Arc::clone(&durable),
+            Arc::clone(&leases),
+        );
+
+        let snapshot = coordinator
+            .refresh_aws("USD", "eu-west-1", "swedencentral")
+            .await
+            .expect("lease owner refresh")
+            .snapshot
+            .expect("fresh snapshot");
+
+        assert_eq!(snapshot.metadata.status, ResolutionStatus::Fresh);
+        assert_eq!(loader.aws_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(durable.aws_writes.load(Ordering::SeqCst), 1);
+        assert_eq!(leases.claims.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *leases.published.lock().await,
+            vec![RefreshLeaseOutcome::Succeeded(
+                snapshot.metadata.snapshot_id.clone()
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn distributed_lease_waiter_hydrates_without_provider_call() {
+        let durable = Arc::new(TestDurableRepository::default());
+        let snapshot = aws_snapshot(
+            "eu-west-1",
+            &utc_now_rfc3339().expect("current timestamp"),
+            "lease-waiter-test-v1",
+        );
+        let snapshot_id = snapshot.metadata.snapshot_id.clone();
+        durable.seed_aws(snapshot).await;
+        let leases = TestLeaseRepository::new([RefreshLeaseDecision::Succeeded(snapshot_id)]);
+        let loader = TestLoader::new(TestBehavior::Success, TestBehavior::Success);
+        let coordinator = coordinator_with_lease(
+            InMemorySnapshotRepository::new(),
+            Arc::clone(&loader),
+            Arc::clone(&durable),
+            leases,
+        );
+
+        let resolution = coordinator
+            .refresh_aws("USD", "eu-west-1", "swedencentral")
+            .await
+            .expect("lease waiter resolution");
+
+        assert_eq!(
+            resolution
+                .snapshot
+                .expect("waiter snapshot")
+                .metadata
+                .status,
+            ResolutionStatus::Cached
+        );
+        assert_eq!(loader.aws_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(durable.reads.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn distributed_lease_owner_publishes_provider_failure() {
+        let durable = Arc::new(TestDurableRepository::default());
+        let leases = TestLeaseRepository::new([RefreshLeaseDecision::Acquired]);
+        let loader = TestLoader::new(
+            TestBehavior::Failure(ProviderError::SchemaChanged),
+            TestBehavior::Success,
+        );
+        let coordinator = coordinator_with_lease(
+            InMemorySnapshotRepository::new(),
+            loader,
+            durable,
+            Arc::clone(&leases),
+        );
+
+        let resolution = coordinator
+            .refresh_aws("USD", "eu-west-1", "swedencentral")
+            .await
+            .expect("provider failure resolution");
+
+        assert!(resolution.snapshot.is_none());
+        assert!(resolution.warnings[0].contains("provider_schema_changed"));
+        assert_eq!(
+            *leases.published.lock().await,
+            vec![RefreshLeaseOutcome::Failed(ProviderError::SchemaChanged)]
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_work_is_cancelled_at_the_shared_deadline() {
+        let (loader, _gate) = TestLoader::gated();
+
+        let result = load_aws_before(
+            loader.as_ref(),
+            "eu-west-1",
+            tokio::time::Instant::now() + std::time::Duration::from_millis(10),
+        )
+        .await;
+
+        assert_eq!(result, Err(ProviderError::TemporarilyUnavailable));
+    }
+
+    #[tokio::test]
+    async fn distributed_lease_failure_preserves_stale_fallback() {
+        let repository = InMemorySnapshotRepository::new();
+        repository
+            .put_aws(aws_snapshot(
+                "eu-west-1",
+                &timestamp(Duration::days(2)),
+                "lease-fallback-test-v1",
+            ))
+            .expect("store stale fallback");
+        let durable = Arc::new(TestDurableRepository::default());
+        let leases = TestLeaseRepository::new([]);
+        leases.fail_claims.store(true, Ordering::SeqCst);
+        let loader = TestLoader::new(TestBehavior::Success, TestBehavior::Success);
+        let coordinator = coordinator_with_lease(
+            repository,
+            Arc::clone(&loader),
+            durable,
+            Arc::clone(&leases),
+        );
+
+        let resolution = coordinator
+            .refresh_aws("USD", "eu-west-1", "swedencentral")
+            .await
+            .expect("stale fallback after lease failure");
+
+        assert_eq!(
+            resolution.snapshot.expect("stale snapshot").metadata.status,
+            ResolutionStatus::Stale
+        );
+        assert!(resolution.warnings[0].contains("durable AWS price cache"));
+        assert_eq!(loader.aws_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(leases.claims.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn refresh_cache_key_hash_is_canonical_and_scope_complete() {
+        let first = RefreshKey::new(
+            Provider::Aws,
+            "USD",
+            Some("eu-west-1"),
+            "swedencentral",
+            AWS_SERVICE,
+            AWS_FILTER,
+        );
+        let same = first.clone();
+        let other_target = RefreshKey::new(
+            Provider::Aws,
+            "USD",
+            Some("eu-west-1"),
+            "uksouth",
+            AWS_SERVICE,
+            AWS_FILTER,
+        );
+
+        assert_eq!(first.sha256(), same.sha256());
+        assert_ne!(first.sha256(), other_target.sha256());
+        assert!(
+            first
+                .sha256()
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        );
+    }
+
     fn coordinator(
         repository: InMemorySnapshotRepository,
         loader: Arc<TestLoader>,
@@ -1131,6 +1733,24 @@ mod tests {
         coordinator_with_dependencies(repository, Some(durable), Some(loader))
     }
 
+    fn coordinator_with_lease(
+        repository: InMemorySnapshotRepository,
+        loader: Arc<TestLoader>,
+        durable: Arc<TestDurableRepository>,
+        leases: Arc<TestLeaseRepository>,
+    ) -> PricingCoordinator {
+        let durable: Arc<dyn DurableSnapshotRepository> = durable;
+        let leases: Arc<dyn RefreshLeaseRepository> = leases;
+        let loader: Arc<dyn SnapshotLoader> = loader;
+        PricingCoordinator::with_loader(
+            repository,
+            Some(durable),
+            Some(leases),
+            Some(loader),
+            capabilities(),
+        )
+    }
+
     fn coordinator_with_dependencies(
         repository: InMemorySnapshotRepository,
         durable: Option<Arc<TestDurableRepository>>,
@@ -1138,7 +1758,7 @@ mod tests {
     ) -> PricingCoordinator {
         let durable = durable.map(|durable| durable as Arc<dyn DurableSnapshotRepository>);
         let loader = loader.map(|loader| loader as Arc<dyn SnapshotLoader>);
-        PricingCoordinator::with_loader(repository, durable, loader, capabilities())
+        PricingCoordinator::with_loader(repository, durable, None, loader, capabilities())
     }
 
     fn capabilities() -> Arc<CapabilityCatalog> {

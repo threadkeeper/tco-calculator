@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
+use uuid::Uuid;
 
 use crate::pricing::{
-    provider::Provider,
+    provider::{Provider, ProviderError},
+    repository::{RefreshLeaseDecision, RefreshLeaseOutcome},
     snapshot::{
         AwsPriceSnapshot, AzurePriceSnapshot, SnapshotError, validate_stored_aws_snapshot,
         validate_stored_azure_snapshot,
@@ -13,6 +16,9 @@ pub(crate) const PRICING_CACHE_CONTAINER_ID: &str = "pricing-cache";
 pub(crate) const PRICING_CACHE_PARTITION: &str = "pricing";
 pub(crate) const AWS_SNAPSHOT_DOCUMENT_TYPE: &str = "aws_price_snapshot";
 pub(crate) const AZURE_SNAPSHOT_DOCUMENT_TYPE: &str = "azure_price_snapshot";
+pub(crate) const REFRESH_LEASE_DOCUMENT_TYPE: &str = "pricing_refresh_lease";
+pub(crate) const REFRESH_LEASE_TTL_SECONDS: i32 = 150;
+const REFRESH_LEASE_ID_PREFIX: &str = "refresh-lease-";
 
 #[derive(Debug, Error)]
 pub(crate) enum PricingCacheDocumentError {
@@ -106,6 +112,208 @@ impl AzureSnapshotDocument {
     }
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct RefreshLeaseDocument {
+    pub id: String,
+    pub document_type: String,
+    pub cache_partition: String,
+    pub cache_key_sha256: String,
+    pub owner_token: String,
+    pub leased_at: String,
+    pub expires_at: String,
+    pub completed_at: Option<String>,
+    pub status: RefreshLeaseStatus,
+    pub ttl: i32,
+}
+
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub(crate) enum RefreshLeaseStatus {
+    InProgress,
+    Succeeded { snapshot_id: String },
+    Failed { error: ProviderError },
+}
+
+impl RefreshLeaseDocument {
+    pub fn new(
+        cache_key_sha256: &str,
+        owner_token: &str,
+        now: OffsetDateTime,
+    ) -> Result<Self, PricingCacheDocumentError> {
+        let expires_at = now + Duration::seconds(i64::from(REFRESH_LEASE_TTL_SECONDS));
+        let document = Self {
+            id: format!("{REFRESH_LEASE_ID_PREFIX}{cache_key_sha256}"),
+            document_type: REFRESH_LEASE_DOCUMENT_TYPE.to_owned(),
+            cache_partition: PRICING_CACHE_PARTITION.to_owned(),
+            cache_key_sha256: cache_key_sha256.to_owned(),
+            owner_token: owner_token.to_owned(),
+            leased_at: format_timestamp(now)?,
+            expires_at: format_timestamp(expires_at)?,
+            completed_at: None,
+            status: RefreshLeaseStatus::InProgress,
+            ttl: REFRESH_LEASE_TTL_SECONDS,
+        };
+        document.validate()?;
+        Ok(document)
+    }
+
+    pub fn validate(&self) -> Result<(), PricingCacheDocumentError> {
+        let leased_at = parse_timestamp(&self.leased_at)?;
+        let expires_at = parse_timestamp(&self.expires_at)?;
+        let valid_owner = Uuid::parse_str(&self.owner_token)
+            .ok()
+            .is_some_and(|owner| owner.to_string() == self.owner_token);
+        if !valid_hash(&self.cache_key_sha256)
+            || self.id != format!("{REFRESH_LEASE_ID_PREFIX}{}", self.cache_key_sha256)
+            || self.document_type != REFRESH_LEASE_DOCUMENT_TYPE
+            || self.cache_partition != PRICING_CACHE_PARTITION
+            || !valid_owner
+            || expires_at - leased_at != Duration::seconds(i64::from(REFRESH_LEASE_TTL_SECONDS))
+            || self.ttl != REFRESH_LEASE_TTL_SECONDS
+        {
+            return Err(PricingCacheDocumentError::EnvelopeMismatch);
+        }
+        match (&self.status, &self.completed_at) {
+            (RefreshLeaseStatus::InProgress, None) => Ok(()),
+            (RefreshLeaseStatus::Succeeded { snapshot_id }, Some(completed_at))
+                if valid_snapshot_id(snapshot_id)
+                    && (leased_at..=expires_at).contains(&parse_timestamp(completed_at)?) =>
+            {
+                Ok(())
+            }
+            (RefreshLeaseStatus::Failed { .. }, Some(completed_at))
+                if (leased_at..=expires_at).contains(&parse_timestamp(completed_at)?) =>
+            {
+                Ok(())
+            }
+            _ => Err(PricingCacheDocumentError::EnvelopeMismatch),
+        }
+    }
+
+    pub fn decision(
+        &self,
+        request_started_at: OffsetDateTime,
+        now: OffsetDateTime,
+    ) -> Result<Option<RefreshLeaseDecision>, PricingCacheDocumentError> {
+        self.validate()?;
+        match &self.status {
+            RefreshLeaseStatus::InProgress => {
+                if parse_timestamp(&self.expires_at)? <= now {
+                    Ok(None)
+                } else {
+                    Ok(Some(RefreshLeaseDecision::Pending))
+                }
+            }
+            RefreshLeaseStatus::Succeeded { snapshot_id } => {
+                if self.completed_for(request_started_at)? {
+                    Ok(Some(RefreshLeaseDecision::Succeeded(snapshot_id.clone())))
+                } else {
+                    Ok(None)
+                }
+            }
+            RefreshLeaseStatus::Failed { error } => {
+                if self.completed_for(request_started_at)? {
+                    Ok(Some(RefreshLeaseDecision::Failed(*error)))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
+    pub fn complete(
+        &self,
+        owner_token: &str,
+        outcome: &RefreshLeaseOutcome,
+        now: OffsetDateTime,
+    ) -> Result<Self, PricingCacheDocumentError> {
+        self.validate()?;
+        if self.owner_token != owner_token
+            || self.status != RefreshLeaseStatus::InProgress
+            || parse_timestamp(&self.expires_at)? <= now
+        {
+            return Err(PricingCacheDocumentError::EnvelopeMismatch);
+        }
+        let mut completed = self.clone();
+        completed.completed_at = Some(format_timestamp(now)?);
+        completed.status = match outcome {
+            RefreshLeaseOutcome::Succeeded(snapshot_id) if valid_snapshot_id(snapshot_id) => {
+                RefreshLeaseStatus::Succeeded {
+                    snapshot_id: snapshot_id.clone(),
+                }
+            }
+            RefreshLeaseOutcome::Failed(error) => RefreshLeaseStatus::Failed { error: *error },
+            RefreshLeaseOutcome::Succeeded(_) => {
+                return Err(PricingCacheDocumentError::EnvelopeMismatch);
+            }
+        };
+        completed.validate()?;
+        Ok(completed)
+    }
+
+    pub fn matches_outcome(
+        &self,
+        owner_token: &str,
+        outcome: &RefreshLeaseOutcome,
+    ) -> Result<bool, PricingCacheDocumentError> {
+        self.validate()?;
+        let matches = match (&self.status, outcome) {
+            (
+                RefreshLeaseStatus::Succeeded {
+                    snapshot_id: stored,
+                },
+                RefreshLeaseOutcome::Succeeded(expected),
+            ) => stored == expected,
+            (
+                RefreshLeaseStatus::Failed { error: stored },
+                RefreshLeaseOutcome::Failed(expected),
+            ) => stored == expected,
+            _ => false,
+        };
+        Ok(self.owner_token == owner_token && matches)
+    }
+
+    fn completed_for(
+        &self,
+        request_started_at: OffsetDateTime,
+    ) -> Result<bool, PricingCacheDocumentError> {
+        self.completed_at
+            .as_deref()
+            .map(parse_timestamp)
+            .transpose()
+            .map(|completed_at| completed_at.is_some_and(|value| value >= request_started_at))
+    }
+}
+
+fn valid_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_snapshot_id(value: &str) -> bool {
+    value
+        .strip_prefix("aws-")
+        .or_else(|| value.strip_prefix("azure-"))
+        .is_some_and(valid_hash)
+}
+
+fn parse_timestamp(value: &str) -> Result<OffsetDateTime, PricingCacheDocumentError> {
+    let timestamp = OffsetDateTime::parse(value, &Rfc3339)
+        .map_err(|_| PricingCacheDocumentError::EnvelopeMismatch)?;
+    if timestamp.offset() != time::UtcOffset::UTC {
+        return Err(PricingCacheDocumentError::EnvelopeMismatch);
+    }
+    Ok(timestamp)
+}
+
+fn format_timestamp(value: OffsetDateTime) -> Result<String, PricingCacheDocumentError> {
+    value
+        .format(&Rfc3339)
+        .map_err(|_| PricingCacheDocumentError::EnvelopeMismatch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,5 +370,97 @@ mod tests {
                 SnapshotError::StoredSnapshotMismatch
             ))
         ));
+    }
+
+    #[test]
+    fn refresh_lease_exposes_terminal_results_only_to_overlapping_requests() {
+        let leased_at = timestamp("2026-08-10T12:00:00Z");
+        let lease = RefreshLeaseDocument::new(
+            &"a".repeat(64),
+            "11111111-1111-4111-8111-111111111111",
+            leased_at,
+        )
+        .expect("valid active lease");
+        assert_eq!(
+            lease
+                .decision(timestamp("2026-08-10T11:59:59Z"), leased_at)
+                .expect("active decision"),
+            Some(RefreshLeaseDecision::Pending)
+        );
+
+        let completed = lease
+            .complete(
+                "11111111-1111-4111-8111-111111111111",
+                &RefreshLeaseOutcome::Succeeded(format!("aws-{}", "b".repeat(64))),
+                timestamp("2026-08-10T12:00:30Z"),
+            )
+            .expect("complete lease");
+        assert!(matches!(
+            completed
+                .decision(
+                    timestamp("2026-08-10T12:00:20Z"),
+                    timestamp("2026-08-10T12:00:31Z")
+                )
+                .expect("overlapping request decision"),
+            Some(RefreshLeaseDecision::Succeeded(_))
+        ));
+        assert_eq!(
+            completed
+                .decision(
+                    timestamp("2026-08-10T12:00:31Z"),
+                    timestamp("2026-08-10T12:00:31Z")
+                )
+                .expect("later request decision"),
+            None
+        );
+    }
+
+    #[test]
+    fn refresh_lease_rejects_expired_ownership_and_tampering() {
+        let leased_at = timestamp("2026-08-10T12:00:00Z");
+        let lease = RefreshLeaseDocument::new(
+            &"a".repeat(64),
+            "11111111-1111-4111-8111-111111111111",
+            leased_at,
+        )
+        .expect("valid active lease");
+        assert_eq!(
+            lease
+                .decision(
+                    timestamp("2026-08-10T12:00:00Z"),
+                    timestamp("2026-08-10T12:02:30Z")
+                )
+                .expect("expired decision"),
+            None
+        );
+        assert!(
+            lease
+                .complete(
+                    "11111111-1111-4111-8111-111111111111",
+                    &RefreshLeaseOutcome::Failed(ProviderError::SchemaChanged),
+                    timestamp("2026-08-10T12:02:30Z")
+                )
+                .is_err()
+        );
+
+        let mut tampered = lease;
+        tampered.ttl = 151;
+        assert!(tampered.validate().is_err());
+
+        let mut future_completion = RefreshLeaseDocument::new(
+            &"a".repeat(64),
+            "11111111-1111-4111-8111-111111111111",
+            leased_at,
+        )
+        .expect("valid active lease");
+        future_completion.status = RefreshLeaseStatus::Failed {
+            error: ProviderError::TemporarilyUnavailable,
+        };
+        future_completion.completed_at = Some("2026-08-10T12:02:31Z".to_owned());
+        assert!(future_completion.validate().is_err());
+    }
+
+    fn timestamp(value: &str) -> OffsetDateTime {
+        OffsetDateTime::parse(value, &Rfc3339).expect("valid test timestamp")
     }
 }

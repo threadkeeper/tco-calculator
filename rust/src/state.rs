@@ -19,7 +19,8 @@ use crate::{
         local_fixture::{self, LocalFixtureError},
         provider::ProviderError,
         repository::{
-            DurableSnapshotRepository, InMemorySnapshotRepository, SnapshotRepositoryError,
+            DurableSnapshotRepository, InMemorySnapshotRepository, RefreshLeaseRepository,
+            SnapshotRepositoryError,
         },
     },
     rate_limit::TokenBucket,
@@ -69,13 +70,16 @@ impl AppState {
         let projects = Arc::new(
             CosmosProjectRepository::new(&cosmos.endpoint, &cosmos.application_region).await?,
         );
-        let snapshots = Arc::new(
+        let pricing_cache = Arc::new(
             CosmosSnapshotRepository::new(&cosmos.endpoint, &cosmos.application_region).await?,
         );
+        let snapshots: Arc<dyn DurableSnapshotRepository> = pricing_cache.clone();
+        let leases: Arc<dyn RefreshLeaseRepository> = pricing_cache;
         Self::with_projects(
             config,
             projects,
             Some(snapshots),
+            Some(leases),
             PersistenceBackend::Cosmos,
         )
     }
@@ -85,6 +89,7 @@ impl AppState {
             config,
             Arc::new(InMemoryProjectRepository::new()),
             None,
+            None,
             PersistenceBackend::MemoryLocal,
         )
     }
@@ -93,6 +98,7 @@ impl AppState {
         config: Config,
         projects: Arc<dyn ProjectRepository>,
         durable_snapshots: Option<Arc<dyn DurableSnapshotRepository>>,
+        refresh_leases: Option<Arc<dyn RefreshLeaseRepository>>,
         persistence_backend: PersistenceBackend,
     ) -> Result<Self, StateError> {
         let capabilities = Arc::new(serde_json::from_str::<CapabilityCatalog>(include_str!(
@@ -115,6 +121,7 @@ impl AppState {
         let pricing = PricingCoordinator::new(
             snapshots.clone(),
             durable_snapshots,
+            refresh_leases,
             live_pricing.clone(),
             Arc::clone(&capabilities),
         );

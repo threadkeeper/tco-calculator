@@ -21,7 +21,10 @@ use crate::{
     calculation::engine::CalculationRevision,
     domain::project::{EditableProject, ProjectDocument},
     pricing::{
-        repository::{DurableSnapshotRepository, SnapshotRepositoryError},
+        repository::{
+            DurableSnapshotRepository, RefreshLeaseDecision, RefreshLeaseOutcome,
+            RefreshLeaseRepository, SnapshotRepositoryError,
+        },
         snapshot::{AwsPriceSnapshot, AzurePriceSnapshot},
     },
 };
@@ -30,7 +33,7 @@ use super::{
     pricing_cache::{
         AWS_SNAPSHOT_DOCUMENT_TYPE, AZURE_SNAPSHOT_DOCUMENT_TYPE, AwsSnapshotDocument,
         AzureSnapshotDocument, PRICING_CACHE_CONTAINER_ID, PRICING_CACHE_PARTITION,
-        PricingCacheDocumentError,
+        PricingCacheDocumentError, RefreshLeaseDocument,
     },
     repository::{
         PROJECT_DOCUMENT_TYPE, ProjectRepository, RepositoryError, current_timestamp,
@@ -42,6 +45,7 @@ const DATABASE_ID: &str = "tco";
 const PROJECTS_CONTAINER_ID: &str = "projects";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(20);
 const SNAPSHOT_WRITE_ATTEMPTS: usize = 3;
+const CONDITIONAL_WRITE_ATTEMPTS: usize = 5;
 
 #[derive(Clone)]
 pub struct CosmosProjectRepository {
@@ -381,6 +385,59 @@ impl CosmosSnapshotRepository {
         }
         Ok(documents)
     }
+
+    async fn read_refresh_lease(
+        &self,
+        lease_id: &str,
+    ) -> Result<Option<(RefreshLeaseDocument, String)>, SnapshotRepositoryError> {
+        let response = match self
+            .container
+            .read_item(PRICING_CACHE_PARTITION, lease_id, None)
+            .await
+        {
+            Ok(response) => response,
+            Err(error) if error.status().is_not_found() => return Ok(None),
+            Err(error) => return Err(map_snapshot_cosmos_error(error)),
+        };
+        let etag = response
+            .headers()
+            .etag()
+            .map(ToString::to_string)
+            .filter(|etag| !etag.is_empty())
+            .ok_or(SnapshotRepositoryError::InvalidData)?;
+        let document = response
+            .into_model::<RefreshLeaseDocument>()
+            .map_err(map_snapshot_cosmos_error)?;
+        document.validate().map_err(map_cache_document_error)?;
+        Ok(Some((document, etag)))
+    }
+
+    async fn replace_refresh_lease(
+        &self,
+        document: &RefreshLeaseDocument,
+        etag: &str,
+    ) -> Result<bool, SnapshotRepositoryError> {
+        document.validate().map_err(map_cache_document_error)?;
+        let options = ItemWriteOptions::default().with_precondition(Precondition::if_match(etag));
+        match self
+            .container
+            .replace_item(
+                PRICING_CACHE_PARTITION,
+                &document.id,
+                document,
+                Some(options),
+            )
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(error)
+                if error.status().is_precondition_failed() || error.status().is_not_found() =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(map_snapshot_cosmos_error(error)),
+        }
+    }
 }
 
 #[async_trait]
@@ -486,6 +543,76 @@ impl DurableSnapshotRepository for CosmosSnapshotRepository {
     }
 }
 
+#[async_trait]
+impl RefreshLeaseRepository for CosmosSnapshotRepository {
+    async fn claim_refresh_lease(
+        &self,
+        cache_key_sha256: &str,
+        owner_token: &str,
+        request_started_at: &str,
+    ) -> Result<RefreshLeaseDecision, SnapshotRepositoryError> {
+        let request_started_at = parse_utc_timestamp(request_started_at)?;
+        for _ in 0..CONDITIONAL_WRITE_ATTEMPTS {
+            let now = OffsetDateTime::now_utc();
+            let candidate = RefreshLeaseDocument::new(cache_key_sha256, owner_token, now)
+                .map_err(map_cache_document_error)?;
+            match self
+                .container
+                .create_item(PRICING_CACHE_PARTITION, &candidate.id, &candidate, None)
+                .await
+            {
+                Ok(_) => return Ok(RefreshLeaseDecision::Acquired),
+                Err(error) if is_conflict(&error) => {}
+                Err(error) => return Err(map_snapshot_cosmos_error(error)),
+            }
+
+            let Some((existing, etag)) = self.read_refresh_lease(&candidate.id).await? else {
+                continue;
+            };
+            if let Some(decision) = existing
+                .decision(request_started_at, now)
+                .map_err(map_cache_document_error)?
+            {
+                return Ok(decision);
+            }
+            if self.replace_refresh_lease(&candidate, &etag).await? {
+                return Ok(RefreshLeaseDecision::Acquired);
+            }
+        }
+        Ok(RefreshLeaseDecision::Pending)
+    }
+
+    async fn publish_refresh_lease(
+        &self,
+        cache_key_sha256: &str,
+        owner_token: &str,
+        outcome: &RefreshLeaseOutcome,
+    ) -> Result<(), SnapshotRepositoryError> {
+        let lease_id = format!("refresh-lease-{cache_key_sha256}");
+        for _ in 0..CONDITIONAL_WRITE_ATTEMPTS {
+            let Some((existing, etag)) = self.read_refresh_lease(&lease_id).await? else {
+                return Err(SnapshotRepositoryError::Unavailable);
+            };
+            if existing.owner_token != owner_token {
+                return Err(SnapshotRepositoryError::Unavailable);
+            }
+            if existing
+                .matches_outcome(owner_token, outcome)
+                .map_err(map_cache_document_error)?
+            {
+                return Ok(());
+            }
+            let completed = existing
+                .complete(owner_token, outcome, OffsetDateTime::now_utc())
+                .map_err(|_| SnapshotRepositoryError::Unavailable)?;
+            if self.replace_refresh_lease(&completed, &etag).await? {
+                return Ok(());
+            }
+        }
+        Err(SnapshotRepositoryError::Unavailable)
+    }
+}
+
 trait SnapshotDocument: Clone {
     fn id(&self) -> &str;
     fn retrieved_at(&self) -> &str;
@@ -539,11 +666,18 @@ fn newest_document<T: SnapshotDocument>(
 }
 
 fn retrieved_later(incoming: &str, existing: &str) -> Result<bool, SnapshotRepositoryError> {
-    let incoming = OffsetDateTime::parse(incoming, &Rfc3339)
-        .map_err(|_| SnapshotRepositoryError::InvalidData)?;
-    let existing = OffsetDateTime::parse(existing, &Rfc3339)
-        .map_err(|_| SnapshotRepositoryError::InvalidData)?;
+    let incoming = parse_utc_timestamp(incoming)?;
+    let existing = parse_utc_timestamp(existing)?;
     Ok(incoming > existing)
+}
+
+fn parse_utc_timestamp(value: &str) -> Result<OffsetDateTime, SnapshotRepositoryError> {
+    let timestamp =
+        OffsetDateTime::parse(value, &Rfc3339).map_err(|_| SnapshotRepositoryError::InvalidData)?;
+    if timestamp.offset() != time::UtcOffset::UTC {
+        return Err(SnapshotRepositoryError::InvalidData);
+    }
+    Ok(timestamp)
 }
 
 fn valid_snapshot_id(value: &str, prefix: &str) -> bool {
