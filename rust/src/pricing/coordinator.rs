@@ -215,7 +215,7 @@ impl PricingCoordinator {
                 let snapshot = self.find_aws_snapshot(currency, source_region).await?;
                 Ok(provider_fallback(snapshot, Provider::Aws, error))
             }
-            Err(RefreshFailure::Repository(_)) => {
+            Err(RefreshFailure::Repository) => {
                 let snapshot = self.repository.find_aws(currency, source_region)?;
                 Ok(repository_fallback(snapshot, Provider::Aws))
             }
@@ -252,7 +252,7 @@ impl PricingCoordinator {
                 let snapshot = self.find_azure_snapshot(currency, target_region).await?;
                 Ok(provider_fallback(snapshot, Provider::Azure, error))
             }
-            Err(RefreshFailure::Repository(_)) => {
+            Err(RefreshFailure::Repository) => {
                 let snapshot = self.repository.find_azure(currency, target_region)?;
                 Ok(repository_fallback(snapshot, Provider::Azure))
             }
@@ -342,7 +342,7 @@ impl PricingCoordinator {
                 Ok(snapshot) => {
                     match persist_aws(&repository, durable.as_deref(), snapshot).await {
                         Ok(snapshot) => Ok(snapshot),
-                        Err(error) => Err(RefreshFailure::Repository(error)),
+                        Err(_) => Err(RefreshFailure::Repository),
                     }
                 }
                 Err(error) => Err(RefreshFailure::Provider(error)),
@@ -380,7 +380,7 @@ impl PricingCoordinator {
                 Ok(snapshot) => {
                     match persist_azure(&repository, durable.as_deref(), snapshot).await {
                         Ok(snapshot) => Ok(snapshot),
-                        Err(error) => Err(RefreshFailure::Repository(error)),
+                        Err(_) => Err(RefreshFailure::Repository),
                     }
                 }
                 Err(error) => Err(RefreshFailure::Provider(error)),
@@ -480,7 +480,7 @@ impl<T> Flight<T> {
 #[derive(Clone, Copy, Debug)]
 enum RefreshFailure {
     Provider(ProviderError),
-    Repository(SnapshotRepositoryError),
+    Repository,
 }
 
 fn resolve_cached<T>(snapshot: Option<Arc<T>>, provider: Provider) -> SnapshotResolution<T> {
