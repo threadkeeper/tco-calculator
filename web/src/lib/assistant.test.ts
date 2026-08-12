@@ -3,6 +3,7 @@ import {
   MAX_ASSISTANT_QUESTION_CHARACTERS,
   parseAssistantHelpResponse,
   requestAssistantHelp,
+  requestAssistantTurn,
   validateAssistantQuestion
 } from './assistant';
 
@@ -56,5 +57,24 @@ describe('assistant help client', () => {
         }))
       })
     ).toThrow('not recognized');
+  });
+
+  it('sends authenticated turns with only the host-selected project identifier', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ answer: 'Reviewed answer', references: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await requestAssistantTurn('  Explain this estimate  ', 'project-id');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/assistant/turn');
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ question: 'Explain this estimate', project_id: 'project-id' }),
+      cache: 'no-store'
+    });
   });
 });

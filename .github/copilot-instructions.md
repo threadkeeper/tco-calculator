@@ -197,7 +197,7 @@ Every allowed dependency must also meet all of these conditions:
 
 - MSAL or another frontend OAuth/OIDC client; use Container Apps platform login and logout routes.
 - Service workers, PWA/offline calculation behavior, or API/identity/project/pricing response caching in a browser service worker.
-- LLM, generative-AI, model-routing, embedding, vector database, conversational persistence, web-search, MCP, voice, or chatbot SDKs and services in the product.
+- Hosted or autonomous agent runtimes, agent frameworks, embeddings, vector databases, conversational persistence, web search, MCP, voice, third-party model providers, and model or chatbot SDKs remain unapproved. The narrow exception is the application-owned Microsoft Foundry Model Router inference design approved in `docs/FOUNDRY-ASSISTANT-APPROVAL-PROPOSAL.md`; the Rust host must continue to own authorization, validation, tools, calculations, confirmations, deadlines, and side effects.
 - React, Angular, Vue, Next.js, Nuxt, or another frontend framework in place of the specified Svelte stack.
 - A Node.js, Python, .NET, Java, Go, or hand-written HTTP production backend in place of Rust with Axum/Tokio.
 - Terraform, Pulumi, ARM JSON, or cloud-development kits in place of the specified Bicep modules.
@@ -216,6 +216,8 @@ Every allowed dependency must also meet all of these conditions:
 - Security-sensitive libraries for cryptography, authentication, authorization, secrets, identity parsing, or policy enforcement unless the architecture and Security reviewers approve the exact package and design.
 
 For an approval request, record the purpose, alternatives considered, publisher and source, exact version, license, maintenance status, vulnerability and transitive-dependency results, permissions, data handled, egress, cost, rollback plan, and approving owner. Do not install or scaffold the proposed component until approval is recorded.
+
+The repository owner recorded approval on 2026-08-11 for the Foundry assistant architecture, service use, customer-data egress, deployment wiring, and necessary reviewed dependencies in `docs/FOUNDRY-ASSISTANT-APPROVAL-PROPOSAL.md`. That approval is limited to the documented design and does not waive the exact-version records, security controls, validation, or completion gates in this file.
 
 ## Completion Checklist
 

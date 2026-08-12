@@ -3,6 +3,10 @@ use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 
 use crate::{
+    assistant::{
+        foundry::FoundryModelClient,
+        model::{DisabledModelClient, ModelClient},
+    },
     calculation::{
         engine::{CalculationEngine, CalculationError},
         target_selector::CapabilityCatalog,
@@ -30,6 +34,8 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum StateError {
+    #[error("assistant model client could not be initialized")]
+    Assistant,
     #[error("embedded SQL MI capability catalog is invalid")]
     CapabilityCatalog(#[from] serde_json::Error),
     #[error("calculation engine could not be initialized")]
@@ -61,6 +67,10 @@ struct PricingCacheRepositories {
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
+    pub assistant_model: Arc<dyn ModelClient>,
+    pub assistant_enabled: bool,
+    pub assistant_slots: Arc<tokio::sync::Semaphore>,
+    pub assistant_rate_limit: TokenBucket,
     pub calculations: CalculationEngine,
     pub projects: Arc<dyn ProjectRepository>,
     pub privacy_consents: Arc<dyn PrivacyConsentRepository>,
@@ -124,6 +134,25 @@ impl AppState {
         pricing_cache: Option<PricingCacheRepositories>,
         persistence_backend: PersistenceBackend,
     ) -> Result<Self, StateError> {
+        let (assistant_model, assistant_enabled, assistant_concurrency): (
+            Arc<dyn ModelClient>,
+            bool,
+            usize,
+        ) = match &config.assistant {
+            Some(settings) => (
+                Arc::new(
+                    FoundryModelClient::new(
+                        settings.endpoint.clone(),
+                        &settings.deployment,
+                        &settings.api_version,
+                    )
+                    .map_err(|_| StateError::Assistant)?,
+                ),
+                true,
+                settings.concurrency,
+            ),
+            None => (Arc::new(DisabledModelClient), false, 1),
+        };
         let (durable_snapshots, refresh_leases, refresh_quota_repository) = match pricing_cache {
             Some(cache) => (Some(cache.snapshots), Some(cache.leases), Some(cache.quota)),
             None => (None, None, None),
@@ -158,9 +187,17 @@ impl AppState {
             RefreshQuota::new(config.provider_refreshes_per_hour, refresh_quota_repository);
         let calculation_slots =
             Arc::new(tokio::sync::Semaphore::new(config.calculation_concurrency));
+        let assistant_rate_limit = TokenBucket::new(
+            config.assistant_requests_per_minute,
+            Duration::from_secs(60),
+        );
 
         Ok(Self {
             config: Arc::new(config),
+            assistant_model,
+            assistant_enabled,
+            assistant_slots: Arc::new(tokio::sync::Semaphore::new(assistant_concurrency)),
+            assistant_rate_limit,
             calculations,
             projects,
             privacy_consents,

@@ -6,6 +6,8 @@ param managedEnvironmentId string
 param registryServer string
 param containerImage string
 param cosmosEndpoint string
+param foundryEndpoint string
+param foundryModelDeployment string
 @minLength(36)
 @maxLength(36)
 param entraClientId string
@@ -21,6 +23,12 @@ param providerRefreshesPerHour int = 40
 param providerMaxResponseBytes int = 67108864
 @minValue(1)
 param calculationConcurrency int = 10
+@minValue(1)
+@maxValue(8)
+param assistantConcurrency int = 2
+@minValue(1)
+@maxValue(60)
+param assistantRequestsPerMinute int = 10
 param configureAuthentication bool = true
 @minValue(0)
 @maxValue(3)
@@ -82,6 +90,30 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'COSMOSDB_ENDPOINT'
               value: cosmosEndpoint
+            }
+            {
+              name: 'ASSISTANT_ENABLED'
+              value: 'true'
+            }
+            {
+              name: 'FOUNDRY_ENDPOINT'
+              value: foundryEndpoint
+            }
+            {
+              name: 'FOUNDRY_MODEL_DEPLOYMENT'
+              value: foundryModelDeployment
+            }
+            {
+              name: 'FOUNDRY_API_VERSION'
+              value: '2024-10-21'
+            }
+            {
+              name: 'ASSISTANT_CONCURRENCY'
+              value: string(assistantConcurrency)
+            }
+            {
+              name: 'ASSISTANT_REQUESTS_PER_MINUTE'
+              value: string(assistantRequestsPerMinute)
             }
             {
               name: 'GUEST_REQUESTS_PER_MINUTE'

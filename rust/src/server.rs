@@ -43,6 +43,7 @@ pub async fn router(mut config: crate::config::Config) -> Result<Router, ServerE
     let state = AppState::new(config).await?;
     let consent_gated_router = Router::new()
         .route("/assistant/help", post(api::assistant::help))
+        .route("/assistant/turn", post(api::assistant::turn))
         .route("/catalog/aws/regions", get(api::catalog::aws_regions))
         .route("/catalog/azure/regions", get(api::catalog::azure_regions))
         .route(

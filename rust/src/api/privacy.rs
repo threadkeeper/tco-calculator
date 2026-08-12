@@ -323,11 +323,13 @@ mod tests {
             environment: AppEnvironment::Local,
             local_auth,
             cosmos: None,
+            assistant: None,
             web_asset_dir: PathBuf::from("rust/static"),
             guest_requests_per_minute: 60,
             provider_refreshes_per_hour: 8,
             provider_max_response_bytes: 64 * 1024 * 1024,
             calculation_concurrency: 10,
+            assistant_requests_per_minute: 10,
         }
     }
 

@@ -152,6 +152,26 @@ impl Problem {
         )
     }
 
+    pub fn assistant_unavailable(instance: &str) -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "urn:azure-sql-tco:problem:assistant-unavailable",
+            "Assistant Unavailable",
+            instance,
+            "The assistant could not complete this request. Try again later.",
+        )
+    }
+
+    pub fn assistant_rejected(instance: &str) -> Self {
+        Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "urn:azure-sql-tco:problem:assistant-rejected",
+            "Assistant Request Rejected",
+            instance,
+            "The assistant could not complete this request under the application safety controls.",
+        )
+    }
+
     pub fn rate_limited(instance: &str, retry_after_seconds: u64) -> Self {
         let mut problem = Self::new(
             StatusCode::TOO_MANY_REQUESTS,

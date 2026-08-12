@@ -53,6 +53,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assistant/turn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run one bounded read-only assistant turn for the signed-in owner. */
+        post: operations["runAssistantTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/catalog/aws/regions": {
         parameters: {
             query?: never;
@@ -385,6 +402,18 @@ export interface components {
         AssistantHelpReference: {
             control_id: string;
             label: string;
+        };
+        AssistantTurnRequest: {
+            question: string;
+            /**
+             * Format: uuid
+             * @description Optional saved project selected by the host for this read-only turn.
+             */
+            project_id: string | null;
+        };
+        AssistantTurnResponse: {
+            answer: string;
+            references: components["schemas"]["AssistantHelpReference"][];
         };
         Region: {
             code: string;
@@ -846,6 +875,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssistantHelpResponse"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    runAssistantTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantTurnRequest"];
+            };
+        };
+        responses: {
+            /** @description Plain-text assistant answer grounded in allowlisted application tools. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantTurnResponse"];
                 };
             };
             default: components["responses"]["Problem"];

@@ -10,13 +10,14 @@ The Bicep templates define one development environment in South Africa North. Th
 - Cosmos DB for NoSQL with `EnableServerless`, no provisioned throughput, local/key auth disabled, and public network access disabled.
 - `projects` and TTL-enabled `pricing-cache` containers. Current AWS state and service components opt out of the default TTL; superseded components are deleted by the application.
 - Cosmos private endpoint and private DNS.
+- Azure OpenAI account in Sweden Central with a pinned EU Data Zone Model Router, local/key authentication and public access disabled, and a private endpoint/private DNS link to the application VNet.
 - VNet-integrated Azure Container Apps managed environment.
 
 The README button and `infra/foundation.bicep` stop at this boundary. They do not build or push an image, create a Container App, configure Container Apps authentication, read an Entra secret, or create runtime role assignments.
 
 Basic ACR keeps its public endpoint and export policy enabled so the separate GitHub-hosted application workflow can publish reviewed images. Authentication remains RBAC-based and the registry admin account stays disabled. Disabling artifact export requires a separately approved Premium registry, private endpoint, and network design.
 
-The separate application workflow owns the OCI image, `infra/main.bicep` application layer, externally accessible Container App, built-in Entra authentication, system-assigned identity, ACR pull and Cosmos data-contributor assignments, readiness checks, and application updates. No user-assigned identity, resource key, connection string, service-principal secret, production parameter set, or application administrator role is approved.
+The separate application workflow owns the OCI image, `infra/main.bicep` application layer, externally accessible Container App, built-in Entra authentication, system-assigned identity, ACR pull, Cosmos data-contributor, and Foundry inference-user assignments, readiness checks, and application updates. No user-assigned identity, resource key, connection string, service-principal secret, production parameter set, model-management role, or application administrator role is approved.
 
 ## Parameters
 
@@ -40,10 +41,13 @@ The script validates that the credential belongs to `ENTRA_CLIENT_ID`, writes it
 
 ```powershell
 az bicep build --file infra/foundation.bicep
+az bicep build --file infra/foundry.bicep
 az bicep build --file infra/main.bicep
 ```
 
 Validation compiles the template only and does not access or mutate Azure resources.
+
+`infra/foundry.bicep` is the narrow operational root for reviewing or deploying only the approved Foundry account, Model Router, private endpoint, and private DNS against the existing application VNet. `infra/foundation.bicep` remains the complete foundation desired state.
 
 ## Preview
 
@@ -56,7 +60,7 @@ $env:AZURE_MONTHLY_BUDGET_USD = '100'
 az deployment group what-if --resource-group <resource-group> --parameters infra/parameters/foundation-dev.bicepparam
 ```
 
-Review resource replacement, public access, serverless capabilities, private connectivity, regions, and tags. The foundation plan must not contain `Microsoft.App/containerApps`, an image, an auth config, an application secret reference, or a runtime role assignment. Do not proceed if what-if differs from the reviewed plan.
+Review resource replacement, public access, serverless capabilities, the Sweden Central Foundry account and EU Data Zone model deployment, private connectivity, regions, and tags. The foundation plan must not contain `Microsoft.App/containerApps`, an image, an auth config, an application secret reference, or a runtime role assignment. Do not proceed if what-if differs from the reviewed plan.
 
 ## Deploy and Roll Back
 
@@ -76,7 +80,7 @@ To write the same non-secret identifiers to GitHub environment variables and sto
 ./infra/getkeys.ps1 -PublishGitHub
 ```
 
-Immediately after foundation deployment, the script records the managed-environment, ACR, Cosmos, private endpoint/DNS, VNet/subnet, and Log Analytics identifiers. Container App, image, and auth fields remain blank until the separate application workflow creates them; rerunning the script then enriches the same file.
+Immediately after foundation deployment, the script records the managed-environment, ACR, Cosmos, Foundry endpoint/deployment, private endpoint/DNS, VNet/subnet, and Log Analytics identifiers. Container App, image, and auth fields remain blank until the separate application workflow creates them; rerunning the script then enriches the same file.
 
 The script does not retrieve an Entra secret value, Azure resource key, connection string, token, or certificate. `-PublishGitHub` publishes non-empty identifiers as `dev` environment variables and publishes only an already-known versioned `ENTRA_CLIENT_SECRET_URI` as a secret reference. Review the generated `.env` before publishing it. Run publication under a GitHub CLI session allowed to manage the repository's `dev` environment.
 

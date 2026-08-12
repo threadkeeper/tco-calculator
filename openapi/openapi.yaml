@@ -84,6 +84,33 @@ paths:
                 $ref: '#/components/schemas/AssistantHelpResponse'
         default:
           $ref: '#/components/responses/Problem'
+  /assistant/turn:
+    post:
+      operationId: runAssistantTurn
+      tags: [Assistant]
+      summary: Run one bounded read-only assistant turn for the signed-in owner.
+      security:
+        - containerAppsAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantTurnRequest'
+      responses:
+        '200':
+          description: Plain-text assistant answer grounded in allowlisted application tools.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantTurnResponse'
+        default:
+          $ref: '#/components/responses/Problem'
   /catalog/aws/regions:
     get:
       operationId: listAwsRegions
@@ -575,6 +602,31 @@ components:
           type: string
         label:
           type: string
+    AssistantTurnRequest:
+      type: object
+      additionalProperties: false
+      required: [question, project_id]
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        project_id:
+          type: [string, 'null']
+          format: uuid
+          description: Optional saved project selected by the host for this read-only turn.
+    AssistantTurnResponse:
+      type: object
+      additionalProperties: false
+      required: [answer, references]
+      properties:
+        answer:
+          type: string
+        references:
+          type: array
+          maxItems: 24
+          items:
+            $ref: '#/components/schemas/AssistantHelpReference'
     Region:
       type: object
       required: [code, label]

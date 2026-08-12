@@ -516,7 +516,7 @@
 </AppShell>
 
 {#if mode === 'guest' || (mode === 'authenticated' && !privacyRequired)}
-  <AssistantPanel />
+  <AssistantPanel authenticated={mode === 'authenticated'} projectId={activeProjectId} />
 {/if}
 
 {#if privacyOpen}

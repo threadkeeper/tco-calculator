@@ -107,7 +107,7 @@ struct BucketEntry {
 }
 
 #[derive(Debug)]
-struct TokenBucketError;
+pub(crate) struct TokenBucketError;
 
 impl TokenBucket {
     pub fn new(capacity: u32, period: Duration) -> Self {
@@ -119,7 +119,7 @@ impl TokenBucket {
         }
     }
 
-    fn check(&self, key: &str) -> Result<Option<u64>, TokenBucketError> {
+    pub(crate) fn check(&self, key: &str) -> Result<Option<u64>, TokenBucketError> {
         let digest: [u8; 32] = Sha256::digest(key.as_bytes()).into();
         let now = Instant::now();
         let mut entries = self.entries.lock().map_err(|_| TokenBucketError)?;

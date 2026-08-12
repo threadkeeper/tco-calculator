@@ -6,6 +6,8 @@ export const MAX_ASSISTANT_QUESTION_CHARACTERS = 1_000;
 export type AssistantHelpRequest = components['schemas']['AssistantHelpRequest'];
 export type AssistantHelpResponse = components['schemas']['AssistantHelpResponse'];
 export type AssistantHelpReference = components['schemas']['AssistantHelpReference'];
+export type AssistantTurnRequest = components['schemas']['AssistantTurnRequest'];
+export type AssistantTurnResponse = components['schemas']['AssistantTurnResponse'];
 
 export function validateAssistantQuestion(question: string): string {
   const normalized = question.trim();
@@ -18,11 +20,15 @@ export function validateAssistantQuestion(question: string): string {
   return normalized;
 }
 
-export function parseAssistantHelpResponse(value: unknown): AssistantHelpResponse {
+function parseAssistantResponse(value: unknown, maximumReferences: number): AssistantHelpResponse {
   const response = asRecord(value);
   const answer = readString(response, 'answer');
   const rawReferences = response?.references;
-  if (answer === null || !Array.isArray(rawReferences) || rawReferences.length > 3) {
+  if (
+    answer === null ||
+    !Array.isArray(rawReferences) ||
+    rawReferences.length > maximumReferences
+  ) {
     throw new Error('The assistant response was not recognized.');
   }
 
@@ -39,6 +45,14 @@ export function parseAssistantHelpResponse(value: unknown): AssistantHelpRespons
   return { answer, references };
 }
 
+export function parseAssistantHelpResponse(value: unknown): AssistantHelpResponse {
+  return parseAssistantResponse(value, 3);
+}
+
+export function parseAssistantTurnResponse(value: unknown): AssistantTurnResponse {
+  return parseAssistantResponse(value, 24);
+}
+
 export async function requestAssistantHelp(
   question: string,
   signal?: AbortSignal
@@ -51,4 +65,22 @@ export async function requestAssistantHelp(
     signal
   });
   return parseAssistantHelpResponse(response);
+}
+
+export async function requestAssistantTurn(
+  question: string,
+  projectId: string | null,
+  signal?: AbortSignal
+): Promise<AssistantTurnResponse> {
+  const request: AssistantTurnRequest = {
+    question: validateAssistantQuestion(question),
+    project_id: projectId
+  };
+  const response = await requestJson('/api/v1/assistant/turn', {
+    method: 'POST',
+    body: JSON.stringify(request),
+    cache: 'no-store',
+    signal
+  });
+  return parseAssistantTurnResponse(response);
 }

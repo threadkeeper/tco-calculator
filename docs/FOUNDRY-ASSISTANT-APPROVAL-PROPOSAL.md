@@ -1,12 +1,18 @@
 # Foundry Assistant Architecture Approval Proposal
 
-Status: **PRODUCT SCOPE APPROVED - IMPLEMENTATION AND DEPLOYMENT CONTROL APPROVALS PENDING**
+Status: **APPROVED FOR IMPLEMENTATION AND DEPLOYMENT**
 
 Prepared: 2026-08-11
 
+Approved: 2026-08-11
+
+Approving authority: The repository owner, self-attested as the application's architect and builder and as a Microsoft senior engineer, approved this proposal while acting for the Architecture, Security and threat-model, Privacy and data-residency, Legal/OSS and model/service-terms, Procurement and cost-owner, Operations and service-owner, and Accessibility review roles. This is a repository decision; it is not a representation of Microsoft corporate approval, a customer commitment, or a waiver of the controls in `.github/copilot-instructions.md`.
+
+Approval scope: The approval covers the application-owned Foundry Model Router design, live model calls, bounded JPEG/PNG processing, the documented customer-data egress, required Foundry resources and deployment wiring, and the direct dependencies selected and recorded during implementation. Exact dependency versions, model/router configuration, regions, APIs, quotas, and resource identifiers must be pinned in the implementation and pass the repository's normal provenance, validation, and deployment gates before release. No fixed budget ceiling was requested, but rate, concurrency, token, timeout, quota, telemetry, alerting, and kill-switch controls remain required operational safeguards.
+
 Reference implementation reviewed: `C:\Repos\gaia-robot` at the local working-tree state reviewed on 2026-08-11
 
-The repository owner approved the product specification on 2026-08-11 with image upload, rather than CSV, as the primary v1 assisted-input method. This approval does not by itself authorize dependencies, Azure resources, live model calls, customer-data egress, or deployment. The responsible Architecture, Security, Privacy, Legal/OSS, Procurement, and service-owner reviewers must record the applicable control approvals before those implementation slices start.
+The repository owner approved the product specification on 2026-08-11 with image upload, rather than CSV, as the primary v1 assisted-input method. On the same date, the repository owner supplied the review-role approval recorded above for dependencies, Azure resources, live model calls, customer-data egress, and deployment under this proposal's boundaries.
 
 ## 1. Decision Requested
 
@@ -24,26 +30,28 @@ Use an application-owned, request-bounded Rust orchestration loop backed by an A
 
 Start with signed-in users, ephemeral chat history, read-only help, bounded JPEG/PNG processing, and staged draft changes. Add persisted actions only after their action-specific controls pass. CSV, Excel, and PDF intake are deferred beyond v1.
 
-## 2. Authority and Remaining Gates
+Implementation status on 2026-08-12: the lean MVP implements ephemeral signed-in text turns and four read-only host tools. Image intake, draft actions, and persisted actions are deferred; no image decoder is installed or present in `Cargo.lock`.
+
+## 2. Authority and Approved Controls
 
 The repository owner approved corresponding changes to `research/Azure Specification.md` and decision DC-010 on 2026-08-11. Those changes move the image-first assistant into v1 while preserving deterministic financial authority.
 
-The remaining control gates are explicit:
+The approval recorded above authorizes the following work under this proposal and the repository's controlling specification:
 
-- `.github/copilot-instructions.md` still lists LLM, generative-AI, model-routing, and related services as not approved for the MVP and requires an explicit request plus human review before that control file changes.
-- Security and Privacy approval is required before confidential project or image content is sent to a model service.
-- Architecture and service-owner approval is required for the exact Foundry resource, custom Model Router subset, region/processing geography, API, deployment type, quotas, and lifecycle.
-- Legal/OSS and Security approval is required before adding an image decoder/normalizer or another direct production dependency.
-- Procurement and the cost owner must approve the cost envelope and budget/alert control.
+- update `.github/copilot-instructions.md` to allow the narrowly scoped Foundry-backed assistant design;
+- send minimized, disclosed project and normalized JPEG/PNG content to the approved Foundry data plane;
+- select and pin the exact Foundry resource, custom Model Router subset, region and processing geography, API, deployment type, quotas, and lifecycle configuration;
+- select and pin an image decoder/normalizer and any other necessary direct production dependency after recording its provenance, license, maintenance, transitive graph, vulnerabilities, permissions, data handling, and rollback plan; and
+- provision and deploy the approved resources and application changes after the required local and predeployment validation succeeds.
 
-Implementation may proceed only in slices that do not cross an unresolved gate. Live Foundry wiring, image decoding/normalization, customer-data egress, and deployment remain blocked until their applicable approvals are recorded.
+This approval resolves the proposal's reviewer gates. It does not waive implementation evidence or permit bypassing identity, tenant isolation, input bounds, private networking, managed identity, deterministic financial authority, dependency review, test, audit, or deployment controls.
 
 ## 3. Customer Outcomes and Acceptance Criteria
 
 | Capability | Acceptance criteria |
 | --- | --- |
 | Application guidance | Every exposed control has a stable help identifier and reviewed description. Answers identify the relevant screen/control, explain valid values and effects, and never invent product behavior. Unsupported questions are identified as unsupported. |
-| File-assisted prefill | CSV, image, and PDF inputs produce a field-level proposed draft or patch, confidence/uncertainty indicators, validation errors, and unmapped values. No upload is saved automatically and no model-derived total, rate, target SKU, entitlement, or calculation is accepted. |
+| File-assisted prefill | One JPEG or PNG produces a field-level proposed draft or patch, confidence/uncertainty indicators, validation errors, and unmapped values. No upload is saved automatically and no model-derived total, rate, target SKU, entitlement, or calculation is accepted. CSV, Excel, and PDF remain deferred. |
 | Application actions | The assistant can invoke each approved application command through a typed capability. The backend derives identity, checks owner scope, validates inputs, applies ETags, invokes the existing deterministic calculation engine where required, and returns the authoritative result. |
 | User control | The UI previews project changes before persistence. Destructive, sharing, identity, and other high-impact actions always use a dedicated confirmation. Cancellation stops further model and tool work. |
 | Auditability | A reviewer can identify the model-router deployment, actual routed model when returned, prompt/help version, tools attempted, tools executed, confirmation outcome, timings, and sanitized failure codes without logging user content. |
@@ -223,6 +231,23 @@ Security must decide whether in-memory, never-executed files still require malwa
 
 ## 9. Model and Foundry Decisions
 
+The text and tool deployment was selected and subscription capacity rechecked on 2026-08-12:
+
+| Setting | Approved value |
+| --- | --- |
+| Resource | Direct `Microsoft.CognitiveServices/accounts` account with kind `OpenAI`; no Foundry project or hosted-agent runtime |
+| Account region | Sweden Central |
+| Processing boundary | EU Data Zone through `DataZoneStandard`; private networking does not by itself establish residency |
+| Router | `model-router` version `2025-11-18`, routing mode `balanced`, capacity 10K TPM |
+| Custom subset | OpenAI `gpt-4.1-mini` version `2025-04-14` and OpenAI `gpt-5-mini` version `2025-08-07` only |
+| Upgrade policy | `NoAutoUpgrade` |
+| Data-plane API | Stable Azure OpenAI Chat Completions `2024-10-21` |
+| Authentication | Container App system-assigned managed identity with `Cognitive Services OpenAI User` scoped to the account |
+| Network | Public access disabled, local authentication disabled, private endpoint group `account`, private DNS `privatelink.openai.azure.com` |
+| Content safety | Azure OpenAI default content-filter policy; filtered or ambiguous output fails closed and is not retried |
+
+At the 2026-08-12 check, the selected subscription reported 30 unused OpenAI S0 accounts, 300K unused Model Router Data Zone TPM, 2,000K unused GPT-4.1-mini Data Zone TPM, and 300K unused GPT-5-mini Data Zone TPM in Sweden Central. Quota is capacity evidence, not a price, reservation, or availability promise, and must be rechecked immediately before deployment.
+
 ### 9.1 Text and tool turns
 
 - Use one reviewed custom Model Router deployment for natural-language help and function-tool selection.
@@ -232,14 +257,14 @@ Security must decide whether in-memory, never-executed files still require malwa
 - Require tool/function calling, stable structured arguments, compatible content filtering, predictable regional availability, and approved data-processing terms for every eligible routed model.
 - Fail closed when the configured router is unavailable or returns unsupported output. Do not fall back to GitHub Models, public OpenAI endpoints, another Foundry project, or a model chosen from user input.
 
-### 9.2 Image and PDF analysis
+### 9.2 Image analysis
 
 Do not assume the text/tool router supports every modality. After capability and residency validation, choose one of:
 
 1. the reviewed custom Model Router subset for normalized image input only if every eligible model supports the required image and tool behavior; otherwise use a separately pinned multimodal Foundry deployment; or
 2. deterministic extraction followed by the text/tool router receiving only bounded normalized text and tables.
 
-The selected deployment, model subset, versions, API, SKU, processing geography, content-filter configuration, quotas, pricing, and lifecycle status require written approval. Preview, beta, release-candidate, deprecated, auto-upgrading, or global-processing options need an explicit exception under repository policy. Direct PDF input is not approved unless the exact selected API and every eligible model document that capability; otherwise use a separately reviewed deterministic extractor.
+The selected image decoder and normalizer must be recorded with its exact resolved version, license, provenance, transitive graph, maintenance status, vulnerability evidence, native/build behavior, and rollback before installation. Direct PDF input is not approved; CSV, Excel, and PDF remain deferred.
 
 ### 9.3 Authentication and readiness
 
@@ -325,8 +350,8 @@ Add contracts to `openapi/openapi.yaml` before implementation and regenerate Typ
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /api/v1/assistant/turns` | Authenticated, bounded text turn. Returns a request-scoped event stream or a terminal structured response with text, citations to help/control IDs, progress, and proposed client/application actions. |
-| `POST /api/v1/assistant/imports` | Authenticated multipart upload. Synchronously validates, extracts, maps, and returns a proposed project draft/patch. It never saves raw bytes or the project. |
+| `POST /api/v1/assistant/turn` | Authenticated, bounded text turn. Returns a terminal structured response with plain text and help/control citations. |
+| `POST /api/v1/assistant/image` | Authenticated raw `image/jpeg` or `image/png` body with optional host-selected project ID. Synchronously validates, normalizes, analyzes, and returns a proposed project draft/patch. It never saves raw bytes, normalized bytes, chat, or the project. |
 | `POST /api/v1/assistant/actions` | Applies an explicitly confirmed, typed action after fresh authorization, validation, and ETag checks. It is deterministic and does not require another model decision. |
 
 All endpoints use Problem Details, strict body limits, timeouts, cancellation, rate limits, request IDs, sanitized errors, same-origin policy, and no permissive CORS. Streaming, if selected, remains request-bound and must not create a background correctness dependency.
@@ -347,10 +372,25 @@ Internal model tools are not public HTTP endpoints. They call application/domain
 
 The Gaia pattern does not require an agent framework or Foundry SDK. TCO should use its existing approved async HTTPS and JSON stack for the narrow model data-plane client, subject to confirmation that the exact API is supported and stable.
 
-Likely new direct dependencies requiring separate written review include:
+The image dependency candidate reviewed for a future image-intake slice is:
 
-- an image decoder/normalizer capable of bounded dimensions and metadata removal; and
-- no CSV or PDF parser for v1.
+| Record | Decision |
+| --- | --- |
+| Purpose | Decode one bounded JPEG or PNG, constrain dimensions, and re-encode it without source metadata before request-scoped Foundry inference. |
+| Alternatives | Hand-written decoders were rejected as unsafe and disproportionate; a browser-only transform cannot enforce the server boundary; ImageMagick/libvips add host binaries and native supply-chain surface; another Azure extraction service changes topology and egress. |
+| Package | crates.io `image` `0.25.10`, publisher/project `image-rs`, source and repository `https://github.com/image-rs/image`. |
+| License | `MIT OR Apache-2.0`, approved by the repository owner under this proposal. |
+| Runtime/toolchain | Requires Rust 1.88 or newer and is compatible with pinned Rust 1.97.1. |
+| Features | `default-features = false`, features `jpeg` and `png` only. This excludes Rayon, AVIF/native codecs, GIF, TIFF, WebP, and unrelated formats. |
+| Native/build behavior | Pure Rust for the selected codecs; no install/post-install script, executable payload, broad filesystem permission, or network behavior. |
+| Data and egress | Processes request-owned bytes in memory. The crate performs no egress. Raw and normalized bytes are dropped when the request ends. |
+| Transitive graph and vulnerabilities | Not present in the current `Cargo.lock`. Before installation, the resolved graph must be reviewed and must pass `cargo deny check` and `cargo audit`. No unresolved applicable high/critical finding is accepted. |
+| Maintenance | Current official registry release checked 2026-08-12; upstream is the established `image-rs` project. Re-review on upgrade or maintenance/lifecycle change. |
+| Cost | No license or service charge; CPU and memory are bounded by file, pixel, and output limits. |
+| Rollback | No current rollback is needed because the package is not installed. If adopted later, remove the image endpoint/UI, direct dependency, and lockfile nodes; text assistant behavior remains independent. |
+| Approval | Repository owner, 2026-08-11 approval scope recorded in this document; candidate selection recorded 2026-08-12. Installation remains gated on the evidence above. |
+
+No image, CSV, or PDF parser is installed in the current text MVP. CSV and PDF parsers are not approved for v1.
 
 For each dependency or service, record purpose, alternatives, publisher/source, exact version/API, license/terms, maintenance/lifecycle, provenance, native/build behavior, transitive graph, vulnerabilities, permissions, data, egress, cost, rollback, and approvers. Do not install or scaffold any candidate before approval. Do not copy Gaia's `ureq` dependency into this Tokio/Axum application.
 
@@ -419,18 +459,16 @@ Rollback disables the server feature flag/model egress and removes the UI launch
 
 ## 19. Approval Record
 
-Complete this section in a reviewed change. Do not place customer, tenant, subscription, credential, or other sensitive evidence here.
+This record reflects the repository owner's written approval in the current request. It does not represent Microsoft-wide, customer, Legal, Privacy, compliance, or corporate InfoSec approval.
 
 - Repository owner/Product: Approved 2026-08-11 with JPEG/PNG as the primary v1 assisted-input method and CSV/Excel/PDF deferred
-- Architecture: Pending
-- Security and threat model: Pending
-- Privacy and data residency: Pending
-- Legal/OSS and model/service terms: Pending
-- Procurement/cost owner: Pending
-- Operations/service owner: Pending
-- Accessibility: Pending
-- Approved specification change reference: Pending
-- Approved dependency/service records: Pending
-- Approval date and review expiry: Pending
-
-Until every applicable entry is complete and the controlling specification is updated, the implementation and deployment status remains **blocked**.
+- Architecture: Approved 2026-08-11 by repository owner acting as application architect
+- Security and threat model: Approved 2026-08-11 by repository owner for this bounded design
+- Privacy and data residency: Approved 2026-08-11 by repository owner for minimized EU Data Zone processing under this record
+- Legal/OSS and model/service terms: Approved 2026-08-11 by repository owner for the recorded service and subsequently recorded exact dependencies
+- Procurement/cost owner: Approved 2026-08-11 by repository owner; no fixed budget ceiling, with quotas, telemetry, alerting, and kill switch required
+- Operations/service owner: Approved 2026-08-11 by repository owner
+- Accessibility: Approved 2026-08-11 by repository owner, subject to WCAG 2.2 AA validation evidence before release
+- Approved specification change reference: `research/Azure Specification.md`, section 4.2 and decision DC-010
+- Approved dependency/service records: Microsoft Foundry service configuration recorded in section 9; each new exact package must be recorded before installation
+- Approval date: 2026-08-11; review expiry: on material architecture, model, dependency, region, data-flow, retention, or cost-control change

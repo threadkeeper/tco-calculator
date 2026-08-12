@@ -41,6 +41,10 @@ jobs:
       AZURE_COSMOS_ACCOUNT_ID: ${{ vars.AZURE_COSMOS_ACCOUNT_ID }}
       AZURE_COSMOS_ACCOUNT_NAME: ${{ vars.AZURE_COSMOS_ACCOUNT_NAME }}
       COSMOSDB_ENDPOINT: ${{ vars.COSMOSDB_ENDPOINT }}
+      AZURE_FOUNDRY_ACCOUNT_ID: ${{ vars.AZURE_FOUNDRY_ACCOUNT_ID }}
+      AZURE_FOUNDRY_ACCOUNT_NAME: ${{ vars.AZURE_FOUNDRY_ACCOUNT_NAME }}
+      FOUNDRY_ENDPOINT: ${{ vars.FOUNDRY_ENDPOINT }}
+      FOUNDRY_MODEL_DEPLOYMENT: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT }}
       ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
       ENTRA_CLIENT_SECRET_URI: ${{ secrets.ENTRA_CLIENT_SECRET_URI }}
       WEB_BUILD_IMAGE: ${{ vars.WEB_BUILD_IMAGE }}
@@ -78,6 +82,10 @@ jobs:
             'AZURE_COSMOS_ACCOUNT_ID',
             'AZURE_COSMOS_ACCOUNT_NAME',
             'COSMOSDB_ENDPOINT',
+            'AZURE_FOUNDRY_ACCOUNT_ID',
+            'AZURE_FOUNDRY_ACCOUNT_NAME',
+            'FOUNDRY_ENDPOINT',
+            'FOUNDRY_MODEL_DEPLOYMENT',
             'ENTRA_CLIENT_ID',
             'ENTRA_CLIENT_SECRET_URI',
             'WEB_BUILD_IMAGE',
@@ -117,7 +125,7 @@ jobs:
           }
 
           $resourceGroupPrefix = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$env:AZURE_RESOURCE_GROUP/providers/"
-          foreach ($name in @('AZURE_CONTAINER_APPS_ENVIRONMENT_ID', 'AZURE_CONTAINER_REGISTRY_ID', 'AZURE_COSMOS_ACCOUNT_ID')) {
+          foreach ($name in @('AZURE_CONTAINER_APPS_ENVIRONMENT_ID', 'AZURE_CONTAINER_REGISTRY_ID', 'AZURE_COSMOS_ACCOUNT_ID', 'AZURE_FOUNDRY_ACCOUNT_ID')) {
             if (-not [Environment]::GetEnvironmentVariable($name).StartsWith($resourceGroupPrefix, [StringComparison]::OrdinalIgnoreCase)) {
               throw "$name must identify a foundation resource in the configured subscription and resource group."
             }
@@ -159,6 +167,7 @@ jobs:
           $managedEnvironment = az resource show --ids $env:AZURE_CONTAINER_APPS_ENVIRONMENT_ID --api-version 2024-03-01 --only-show-errors --output json | ConvertFrom-Json
           $registry = az resource show --ids $env:AZURE_CONTAINER_REGISTRY_ID --api-version 2023-07-01 --only-show-errors --output json | ConvertFrom-Json
           $cosmos = az resource show --ids $env:AZURE_COSMOS_ACCOUNT_ID --api-version 2024-05-15 --only-show-errors --output json | ConvertFrom-Json
+          $foundry = az resource show --ids $env:AZURE_FOUNDRY_ACCOUNT_ID --api-version 2025-12-01 --only-show-errors --output json | ConvertFrom-Json
           $expectedLocation = $env:AZURE_LOCATION -replace '\s', ''
           foreach ($resource in @($managedEnvironment, $registry, $cosmos)) {
             $resourceLocation = [string]$resource.location -replace '\s', ''
@@ -171,6 +180,19 @@ jobs:
           }
           if ($cosmos.name -ne $env:AZURE_COSMOS_ACCOUNT_NAME -or $cosmos.properties.documentEndpoint.TrimEnd('/') -ne $env:COSMOSDB_ENDPOINT.TrimEnd('/')) {
             throw 'Configured Cosmos identifiers do not describe the same foundation account.'
+          }
+          if (
+            $foundry.name -ne $env:AZURE_FOUNDRY_ACCOUNT_NAME -or
+            $foundry.location -ne 'swedencentral' -or
+            $foundry.tags.application -ne 'tco-calculator' -or
+            $foundry.tags.environment -ne 'dev' -or
+            $foundry.properties.endpoint.TrimEnd('/') -ne $env:FOUNDRY_ENDPOINT.TrimEnd('/')
+          ) {
+            throw 'Configured Foundry identifiers do not describe the approved private foundation account.'
+          }
+          $modelDeployment = az resource show --ids "$env:AZURE_FOUNDRY_ACCOUNT_ID/deployments/$env:FOUNDRY_MODEL_DEPLOYMENT" --api-version 2025-12-01 --only-show-errors --output json | ConvertFrom-Json
+          if ($modelDeployment.name -ne $env:FOUNDRY_MODEL_DEPLOYMENT -or $modelDeployment.properties.model.name -ne 'model-router') {
+            throw 'Configured Foundry deployment is not the approved Model Router.'
           }
 
           $containerAppsSubnetId = [string]$managedEnvironment.properties.vnetConfiguration.infrastructureSubnetId
@@ -361,7 +383,8 @@ jobs:
             '/providers/Microsoft\.App/managedEnvironments/',
             '/providers/Microsoft\.OperationalInsights/workspaces/',
             '/providers/Microsoft\.ContainerRegistry/registries/[^/]+$',
-            '/providers/Microsoft\.DocumentDB/databaseAccounts/[^/]+$'
+            '/providers/Microsoft\.DocumentDB/databaseAccounts/[^/]+$',
+            '/providers/Microsoft\.CognitiveServices/accounts/[^/]+$'
           )
           $expectedKeyVaultNetworkPatterns = @(
             "/providers/Microsoft\.Network/privateDnsZones/privatelink\.vaultcore\.azure\.net$",
@@ -406,6 +429,16 @@ jobs:
           $cosmosRoleAssignmentName = [regex]::Match($cosmosRoleAssignments[0].resourceId, $cosmosRoleAssignmentPattern).Groups['name'].Value
           "COSMOS_DATA_ROLE_ASSIGNMENT_NAME=$cosmosRoleAssignmentName" >> $env:GITHUB_ENV
 
+          $foundryRoleAssignmentPattern = "^$([regex]::Escape($env:AZURE_FOUNDRY_ACCOUNT_ID))/providers/Microsoft\.Authorization/roleAssignments/(?<name>[0-9a-fA-F-]{36})$"
+          $foundryRoleAssignments = @(
+            $plan.changes | Where-Object resourceId -Match $foundryRoleAssignmentPattern
+          )
+          if ($foundryRoleAssignments.Count -ne 1) {
+            throw 'Application what-if must contain exactly one Foundry inference role assignment.'
+          }
+          $foundryRoleAssignmentName = [regex]::Match($foundryRoleAssignments[0].resourceId, $foundryRoleAssignmentPattern).Groups['name'].Value
+          "FOUNDRY_INFERENCE_ROLE_ASSIGNMENT_NAME=$foundryRoleAssignmentName" >> $env:GITHUB_ENV
+
           $plan.changes |
             Sort-Object resourceId |
             ForEach-Object { Write-Host "[$($_.changeType)] $($_.resourceId)" }
@@ -426,6 +459,7 @@ jobs:
           $containerAppName = "$env:AZURE_NAME_PREFIX-app"
           $acrRoleId = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"
           $cosmosRoleId = "$env:AZURE_COSMOS_ACCOUNT_ID/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+          $foundryRoleId = "/subscriptions/$env:AZURE_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleDefinitions/5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
           $cosmosScope = "$env:AZURE_COSMOS_ACCOUNT_ID/dbs/tco"
           az deployment group create `
             --name $bootstrapName `
@@ -524,6 +558,34 @@ jobs:
             throw 'The deterministic bootstrap Cosmos assignment has unexpected properties.'
           }
 
+          if ($env:FOUNDRY_INFERENCE_ROLE_ASSIGNMENT_NAME -notmatch '^[0-9a-fA-F-]{36}$') {
+            throw 'Preview did not resolve the deterministic Foundry role-assignment name.'
+          }
+          $existingFoundryAssignment = az role assignment list `
+            --scope $env:AZURE_FOUNDRY_ACCOUNT_ID `
+            --query "[?name=='$env:FOUNDRY_INFERENCE_ROLE_ASSIGNMENT_NAME'] | [0]" `
+            --only-show-errors `
+            --output json | ConvertFrom-Json
+          if ($null -eq $existingFoundryAssignment) {
+            az role assignment create `
+              --name $env:FOUNDRY_INFERENCE_ROLE_ASSIGNMENT_NAME `
+              --assignee-object-id $principalId `
+              --assignee-principal-type ServicePrincipal `
+              --role $foundryRoleId `
+              --scope $env:AZURE_FOUNDRY_ACCOUNT_ID `
+              --only-show-errors `
+              --output none
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Could not create the bootstrap Foundry inference assignment.'
+            }
+          } elseif (
+            $existingFoundryAssignment.principalId -ne $principalId -or
+            $existingFoundryAssignment.roleDefinitionId -ne $foundryRoleId -or
+            $existingFoundryAssignment.scope -ne $env:AZURE_FOUNDRY_ACCOUNT_ID
+          ) {
+            throw 'The deterministic bootstrap Foundry assignment has unexpected properties.'
+          }
+
           $bootstrapSucceeded = $false
           for ($attempt = 1; $attempt -le 180; $attempt++) {
             $bootstrap = az deployment group show `
@@ -551,16 +613,18 @@ jobs:
           for ($attempt = 1; $attempt -le 30; $attempt++) {
             $acrAssignments = @(az role assignment list --scope $env:AZURE_CONTAINER_REGISTRY_ID --assignee-object-id $principalId --only-show-errors --output json | ConvertFrom-Json)
             $vaultAssignments = @(az role assignment list --scope $env:ENTRA_CLIENT_SECRET_KEY_VAULT_ID --assignee-object-id $principalId --only-show-errors --output json | ConvertFrom-Json)
+            $foundryAssignments = @(az role assignment list --scope $env:AZURE_FOUNDRY_ACCOUNT_ID --assignee-object-id $principalId --only-show-errors --output json | ConvertFrom-Json)
             $cosmosOutput = @(& az cosmosdb sql role assignment list --account-name $env:AZURE_COSMOS_ACCOUNT_NAME --resource-group $env:AZURE_RESOURCE_GROUP --only-show-errors --output json 2>$null)
             $cosmosAssignments = if ($LASTEXITCODE -eq 0) { @(($cosmosOutput -join [Environment]::NewLine) | ConvertFrom-Json) } else { @() }
             $acrReady = $null -ne ($acrAssignments | Where-Object roleDefinitionId -eq $acrRoleId | Select-Object -First 1)
             $vaultReady = $null -ne ($vaultAssignments | Where-Object roleDefinitionId -eq $keyVaultRoleId | Select-Object -First 1)
+            $foundryReady = $null -ne ($foundryAssignments | Where-Object roleDefinitionId -eq $foundryRoleId | Select-Object -First 1)
             $cosmosReady = $null -ne ($cosmosAssignments | Where-Object {
               $_.principalId -eq $principalId -and
               $_.roleDefinitionId -match '/00000000-0000-0000-0000-000000000002$' -and
               $_.scope -match '/dbs/tco$'
             } | Select-Object -First 1)
-            if ($acrReady -and $vaultReady -and $cosmosReady) {
+            if ($acrReady -and $vaultReady -and $cosmosReady -and $foundryReady) {
               $rolesReady = $true
               break
             }

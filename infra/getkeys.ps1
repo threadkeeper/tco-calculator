@@ -40,11 +40,17 @@ $knownKeys = @(
     'AZURE_COSMOS_ACCOUNT_NAME',
     'AZURE_COSMOS_PRIVATE_ENDPOINT_ID',
     'AZURE_COSMOS_PRIVATE_DNS_ZONE_ID',
+    'AZURE_FOUNDRY_ACCOUNT_ID',
+    'AZURE_FOUNDRY_ACCOUNT_NAME',
+    'AZURE_FOUNDRY_PRIVATE_ENDPOINT_ID',
+    'AZURE_FOUNDRY_PRIVATE_DNS_ZONE_ID',
     'AZURE_VIRTUAL_NETWORK_ID',
     'AZURE_CONTAINER_APPS_SUBNET_ID',
     'AZURE_PRIVATE_ENDPOINT_SUBNET_ID',
     'AZURE_LOG_ANALYTICS_WORKSPACE_ID',
-    'COSMOSDB_ENDPOINT'
+    'COSMOSDB_ENDPOINT',
+    'FOUNDRY_ENDPOINT',
+    'FOUNDRY_MODEL_DEPLOYMENT'
 )
 
 function Read-KnownEnvironmentFile {
@@ -189,6 +195,7 @@ function Get-SingleTaggedResource {
         [string]$ResourceType,
         [Parameter(Mandatory = $true)]
         [string]$Environment,
+        [string]$Name,
         [switch]$AllowMissing
     )
 
@@ -204,7 +211,8 @@ function Get-SingleTaggedResource {
             $null -ne $_ -and
             $null -ne $_.tags -and
             $_.tags.application -eq 'tco-calculator' -and
-            $_.tags.environment -eq $Environment
+            $_.tags.environment -eq $Environment -and
+            (-not $Name -or $_.name -eq $Name)
         }
     )
 
@@ -212,7 +220,8 @@ function Get-SingleTaggedResource {
         return $null
     }
     if ($matches.Count -ne 1) {
-        throw "Expected exactly one $ResourceType resource tagged for environment '$Environment' in resource group '$ResourceGroupName'; found $($matches.Count)."
+        $nameDescription = if ($Name) { " named '$Name'" } else { '' }
+        throw "Expected exactly one $ResourceType resource$nameDescription tagged for environment '$Environment' in resource group '$ResourceGroupName'; found $($matches.Count)."
     }
 
     return $matches[0]
@@ -288,6 +297,7 @@ $managedEnvironment = Get-SingleTaggedResource `
     -ResourceGroupName $ResourceGroup `
     -ResourceType 'Microsoft.App/managedEnvironments' `
     -Environment $DeploymentEnvironment
+$namePrefix = $managedEnvironment.name -replace '-cae$', ''
 $registry = Get-SingleTaggedResource `
     -ResourceGroupName $ResourceGroup `
     -ResourceType 'Microsoft.ContainerRegistry/registries' `
@@ -329,11 +339,40 @@ $privateEndpointSubnet = Invoke-AzureJson @(
 $cosmosPrivateEndpoint = Get-SingleTaggedResource `
     -ResourceGroupName $ResourceGroup `
     -ResourceType 'Microsoft.Network/privateEndpoints' `
-    -Environment $DeploymentEnvironment
+    -Environment $DeploymentEnvironment `
+    -Name "$namePrefix-cosmos-pe"
 $cosmosPrivateDnsZone = Get-SingleTaggedResource `
     -ResourceGroupName $ResourceGroup `
     -ResourceType 'Microsoft.Network/privateDnsZones' `
-    -Environment $DeploymentEnvironment
+    -Environment $DeploymentEnvironment `
+    -Name 'privatelink.documents.azure.com'
+$foundry = Get-SingleTaggedResource `
+    -ResourceGroupName $ResourceGroup `
+    -ResourceType 'Microsoft.CognitiveServices/accounts' `
+    -Environment $DeploymentEnvironment `
+    -Name "$namePrefix-foundry"
+$foundryDetails = Invoke-AzureJson @(
+    'resource', 'show',
+    '--ids', $foundry.id,
+    '--api-version', '2025-12-01',
+    '--query', '{endpoint:properties.endpoint}'
+)
+$foundryModelDeployment = Invoke-AzureJson @(
+    'resource', 'show',
+    '--ids', "$($foundry.id)/deployments/$namePrefix-model-router",
+    '--api-version', '2025-12-01',
+    '--query', '{name:name}'
+)
+$foundryPrivateEndpoint = Get-SingleTaggedResource `
+    -ResourceGroupName $ResourceGroup `
+    -ResourceType 'Microsoft.Network/privateEndpoints' `
+    -Environment $DeploymentEnvironment `
+    -Name "$namePrefix-foundry-pe"
+$foundryPrivateDnsZone = Get-SingleTaggedResource `
+    -ResourceGroupName $ResourceGroup `
+    -ResourceType 'Microsoft.Network/privateDnsZones' `
+    -Environment $DeploymentEnvironment `
+    -Name 'privatelink.openai.azure.com'
 $logAnalyticsWorkspace = Get-SingleTaggedResource `
     -ResourceGroupName $ResourceGroup `
     -ResourceType 'Microsoft.OperationalInsights/workspaces' `
@@ -381,7 +420,6 @@ if ($null -ne $containerApp) {
     }
 }
 
-$namePrefix = $managedEnvironment.name -replace '-cae$', ''
 $values = [ordered]@{
     AZURE_TENANT_ID                   = [string]$account.tenantId
     AZURE_SUBSCRIPTION_ID             = [string]$account.subscriptionId
@@ -411,11 +449,17 @@ $values = [ordered]@{
     AZURE_COSMOS_ACCOUNT_NAME         = [string]$cosmos.name
     AZURE_COSMOS_PRIVATE_ENDPOINT_ID  = [string]$cosmosPrivateEndpoint.id
     AZURE_COSMOS_PRIVATE_DNS_ZONE_ID  = [string]$cosmosPrivateDnsZone.id
+    AZURE_FOUNDRY_ACCOUNT_ID          = [string]$foundry.id
+    AZURE_FOUNDRY_ACCOUNT_NAME        = [string]$foundry.name
+    AZURE_FOUNDRY_PRIVATE_ENDPOINT_ID = [string]$foundryPrivateEndpoint.id
+    AZURE_FOUNDRY_PRIVATE_DNS_ZONE_ID = [string]$foundryPrivateDnsZone.id
     AZURE_VIRTUAL_NETWORK_ID          = [string]$virtualNetwork.id
     AZURE_CONTAINER_APPS_SUBNET_ID    = [string]$containerAppsSubnet.id
     AZURE_PRIVATE_ENDPOINT_SUBNET_ID  = [string]$privateEndpointSubnet.id
     AZURE_LOG_ANALYTICS_WORKSPACE_ID  = [string]$logAnalyticsWorkspace.id
     COSMOSDB_ENDPOINT                 = [string]$cosmosDetails.endpoint
+    FOUNDRY_ENDPOINT                  = [string]$foundryDetails.endpoint
+    FOUNDRY_MODEL_DEPLOYMENT          = [string]$foundryModelDeployment.name
 }
 
 foreach ($entry in $values.GetEnumerator()) {
@@ -481,11 +525,17 @@ if ($PublishGitHub) {
         'AZURE_COSMOS_ACCOUNT_NAME',
         'AZURE_COSMOS_PRIVATE_ENDPOINT_ID',
         'AZURE_COSMOS_PRIVATE_DNS_ZONE_ID',
+        'AZURE_FOUNDRY_ACCOUNT_ID',
+        'AZURE_FOUNDRY_ACCOUNT_NAME',
+        'AZURE_FOUNDRY_PRIVATE_ENDPOINT_ID',
+        'AZURE_FOUNDRY_PRIVATE_DNS_ZONE_ID',
         'AZURE_VIRTUAL_NETWORK_ID',
         'AZURE_CONTAINER_APPS_SUBNET_ID',
         'AZURE_PRIVATE_ENDPOINT_SUBNET_ID',
         'AZURE_LOG_ANALYTICS_WORKSPACE_ID',
-        'COSMOSDB_ENDPOINT'
+        'COSMOSDB_ENDPOINT',
+        'FOUNDRY_ENDPOINT',
+        'FOUNDRY_MODEL_DEPLOYMENT'
     )
 
     foreach ($name in $variableNames) {

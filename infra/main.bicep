@@ -14,6 +14,12 @@ param registryServer string
 param cosmosAccountId string
 @description('Existing HTTPS Cosmos DB account endpoint from the foundation deployment.')
 param cosmosEndpoint string
+@description('Existing Azure OpenAI account resource ID from the foundation deployment.')
+param foundryAccountId string
+@description('Existing HTTPS Azure OpenAI account endpoint from the foundation deployment.')
+param foundryEndpoint string
+@description('Existing Model Router deployment name from the foundation deployment.')
+param foundryModelDeployment string
 @description('Existing private-endpoint subnet resource ID from the foundation deployment.')
 param privateEndpointSubnetId string
 @description('Existing virtual network resource ID from the foundation deployment.')
@@ -46,6 +52,12 @@ param providerRefreshesPerHour int = 40
 param providerMaxResponseBytes int = 67108864
 @minValue(1)
 param calculationConcurrency int = 10
+@minValue(1)
+@maxValue(8)
+param assistantConcurrency int = 2
+@minValue(1)
+@maxValue(60)
+param assistantRequestsPerMinute int = 10
 param tags object = {
   application: 'tco-calculator'
   environment: 'dev'
@@ -55,6 +67,7 @@ param tags object = {
 var containerAppName = '${namePrefix}-app'
 var registryName = last(split(registryId, '/'))
 var cosmosAccountName = last(split(cosmosAccountId, '/'))
+var foundryAccountName = last(split(foundryAccountId, '/'))
 
 module keyVaultPrivateEndpoint 'modules/key-vault-private-endpoint.bicep' = {
   name: 'key-vault-private-endpoint'
@@ -75,12 +88,16 @@ module containerApp 'modules/container-app.bicep' = {
   ]
   params: {
     applicationRegion: location
+    assistantConcurrency: assistantConcurrency
+    assistantRequestsPerMinute: assistantRequestsPerMinute
     containerImage: containerImage
     calculationConcurrency: calculationConcurrency
     configureAuthentication: configureAuthentication
     cosmosEndpoint: cosmosEndpoint
     entraClientId: entraClientId
     entraClientSecretUri: entraClientSecretUri
+    foundryEndpoint: foundryEndpoint
+    foundryModelDeployment: foundryModelDeployment
     guestRequestsPerMinute: guestRequestsPerMinute
     location: location
     managedEnvironmentId: managedEnvironmentId
@@ -101,6 +118,10 @@ resource cosmosResource 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' exist
   name: cosmosAccountName
 }
 
+resource foundryResource 'Microsoft.CognitiveServices/accounts@2025-12-01' existing = {
+  name: foundryAccountName
+}
+
 resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(registryResource.id, containerAppName, 'AcrPull')
   scope: registryResource
@@ -118,6 +139,16 @@ resource cosmosDataContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAss
     principalId: containerApp.outputs.principalId
     roleDefinitionId: '${cosmosResource.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
     scope: '${cosmosResource.id}/dbs/tco'
+  }
+}
+
+resource foundryInferenceUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(foundryResource.id, containerAppName, 'CognitiveServicesOpenAIUser')
+  scope: foundryResource
+  properties: {
+    principalId: containerApp.outputs.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
   }
 }
 

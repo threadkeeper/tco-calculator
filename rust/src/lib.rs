@@ -1,4 +1,5 @@
 pub mod api;
+pub mod assistant;
 pub mod auth;
 pub mod calculation;
 pub mod config;

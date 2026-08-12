@@ -16,6 +16,7 @@ pub struct ReadinessResponse {
     status: &'static str,
     persistence: &'static str,
     price_providers: &'static str,
+    assistant: &'static str,
 }
 
 #[derive(Serialize)]
@@ -48,6 +49,11 @@ pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
                 (_, false) => "unavailable",
             },
             price_providers: price_provider_status(state.config.environment, providers_ready),
+            assistant: if state.assistant_enabled {
+                "configured"
+            } else {
+                "disabled"
+            },
         }),
     )
 }

@@ -5,9 +5,15 @@
   import {
     MAX_ASSISTANT_QUESTION_CHARACTERS,
     requestAssistantHelp,
+    requestAssistantTurn,
     validateAssistantQuestion,
     type AssistantHelpReference
   } from '$lib/assistant';
+
+  let {
+    authenticated = false,
+    projectId = null
+  }: { authenticated?: boolean; projectId?: string | null } = $props();
 
   type ChatMessage = {
     id: number;
@@ -103,7 +109,9 @@
     await scrollToLatest();
 
     try {
-      const response = await requestAssistantHelp(normalizedQuestion, controller.signal);
+      const response = authenticated
+        ? await requestAssistantTurn(normalizedQuestion, projectId, controller.signal)
+        : await requestAssistantHelp(normalizedQuestion, controller.signal);
       if (activeRequest !== controller) return;
       messages = [
         ...messages,
@@ -163,7 +171,9 @@
         <span class="heading-icon" aria-hidden="true"><MessageCircle size={18} /></span>
         <div>
           <h2 id="assistant-title">TCO assistant</h2>
-          <p id="assistant-boundary">Application help</p>
+          <p id="assistant-boundary">
+            {authenticated ? 'Read-only project guidance' : 'Application help'}
+          </p>
         </div>
       </div>
       <div class="header-actions">

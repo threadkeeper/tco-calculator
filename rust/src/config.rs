@@ -1,11 +1,13 @@
 use std::{env, net::SocketAddr, path::PathBuf};
 
+use reqwest::Url;
 use thiserror::Error;
 use uuid::Uuid;
 
 pub const APP_VERSION: &str = include_str!("../../VERSION").trim_ascii();
 pub const FORMULA_VERSION: &str = "1.0.0";
 pub const SCHEMA_VERSION: &str = "1.0.0";
+pub const FOUNDRY_API_VERSION: &str = "2024-10-21";
 pub const MAX_PROVIDER_REFRESHES_PER_HOUR: u32 = 10_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,11 +23,13 @@ pub struct Config {
     pub environment: AppEnvironment,
     pub local_auth: Option<LocalAuthSettings>,
     pub cosmos: Option<CosmosSettings>,
+    pub assistant: Option<AssistantSettings>,
     pub web_asset_dir: PathBuf,
     pub guest_requests_per_minute: u32,
     pub provider_refreshes_per_hour: u32,
     pub provider_max_response_bytes: usize,
     pub calculation_concurrency: usize,
+    pub assistant_requests_per_minute: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,6 +43,14 @@ pub struct LocalAuthSettings {
 pub struct CosmosSettings {
     pub endpoint: String,
     pub application_region: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssistantSettings {
+    pub endpoint: Url,
+    pub deployment: String,
+    pub api_version: String,
+    pub concurrency: usize,
 }
 
 #[derive(Debug, Error)]
@@ -63,6 +75,24 @@ pub enum ConfigError {
     InvalidCosmosEndpoint,
     #[error("AZURE_REGION must be a valid Azure region name")]
     InvalidAzureRegion,
+    #[error("ASSISTANT_ENABLED must be true or false")]
+    InvalidAssistantEnabled,
+    #[error("Foundry assistant settings require ASSISTANT_ENABLED=true")]
+    AssistantSettingsWhileDisabled,
+    #[error("live assistant inference is not supported with APP_ENV=local")]
+    AssistantInLocalEnvironment,
+    #[error("enabled assistant requires endpoint, deployment, and API version together")]
+    IncompleteAssistantSettings,
+    #[error("FOUNDRY_ENDPOINT must be an HTTPS Azure Foundry endpoint")]
+    InvalidFoundryEndpoint,
+    #[error("FOUNDRY_MODEL_DEPLOYMENT must be a valid deployment name")]
+    InvalidFoundryDeployment,
+    #[error("FOUNDRY_API_VERSION must match the approved stable API version")]
+    InvalidFoundryApiVersion,
+    #[error("ASSISTANT_CONCURRENCY must be between 1 and 8")]
+    InvalidAssistantConcurrency,
+    #[error("ASSISTANT_REQUESTS_PER_MINUTE must be between 1 and 60")]
+    InvalidAssistantRequestQuota,
     #[error("request quota settings must be within supported positive ranges")]
     InvalidQuota,
     #[error("PROVIDER_MAX_RESPONSE_BYTES must be between 1 MiB and 256 MiB")]
@@ -117,6 +147,14 @@ impl Config {
             env::var("COSMOSDB_ENDPOINT").ok(),
             env::var("AZURE_REGION").ok(),
         )?;
+        let assistant = assistant_settings(
+            environment,
+            env::var("ASSISTANT_ENABLED").ok().as_deref(),
+            env::var("FOUNDRY_ENDPOINT").ok(),
+            env::var("FOUNDRY_MODEL_DEPLOYMENT").ok(),
+            env::var("FOUNDRY_API_VERSION").ok(),
+            env::var("ASSISTANT_CONCURRENCY").ok().as_deref(),
+        )?;
         let web_asset_dir = env::var_os("WEB_ASSET_DIR")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
@@ -127,19 +165,103 @@ impl Config {
         let provider_max_response_bytes =
             provider_response_limit(env::var("PROVIDER_MAX_RESPONSE_BYTES").ok().as_deref())?;
         let calculation_concurrency = positive_u32("CALCULATION_CONCURRENCY", 10)? as usize;
+        let assistant_requests_per_minute = env::var("ASSISTANT_REQUESTS_PER_MINUTE")
+            .unwrap_or_else(|_| "10".to_owned())
+            .parse::<u32>()
+            .ok()
+            .filter(|value| (1..=60).contains(value))
+            .ok_or(ConfigError::InvalidAssistantRequestQuota)?;
 
         Ok(Self {
             bind_address,
             environment,
             local_auth,
             cosmos,
+            assistant,
             web_asset_dir,
             guest_requests_per_minute,
             provider_refreshes_per_hour,
             provider_max_response_bytes,
             calculation_concurrency,
+            assistant_requests_per_minute,
         })
     }
+}
+
+fn assistant_settings(
+    environment: AppEnvironment,
+    enabled: Option<&str>,
+    endpoint: Option<String>,
+    deployment: Option<String>,
+    api_version: Option<String>,
+    concurrency: Option<&str>,
+) -> Result<Option<AssistantSettings>, ConfigError> {
+    let enabled = match enabled.unwrap_or("false") {
+        "true" => true,
+        "false" => false,
+        _ => return Err(ConfigError::InvalidAssistantEnabled),
+    };
+    let has_setting = endpoint.is_some()
+        || deployment.is_some()
+        || api_version.is_some()
+        || concurrency.is_some();
+    if !enabled {
+        return if has_setting {
+            Err(ConfigError::AssistantSettingsWhileDisabled)
+        } else {
+            Ok(None)
+        };
+    }
+    if environment == AppEnvironment::Local {
+        return Err(ConfigError::AssistantInLocalEnvironment);
+    }
+
+    let (endpoint, deployment, api_version) = match (endpoint, deployment, api_version) {
+        (Some(endpoint), Some(deployment), Some(api_version)) => {
+            (endpoint, deployment, api_version)
+        }
+        _ => return Err(ConfigError::IncompleteAssistantSettings),
+    };
+    let endpoint = Url::parse(&endpoint).map_err(|_| ConfigError::InvalidFoundryEndpoint)?;
+    if !valid_foundry_endpoint(&endpoint) {
+        return Err(ConfigError::InvalidFoundryEndpoint);
+    }
+    if !(1..=64).contains(&deployment.len())
+        || !deployment
+            .bytes()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, b'-' | b'_'))
+    {
+        return Err(ConfigError::InvalidFoundryDeployment);
+    }
+    if api_version != FOUNDRY_API_VERSION {
+        return Err(ConfigError::InvalidFoundryApiVersion);
+    }
+    let concurrency = concurrency
+        .unwrap_or("2")
+        .parse::<usize>()
+        .ok()
+        .filter(|value| (1..=8).contains(value))
+        .ok_or(ConfigError::InvalidAssistantConcurrency)?;
+
+    Ok(Some(AssistantSettings {
+        endpoint,
+        deployment,
+        api_version,
+        concurrency,
+    }))
+}
+
+fn valid_foundry_endpoint(endpoint: &Url) -> bool {
+    endpoint.scheme() == "https"
+        && endpoint.username().is_empty()
+        && endpoint.password().is_none()
+        && endpoint.port().is_none()
+        && endpoint.path() == "/"
+        && endpoint.query().is_none()
+        && endpoint.fragment().is_none()
+        && endpoint.host_str().is_some_and(|host| {
+            host.ends_with(".openai.azure.com") || host.ends_with(".services.ai.azure.com")
+        })
 }
 
 fn cosmos_settings(
@@ -290,6 +412,65 @@ mod tests {
         assert!(matches!(
             validate_provider_refresh_quota(MAX_PROVIDER_REFRESHES_PER_HOUR + 1),
             Err(ConfigError::InvalidQuota)
+        ));
+    }
+
+    #[test]
+    fn assistant_is_off_by_default_and_rejects_ignored_settings() {
+        assert_eq!(
+            assistant_settings(AppEnvironment::Production, None, None, None, None, None)
+                .expect("disabled by default"),
+            None
+        );
+        assert!(matches!(
+            assistant_settings(
+                AppEnvironment::Production,
+                Some("false"),
+                Some("https://tco.openai.azure.com/".to_owned()),
+                None,
+                None,
+                None,
+            ),
+            Err(ConfigError::AssistantSettingsWhileDisabled)
+        ));
+    }
+
+    #[test]
+    fn enabled_assistant_requires_the_pinned_private_data_plane_contract() {
+        let settings = assistant_settings(
+            AppEnvironment::Production,
+            Some("true"),
+            Some("https://tco.services.ai.azure.com/".to_owned()),
+            Some("tco-model-router".to_owned()),
+            Some(FOUNDRY_API_VERSION.to_owned()),
+            Some("3"),
+        )
+        .expect("valid settings")
+        .expect("enabled assistant");
+        assert_eq!(settings.deployment, "tco-model-router");
+        assert_eq!(settings.concurrency, 3);
+
+        assert!(matches!(
+            assistant_settings(
+                AppEnvironment::Local,
+                Some("true"),
+                Some("https://tco.services.ai.azure.com/".to_owned()),
+                Some("tco-model-router".to_owned()),
+                Some(FOUNDRY_API_VERSION.to_owned()),
+                None,
+            ),
+            Err(ConfigError::AssistantInLocalEnvironment)
+        ));
+        assert!(matches!(
+            assistant_settings(
+                AppEnvironment::Production,
+                Some("true"),
+                Some("https://example.invalid/".to_owned()),
+                Some("tco-model-router".to_owned()),
+                Some(FOUNDRY_API_VERSION.to_owned()),
+                None,
+            ),
+            Err(ConfigError::InvalidFoundryEndpoint)
         ));
     }
 }

@@ -10,6 +10,8 @@ param tags object = {
   managedBy: 'bicep'
 }
 
+var foundryLocation = 'swedencentral'
+
 module monitoring 'modules/monitoring.bicep' = {
   name: 'monitoring'
   params: {
@@ -58,6 +60,27 @@ module cosmosPrivateEndpoint 'modules/cosmos-private-endpoint.bicep' = {
   }
 }
 
+module foundry 'modules/foundry.bicep' = {
+  name: 'foundry'
+  params: {
+    location: foundryLocation
+    namePrefix: namePrefix
+    tags: tags
+  }
+}
+
+module foundryPrivateEndpoint 'modules/foundry-private-endpoint.bicep' = {
+  name: 'foundry-private-endpoint'
+  params: {
+    foundryAccountId: foundry.outputs.accountId
+    location: location
+    namePrefix: namePrefix
+    privateEndpointSubnetId: network.outputs.privateEndpointSubnetId
+    tags: tags
+    virtualNetworkId: network.outputs.virtualNetworkId
+  }
+}
+
 module managedEnvironment 'modules/managed-environment.bicep' = {
   name: 'managed-environment'
   params: {
@@ -78,6 +101,12 @@ output cosmosAccountName string = cosmos.outputs.name
 output cosmosEndpoint string = cosmos.outputs.endpoint
 output cosmosPrivateEndpointId string = cosmosPrivateEndpoint.outputs.privateEndpointId
 output cosmosPrivateDnsZoneId string = cosmosPrivateEndpoint.outputs.privateDnsZoneId
+output foundryAccountId string = foundry.outputs.accountId
+output foundryAccountName string = foundry.outputs.accountName
+output foundryEndpoint string = foundry.outputs.endpoint
+output foundryModelDeployment string = foundry.outputs.deploymentName
+output foundryPrivateEndpointId string = foundryPrivateEndpoint.outputs.privateEndpointId
+output foundryPrivateDnsZoneId string = foundryPrivateEndpoint.outputs.privateDnsZoneId
 output logAnalyticsWorkspaceId string = monitoring.outputs.workspaceId
 output privateEndpointSubnetId string = network.outputs.privateEndpointSubnetId
 output registryId string = registry.outputs.id
