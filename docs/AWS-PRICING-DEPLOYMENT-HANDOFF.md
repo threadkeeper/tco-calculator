@@ -128,40 +128,25 @@ az role assignment list `
 
 ## Guarded Deployment Sequence
 
-Do not reuse a preview from another commit. After CI succeeds for the exact new `main` SHA:
+After CI succeeds for the exact current `main` SHA and the user explicitly authorizes the development deployment:
 
-1. Start a build/preview:
+1. Dispatch the confirmed deployment:
 
    ```powershell
-   gh workflow run deploy-app.yml --ref main -f operation=build-preview
+   gh workflow run deploy-app.yml --ref main `
+     -f confirmation='DEPLOY APP rg-tco'
    ```
 
 2. Find and monitor its run ID:
 
    ```powershell
    gh run list --workflow deploy-app.yml --limit 5
-   gh run watch <preview-run-id> --exit-status
-   ```
-
-3. Review the successful run and its Azure what-if. It must contain no deletions or unexpected foundation changes.
-
-4. Only with explicit deployment authorization, deploy using that exact preview run:
-
-   ```powershell
-   gh workflow run deploy-app.yml --ref main `
-     -f operation=deploy `
-     -f preview_run_id=<preview-run-id> `
-     -f confirmation='DEPLOY APP rg-tco'
-   ```
-
-5. Monitor the deployment:
-
-   ```powershell
-   gh run list --workflow deploy-app.yml --limit 5
    gh run watch <deploy-run-id> --exit-status
    ```
 
-6. Verify `/healthz`, `/readyz`, `/version`, and that the deployed immutable image corresponds to the reviewed commit.
+3. The same run must build or reuse the locked dependency image, build and lock the exact-commit application image, resolve its digest, and complete an Azure what-if with no deletions or unexpected foundation changes before any deployment mutation.
+
+4. Verify `/healthz`, `/readyz`, `/version`, and that the deployed immutable image corresponds to the exact deployed commit.
 
 ## Configure the Refresh Workflow
 
@@ -227,8 +212,8 @@ The workflow calls only the application HTTPS API. It has no Cosmos credential o
 
 ## Safety Notes
 
-- Do not deploy until CI passes for the exact commit being previewed.
-- Do not reuse preview run `31507824649`; it belongs to old commit `360f2aa`.
+- Do not deploy until CI passes for the exact current `main` commit.
+- Do not bypass the same-run image-lock, deployment-validation, or what-if checks.
 - Do not bypass the role-assignment authorization failure.
 - Do not place credentials, tokens, identity headers, or Cosmos keys in the workflow.
 - Do not send project/customer data to AWS pricing endpoints.
