@@ -4,16 +4,12 @@
   import { ApiProblem } from '$lib/api';
   import {
     MAX_ASSISTANT_QUESTION_CHARACTERS,
-    requestAssistantHelp,
     requestAssistantTurn,
     validateAssistantQuestion,
     type AssistantHelpReference
   } from '$lib/assistant';
 
-  let {
-    authenticated = false,
-    projectId = null
-  }: { authenticated?: boolean; projectId?: string | null } = $props();
+  let { projectId = null }: { projectId?: string | null } = $props();
 
   type ChatMessage = {
     id: number;
@@ -109,9 +105,7 @@
     await scrollToLatest();
 
     try {
-      const response = authenticated
-        ? await requestAssistantTurn(normalizedQuestion, projectId, controller.signal)
-        : await requestAssistantHelp(normalizedQuestion, controller.signal);
+      const response = await requestAssistantTurn(normalizedQuestion, projectId, controller.signal);
       if (activeRequest !== controller) return;
       messages = [
         ...messages,
@@ -154,7 +148,7 @@
     if (error instanceof ApiProblem && error.requestId) {
       return `${error.message} Request ${error.requestId}`;
     }
-    return error instanceof Error ? error.message : 'Application help is unavailable.';
+    return error instanceof Error ? error.message : 'The TCO assistant is unavailable.';
   }
 </script>
 
@@ -171,9 +165,7 @@
         <span class="heading-icon" aria-hidden="true"><MessageCircle size={18} /></span>
         <div>
           <h2 id="assistant-title">TCO assistant</h2>
-          <p id="assistant-boundary">
-            {authenticated ? 'Read-only project guidance' : 'Application help'}
-          </p>
+          <p id="assistant-boundary">Read-only project guidance</p>
         </div>
       </div>
       <div class="header-actions">
