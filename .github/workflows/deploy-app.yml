@@ -452,6 +452,13 @@ jobs:
             throw 'Main advanced while this run was building; dispatch the current main commit instead of rolling dev back.'
           }
 
+      - name: Refresh Azure login with OIDC for deployment
+        uses: Azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
       - name: Deploy application
         shell: pwsh
         run: |
@@ -643,6 +650,13 @@ jobs:
             --parameters infra/parameters/dev.bicepparam `
             --only-show-errors `
             --output none
+
+      - name: Refresh Azure login with OIDC for verification
+        uses: Azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Verify deployed application
         id: verify
