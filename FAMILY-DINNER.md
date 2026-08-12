@@ -2,14 +2,30 @@
 
 This file is the repository's transient coordination board for concurrent agents and chat sessions. It contains active work only. Every agent performing repository work MUST read it before starting and maintain one current entry until the work is completed or explicitly handed off.
 
+## Flight Controller
+
+Snapshot UTC: `not set`. Durations are point-in-time values at this snapshot, not live counters.
+
+| Agent / chat name | Status | Status reason | Status change time (UTC) | Status duration | Blocked by agent | Priority |
+| --- | --- | --- | --- | --- | --- | --- |
+
+_No active tasks._
+
 ## Coordination Rules
 
 1. Before the first repository mutation, use the **Board Write Mutex** below to add an entry under **Active Tasks**. Re-read this file immediately before every file edit, mutating command, long-running process change, or GitHub Actions operation.
 2. Give each task a unique ID and identify the agent or chat session. Record the exact files, directories, generated outputs, commands, ports, and other shared resources the task may change or occupy. Use the narrowest practical scope. `FAMILY-DINNER.md` is the shared ledger and MUST NOT be treated as an exclusive reservation.
 3. Treat another active entry's reserved paths and resources as read-only. Do not edit, move, delete, format, generate, build over, or otherwise interfere with them. If scopes overlap, record `waiting` and obtain an explicit handoff in this file; ask the user to arbitrate when ownership is unclear.
-4. Keep the entry current whenever status, scope, reserved paths, processes, next action, or workflow information changes. Every agent may edit its own task block in this shared file; only a task explicitly maintaining the coordination protocol may edit the static rules or template. Preserve every other agent's entry, and re-read the file after each update to detect concurrent changes.
+4. Keep the Flight Controller row and task entry current whenever status, status reason, blocker, priority, scope, reserved paths, processes, next action, or workflow information changes. Every agent may edit only its own row and task block; only a task explicitly maintaining the coordination protocol may edit the static rules or template. Preserve every other agent's row and entry, and re-read the file after each update to detect concurrent changes.
 5. Use these statuses: `planning`, `active`, `waiting`, `workflow-running`, or `handoff`. An agent accepting a handoff MUST update the owner and status before continuing.
 6. Do not place secrets, credentials, tokens, customer data, tenant or subscription identifiers, private URLs, or sensitive logs in this file. Use only the minimum coordination metadata.
+
+## Flight Controller Rules
+
+1. Keep **Flight Controller** as the first operational section and maintain exactly one row per active task. The row's agent/chat name MUST equal its task ID so blockers are unambiguous.
+2. On every board write, set `Snapshot UTC` to the write time and refresh all status durations from each row's status-change time. A duration is a compact rounded-down value such as `8m`, `2h 14m`, or `3d 2h`; it is accurate only at the displayed snapshot.
+3. Change a row's status-change time only when its status or status reason changes. Use `none`, an exact active task ID, or `external: <short reason>` for the blocker. Use priority `P0` for urgent coordination, security, or release blockers; `P1` for high-priority correctness or release work; `P2` for normal work; and `P3` for opportunistic work.
+4. A task owner controls its row's operational values. A protocol-maintenance task may bootstrap or repair the panel from existing task metadata but MUST NOT otherwise reprioritize or change another owner's reported state.
 
 ## Board Write Mutex
 
@@ -36,7 +52,7 @@ This file is the repository's transient coordination board for concurrent agents
 ## Completion And Cleanup
 
 1. A task is complete only after its owned edits and processes are finished, required validation has reached a terminal result, and any owned GitHub Actions run has reached a terminal state or has been explicitly handed off.
-2. Immediately before the final response, remove the task's entire entry, including file reservations, process details, workflow metadata, run IDs, status, timestamps, and notes. Do not archive completed entries here.
+2. Immediately before the final response, atomically remove both the task's Flight Controller row and its entire entry, including file reservations, process details, workflow metadata, run IDs, status, timestamps, and notes. Do not archive completed entries here.
 3. If work is handed off, keep only the information required for the receiving agent and update the owner; the receiving agent removes the entry after completion.
 4. Do not remove another agent's entry merely because it appears old. First verify that no related edit, process, or workflow is active; when that cannot be established, leave it in place and ask the user to resolve it.
 5. When the final active entry is removed, restore `_No active tasks._` under **Active Tasks**.
@@ -46,7 +62,9 @@ This file is the repository's transient coordination board for concurrent agents
 _No active tasks._
 
 <!--
-When claiming the first active task, remove the empty-state line above. Append one block per task in this form and remove the entire block when the task is complete:
+When claiming the first active task, remove both empty-state lines above, set the Flight Controller snapshot, add one table row in the form below, and append one task block. Remove the row and entire block together when the task is complete:
+
+| `<task-id>` | `<status>` | <short reason> | `<ISO 8601 UTC>` | <duration> | `<task-id>` / `external: <reason>` / `none` | P0 / P1 / P2 / P3 |
 
 ### <task-id>
 
