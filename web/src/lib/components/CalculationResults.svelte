@@ -9,6 +9,7 @@
     readString,
     type JsonRecord
   } from '$lib/api';
+  import { relevantCalculationWarnings } from '$lib/calculation-warnings';
   import type { ResourceDraft } from '$lib/draft';
 
   let { calculation, resources }: { calculation: unknown; resources: ResourceDraft[] } = $props();
@@ -26,11 +27,7 @@
   const noComparablePrices = $derived(
     comparableResourceCount === 0 && priceUnavailableResourceCount > 0
   );
-  const warnings = $derived(
-    Array.isArray(revision?.warnings)
-      ? revision.warnings.filter((warning): warning is string => typeof warning === 'string')
-      : []
-  );
+  const warnings = $derived(relevantCalculationWarnings(revision?.warnings));
 
   function resourceName(result: JsonRecord): string {
     const id = readString(result, 'resource_id');

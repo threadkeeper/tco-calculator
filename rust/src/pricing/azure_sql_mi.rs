@@ -192,10 +192,6 @@ pub fn normalize_azure_sql_mi(
                 ));
                 continue;
             };
-            warnings.push(format!(
-                "Azure SQL MI {} uses the General Purpose data-storage meter fallback for Next Generation General Purpose.",
-                configuration.configuration_key
-            ));
             rate
         } else {
             warnings.push(format!(
@@ -601,7 +597,7 @@ mod tests {
                 "https://prices.azure.com/api/retail/prices".to_owned(),
             ]
         );
-        assert_eq!(normalized.warnings.len(), 1);
+        assert!(normalized.warnings.is_empty());
         let payg = record(&normalized, PurchaseOption::Payg);
         assert_eq!(payg.rate.compute_hourly.to_string(), "5.632");
         assert_eq!(payg.rate.license_hourly.to_string(), "3.198912");
