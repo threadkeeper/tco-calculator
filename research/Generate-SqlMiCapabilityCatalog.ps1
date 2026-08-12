@@ -82,20 +82,22 @@ $candidates = [System.Collections.Generic.List[object]]::new()
 foreach ($azureRegion in $azureRegions) {
     foreach ($vcore in $vcores) {
         $supportedMemory = @($memoryOptions[[string]$vcore])
-        $candidates.Add([ordered]@{
-            configuration_key = "managed-vcore-next-gen-general-purpose-premium-series-$vcore"
-            azure_region = $azureRegion
-            service_tier = 'next_generation_general_purpose'
-            hardware_family = 'Premium Series'
-            vcores = $vcore
-            zone_redundant = $false
-            included_memory_gb = $supportedMemory[0]
-            supported_memory_gb = $supportedMemory
-            storage_architecture = 'Remote LRS'
-            maximum_storage_gb = Get-NggpMaximumStorageGb -Vcores $vcore
-            source_url = $resourceLimitsUrl
-            reviewed_date = $reviewedDate
-        })
+        if ($azureRegion -ne 'italynorth') {
+            $candidates.Add([ordered]@{
+                configuration_key = "managed-vcore-next-gen-general-purpose-premium-series-$vcore"
+                azure_region = $azureRegion
+                service_tier = 'next_generation_general_purpose'
+                hardware_family = 'Premium Series'
+                vcores = $vcore
+                zone_redundant = $false
+                included_memory_gb = $supportedMemory[0]
+                supported_memory_gb = $supportedMemory
+                storage_architecture = 'Remote LRS'
+                maximum_storage_gb = Get-NggpMaximumStorageGb -Vcores $vcore
+                source_url = $resourceLimitsUrl
+                reviewed_date = $reviewedDate
+            })
+        }
 
         $includedMemory = $supportedMemory[0]
         $candidates.Add([ordered]@{
@@ -122,7 +124,12 @@ $anchor = $candidates | Where-Object {
 if ($null -eq $anchor -or $anchor.included_memory_gb -ne '224' -or '256' -notin $anchor.supported_memory_gb) {
     throw 'The required Sweden Central 32-vCore, 224/256-GB parity anchor is missing.'
 }
-$expectedCandidateCount = $azureRegions.Count * $vcores.Count * 2
+$italyNorthCandidates = @($candidates | Where-Object { $_.azure_region -eq 'italynorth' })
+if ($italyNorthCandidates.Count -ne $vcores.Count -or
+    @($italyNorthCandidates | Where-Object { $_.service_tier -ne 'business_critical' }).Count -ne 0) {
+    throw 'Italy North must contain only the reviewed Business Critical configurations.'
+}
+$expectedCandidateCount = (($azureRegions.Count * 2) - 1) * $vcores.Count
 if ($candidates.Count -ne $expectedCandidateCount) {
     throw "Expected $expectedCandidateCount reviewed capability records, found $($candidates.Count)."
 }
@@ -135,6 +142,7 @@ $catalog = [ordered]@{
     assumptions = @(
         'The catalog includes the 28 public USD regions listed for Premium-series hardware with 16-TB storage and supported by both approved pricing endpoints.'
         'China North 3 is excluded because the approved global USD Retail Prices and Azure SQL calculator endpoints do not provide a compatible price feed for that sovereign-cloud region.'
+        'Italy North includes Business Critical only because the approved Retail Prices endpoint does not publish the Premium-series additional-memory meter required to price Next Generation General Purpose flexible memory.'
         'East Asia can have temporary Premium-series capacity constraints; catalog inclusion does not promise deployable capacity.'
         'Business Critical flexible memory is excluded because the reviewed source marks it preview.'
         'Storage values convert documented TiB-scale limits to GB using 1 TiB = 1024 GB.'

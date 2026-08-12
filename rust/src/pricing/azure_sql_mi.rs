@@ -204,12 +204,18 @@ pub fn normalize_azure_sql_mi(
             ));
             continue;
         };
-        let Some(memory) = retail.memory.get(&configuration.zone_redundant) else {
-            warnings.push(format!(
-                "Azure SQL MI {} has no applicable Premium-series additional-memory meter.",
-                configuration.configuration_key
-            ));
-            continue;
+        let memory = match configuration.service_tier {
+            ServiceTier::NextGenerationGeneralPurpose => {
+                let Some(rate) = retail.memory.get(&configuration.zone_redundant) else {
+                    warnings.push(format!(
+                        "Azure SQL MI {} has no applicable Premium-series additional-memory meter.",
+                        configuration.configuration_key
+                    ));
+                    continue;
+                };
+                Some(rate)
+            }
+            ServiceTier::BusinessCritical => None,
         };
 
         for purchase_option in PurchaseOption::ALL {
@@ -218,7 +224,9 @@ pub fn normalize_azure_sql_mi(
                 .ok_or(AzureSqlMiNormalizationError::MissingPurchaseOption)?;
             let mut meter_ids = option_rate.component_references.clone();
             meter_ids.extend(storage.meter_ids.iter().cloned());
-            meter_ids.extend(memory.meter_ids.iter().cloned());
+            if let Some(memory) = memory {
+                meter_ids.extend(memory.meter_ids.iter().cloned());
+            }
             records.push(AzureMiRateRecord {
                 stable_key: format!(
                     "{}|{}|{}|{}|{}|{}",
@@ -235,7 +243,9 @@ pub fn normalize_azure_sql_mi(
                     compute_hourly: DecimalValue(option_rate.compute_hourly),
                     license_hourly: DecimalValue(option_rate.license_hourly),
                     storage_monthly_per_gb: DecimalValue(storage.rate),
-                    additional_memory_per_gb_hourly: DecimalValue(memory.rate),
+                    additional_memory_per_gb_hourly: DecimalValue(
+                        memory.map_or(Decimal::ZERO, |rate| rate.rate),
+                    ),
                 },
                 provenance: RateProvenance {
                     source_url: context.calculator_source_url.to_owned(),
@@ -653,6 +663,36 @@ mod tests {
         assert_eq!(normalized.warnings.len(), 1);
     }
 
+    #[test]
+    fn business_critical_does_not_require_additional_memory_meter() {
+        let calculator = calculator_payload(true);
+        let retail = retail_page_without_memory("Business Critical");
+        let configuration = AzureMiConfiguration {
+            service_tier: ServiceTier::BusinessCritical,
+            ..configuration()
+        };
+
+        let normalized = normalize_azure_sql_mi(
+            context(),
+            &[configuration],
+            &calculator,
+            &[AzureRetailPagePayload {
+                source_url: "https://prices.azure.com/api/retail/prices",
+                body: &retail,
+            }],
+        )
+        .expect("normalize Business Critical without flexible-memory meter");
+
+        assert_eq!(normalized.records.len(), PurchaseOption::ALL.len());
+        assert!(normalized.warnings.is_empty());
+        assert!(
+            normalized
+                .records
+                .iter()
+                .all(|record| { record.rate.additional_memory_per_gb_hourly.0 == Decimal::ZERO })
+        );
+    }
+
     fn context() -> AzureSqlMiNormalizationContext<'static> {
         AzureSqlMiNormalizationContext {
             target_region: "swedencentral",
@@ -775,5 +815,24 @@ mod tests {
             ]
         }))
         .expect("serialize Retail Prices page")
+    }
+
+    fn retail_page_without_memory(tier: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "Items": [{
+                "serviceName": "SQL Managed Instance",
+                "armRegionName": "swedencentral",
+                "currencyCode": "USD",
+                "productName": format!("SQL Managed Instance {tier} Storage"),
+                "skuName": "Data Stored",
+                "meterName": "Data Stored",
+                "unitOfMeasure": "1 GB/Month",
+                "type": "Consumption",
+                "retailPrice": "0.13685",
+                "effectiveStartDate": "2026-01-01T00:00:00Z",
+                "meterId": "storage-meter"
+            }]
+        }))
+        .expect("serialize Retail Prices page without memory")
     }
 }

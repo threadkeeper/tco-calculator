@@ -9,6 +9,7 @@
   "assumptions": [
     "The catalog includes the 28 public USD regions listed for Premium-series hardware with 16-TB storage and supported by both approved pricing endpoints.",
     "China North 3 is excluded because the approved global USD Retail Prices and Azure SQL calculator endpoints do not provide a compatible price feed for that sovereign-cloud region.",
+    "Italy North includes Business Critical only because the approved Retail Prices endpoint does not publish the Premium-series additional-memory meter required to price Next Generation General Purpose flexible memory.",
     "East Asia can have temporary Premium-series capacity constraints; catalog inclusion does not promise deployable capacity.",
     "Business Critical flexible memory is excluded because the reviewed source marks it preview.",
     "Storage values convert documented TiB-scale limits to GB using 1 TiB = 1024 GB."
@@ -6555,25 +6556,6 @@
       "reviewed_date": "2026-08-11"
     },
     {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-4",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 4,
-      "zone_redundant": false,
-      "included_memory_gb": "28",
-      "supported_memory_gb": [
-        "28",
-        "32",
-        "40",
-        "48"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "2048",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
       "configuration_key": "managed-vcore-business-critical-premium-series-4",
       "azure_region": "italynorth",
       "service_tier": "business_critical",
@@ -6586,25 +6568,6 @@
       ],
       "storage_architecture": "BC local SSD",
       "maximum_storage_gb": "1024",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-6",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 6,
-      "zone_redundant": false,
-      "included_memory_gb": "42",
-      "supported_memory_gb": [
-        "42",
-        "48",
-        "60",
-        "72"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "2048",
       "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
       "reviewed_date": "2026-08-11"
     },
@@ -6625,25 +6588,6 @@
       "reviewed_date": "2026-08-11"
     },
     {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-8",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 8,
-      "zone_redundant": false,
-      "included_memory_gb": "56",
-      "supported_memory_gb": [
-        "56",
-        "64",
-        "80",
-        "96"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "8192",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
       "configuration_key": "managed-vcore-business-critical-premium-series-8",
       "azure_region": "italynorth",
       "service_tier": "business_critical",
@@ -6656,25 +6600,6 @@
       ],
       "storage_architecture": "BC local SSD",
       "maximum_storage_gb": "2048",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-10",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 10,
-      "zone_redundant": false,
-      "included_memory_gb": "70",
-      "supported_memory_gb": [
-        "70",
-        "80",
-        "100",
-        "120"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "8192",
       "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
       "reviewed_date": "2026-08-11"
     },
@@ -6695,25 +6620,6 @@
       "reviewed_date": "2026-08-11"
     },
     {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-12",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 12,
-      "zone_redundant": false,
-      "included_memory_gb": "84",
-      "supported_memory_gb": [
-        "84",
-        "96",
-        "120",
-        "144"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "8192",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
       "configuration_key": "managed-vcore-business-critical-premium-series-12",
       "azure_region": "italynorth",
       "service_tier": "business_critical",
@@ -6726,25 +6632,6 @@
       ],
       "storage_architecture": "BC local SSD",
       "maximum_storage_gb": "2048",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-16",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 16,
-      "zone_redundant": false,
-      "included_memory_gb": "112",
-      "supported_memory_gb": [
-        "112",
-        "128",
-        "160",
-        "192"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "16384",
       "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
       "reviewed_date": "2026-08-11"
     },
@@ -6765,25 +6652,6 @@
       "reviewed_date": "2026-08-11"
     },
     {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-20",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 20,
-      "zone_redundant": false,
-      "included_memory_gb": "140",
-      "supported_memory_gb": [
-        "140",
-        "160",
-        "200",
-        "240"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "16384",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
       "configuration_key": "managed-vcore-business-critical-premium-series-20",
       "azure_region": "italynorth",
       "service_tier": "business_critical",
@@ -6796,25 +6664,6 @@
       ],
       "storage_architecture": "BC local SSD",
       "maximum_storage_gb": "4096",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-24",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 24,
-      "zone_redundant": false,
-      "included_memory_gb": "168",
-      "supported_memory_gb": [
-        "168",
-        "192",
-        "240",
-        "288"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "16384",
       "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
       "reviewed_date": "2026-08-11"
     },
@@ -6835,25 +6684,6 @@
       "reviewed_date": "2026-08-11"
     },
     {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-32",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 32,
-      "zone_redundant": false,
-      "included_memory_gb": "224",
-      "supported_memory_gb": [
-        "224",
-        "256",
-        "320",
-        "384"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "32768",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
       "configuration_key": "managed-vcore-business-critical-premium-series-32",
       "azure_region": "italynorth",
       "service_tier": "business_critical",
@@ -6866,25 +6696,6 @@
       ],
       "storage_architecture": "BC local SSD",
       "maximum_storage_gb": "5632",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-40",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 40,
-      "zone_redundant": false,
-      "included_memory_gb": "280",
-      "supported_memory_gb": [
-        "280",
-        "320",
-        "400",
-        "480"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "32768",
       "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
       "reviewed_date": "2026-08-11"
     },
@@ -6905,24 +6716,6 @@
       "reviewed_date": "2026-08-11"
     },
     {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-48",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 48,
-      "zone_redundant": false,
-      "included_memory_gb": "336",
-      "supported_memory_gb": [
-        "336",
-        "384",
-        "480"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "32768",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
       "configuration_key": "managed-vcore-business-critical-premium-series-48",
       "azure_region": "italynorth",
       "service_tier": "business_critical",
@@ -6935,23 +6728,6 @@
       ],
       "storage_architecture": "BC local SSD",
       "maximum_storage_gb": "5632",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-56",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 56,
-      "zone_redundant": false,
-      "included_memory_gb": "392",
-      "supported_memory_gb": [
-        "392",
-        "448"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "32768",
       "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
       "reviewed_date": "2026-08-11"
     },
@@ -6972,22 +6748,6 @@
       "reviewed_date": "2026-08-11"
     },
     {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-64",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 64,
-      "zone_redundant": false,
-      "included_memory_gb": "448",
-      "supported_memory_gb": [
-        "448"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "32768",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
       "configuration_key": "managed-vcore-business-critical-premium-series-64",
       "azure_region": "italynorth",
       "service_tier": "business_critical",
@@ -7000,22 +6760,6 @@
       ],
       "storage_architecture": "BC local SSD",
       "maximum_storage_gb": "16384",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-80",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 80,
-      "zone_redundant": false,
-      "included_memory_gb": "560",
-      "supported_memory_gb": [
-        "560"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "32768",
       "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
       "reviewed_date": "2026-08-11"
     },
@@ -7036,22 +6780,6 @@
       "reviewed_date": "2026-08-11"
     },
     {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-96",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 96,
-      "zone_redundant": false,
-      "included_memory_gb": "560",
-      "supported_memory_gb": [
-        "560"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "32768",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
       "configuration_key": "managed-vcore-business-critical-premium-series-96",
       "azure_region": "italynorth",
       "service_tier": "business_critical",
@@ -7064,22 +6792,6 @@
       ],
       "storage_architecture": "BC local SSD",
       "maximum_storage_gb": "16384",
-      "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
-      "reviewed_date": "2026-08-11"
-    },
-    {
-      "configuration_key": "managed-vcore-next-gen-general-purpose-premium-series-128",
-      "azure_region": "italynorth",
-      "service_tier": "next_generation_general_purpose",
-      "hardware_family": "Premium Series",
-      "vcores": 128,
-      "zone_redundant": false,
-      "included_memory_gb": "560",
-      "supported_memory_gb": [
-        "560"
-      ],
-      "storage_architecture": "Remote LRS",
-      "maximum_storage_gb": "32768",
       "source_url": "https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql",
       "reviewed_date": "2026-08-11"
     },
