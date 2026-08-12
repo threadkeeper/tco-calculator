@@ -8,6 +8,8 @@
 //! endpoint, price-snapshot, or confirmation fields. Those arrive through
 //! [`TurnContext`](super::context::TurnContext).
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -35,6 +37,9 @@ use super::{
 
 /// Documented Azure OpenAI limit for a function description.
 pub const MAX_TOOL_DESCRIPTION_CHARS: usize = 1_024;
+pub const MAX_PROPOSAL_CHANGES: usize = 500;
+pub const MAX_EXTRACTION_NOTES: usize = 100;
+pub const MAX_EXTRACTION_NOTE_CHARS: usize = 500;
 
 /// Effect class of a tool, used by preflight to decide batching and confirmation rules.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -132,6 +137,45 @@ const PROJECT_PATCH_SCHEMA: &str = r#"{
   }
 }"#;
 
+const STAGE_PROJECT_PATCH_SCHEMA: &str = r#"{
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["patch", "omissions", "uncertainties"],
+    "properties": {
+        "patch": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Candidate changes to the selected project. Omitted members keep their current value.",
+            "properties": {
+                "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+                "description": { "type": "string", "maxLength": 500 },
+                "settings": {
+                    "type": "object",
+                    "description": "Complete replacement project settings using the documented project schema."
+                },
+                "resources": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": { "type": "object" },
+                    "description": "Complete replacement workload list using the documented project schema."
+                }
+            }
+        },
+        "omissions": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "string", "minLength": 1, "maxLength": 500 },
+            "description": "Visible source values that could not be mapped to supported project fields."
+        },
+        "uncertainties": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "string", "minLength": 1, "maxLength": 500 },
+            "description": "Candidate mappings that require user review because the source was ambiguous."
+        }
+    }
+}"#;
+
 /// Every registered tool. Dispatch matches explicitly over this list.
 pub const TOOLS: &[ToolDefinition] = &[
     ToolDefinition {
@@ -162,6 +206,13 @@ pub const TOOLS: &[ToolDefinition] = &[
         phase: TurnPhase::ReadPlan,
         risk: ToolRisk::Read,
     },
+    ToolDefinition {
+        name: "stage_project_patch",
+        description: "Stage validated changes to the open project with bounded omissions and uncertainties for an explicit user preview. An empty patch is allowed only when the report identifies data that could not be mapped. This never saves or changes the project.",
+        parameters: STAGE_PROJECT_PATCH_SCHEMA,
+        phase: TurnPhase::Propose,
+        risk: ToolRisk::Draft,
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static ToolDefinition> {
@@ -172,13 +223,16 @@ pub fn find(name: &str) -> Option<&'static ToolDefinition> {
 pub fn schemas_for_phase(phase: TurnPhase) -> Vec<ToolSchema> {
     TOOLS
         .iter()
-        .filter(|tool| tool.phase == phase)
+        .filter(|tool| {
+            tool.phase == phase
+                || (tool.phase == TurnPhase::ReadPlan && tool.risk == ToolRisk::Read)
+        })
         .map(ToolDefinition::schema)
         .collect()
 }
 
 /// Candidate project changes a model may propose.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectPatch {
     pub name: Option<String>,
@@ -229,6 +283,15 @@ pub struct ProjectPatchInput {
     pub patch: ProjectPatch,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StageProjectPatchInput {
+    #[serde(default)]
+    pub patch: ProjectPatch,
+    pub omissions: Vec<String>,
+    pub uncertainties: Vec<String>,
+}
+
 /// Typed, validated arguments for one registered tool.
 #[derive(Clone, Debug)]
 pub enum ToolInput {
@@ -236,6 +299,7 @@ pub enum ToolInput {
     CurrentProject,
     ValidateProjectPatch(ProjectPatchInput),
     CalculateProjectDraft(ProjectPatchInput),
+    StageProjectPatch(StageProjectPatchInput),
 }
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -280,24 +344,116 @@ pub fn parse_input(
         "calculate_project_draft" => serde_json::from_str(arguments)
             .map(ToolInput::CalculateProjectDraft)
             .map_err(|_| InvalidToolArguments),
+        "stage_project_patch" => {
+            let mut input: StageProjectPatchInput =
+                serde_json::from_str(arguments).map_err(|_| InvalidToolArguments)?;
+            normalize_extraction_notes(&mut input.omissions)?;
+            normalize_extraction_notes(&mut input.uncertainties)?;
+            Ok(ToolInput::StageProjectPatch(input))
+        }
         _ => Err(InvalidToolArguments),
     }
+}
+
+fn normalize_extraction_notes(notes: &mut Vec<String>) -> Result<(), InvalidToolArguments> {
+    if notes.len() > MAX_EXTRACTION_NOTES {
+        return Err(InvalidToolArguments);
+    }
+    for note in notes {
+        let trimmed = note.trim();
+        if trimmed.is_empty()
+            || trimmed.chars().count() > MAX_EXTRACTION_NOTE_CHARS
+            || trimmed.chars().any(char::is_control)
+        {
+            return Err(InvalidToolArguments);
+        }
+        if trimmed.len() != note.len() {
+            *note = trimmed.to_owned();
+        }
+    }
+    Ok(())
 }
 
 /// Structured result of one tool call. Failure codes are stable and carry no internal detail.
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ToolOutcome {
-    Ok { result: Value },
-    Invalid { errors: Vec<ValidationIssue> },
-    Unavailable { code: &'static str },
-    Error { code: &'static str },
+    Ok {
+        result: Value,
+    },
+    Staged {
+        proposal: Option<Box<ProjectPatchProposal>>,
+        omissions: Vec<String>,
+        uncertainties: Vec<String>,
+    },
+    Invalid {
+        errors: Vec<ValidationIssue>,
+    },
+    Unavailable {
+        code: &'static str,
+    },
+    Error {
+        code: &'static str,
+    },
 }
 
 impl ToolOutcome {
+    pub fn proposal(&self) -> Option<&ProjectPatchProposal> {
+        match self {
+            Self::Staged {
+                proposal: Some(proposal),
+                ..
+            } => Some(proposal),
+            Self::Staged { proposal: None, .. }
+            | Self::Ok { .. }
+            | Self::Invalid { .. }
+            | Self::Unavailable { .. }
+            | Self::Error { .. } => None,
+        }
+    }
+
+    pub fn extraction_notes(&self) -> Option<(&[String], &[String])> {
+        match self {
+            Self::Staged {
+                omissions,
+                uncertainties,
+                ..
+            } => Some((omissions, uncertainties)),
+            Self::Ok { .. }
+            | Self::Invalid { .. }
+            | Self::Unavailable { .. }
+            | Self::Error { .. } => None,
+        }
+    }
+
+    pub fn history_status(&self) -> &'static str {
+        match self {
+            Self::Ok { .. } => "completed",
+            Self::Staged {
+                proposal: Some(_), ..
+            } => "staged",
+            Self::Staged { proposal: None, .. } => "reported",
+            Self::Invalid { .. } => "invalid",
+            Self::Unavailable { .. } => "unavailable",
+            Self::Error { .. } => "error",
+        }
+    }
+
     /// Serialize the outcome for model context, replacing anything oversized with a code.
     pub fn to_bounded_json(&self) -> String {
-        let Ok(serialized) = serde_json::to_string(self) else {
+        let serialized = if let Self::Staged { proposal, .. } = self {
+            serde_json::to_string(&json!({
+                "status": "ok",
+                "result": {
+                    "action": proposal.as_ref().map(|proposal| proposal.action),
+                    "staged": proposal.is_some(),
+                    "report_recorded": true
+                }
+            }))
+        } else {
+            serde_json::to_string(self)
+        };
+        let Ok(serialized) = serialized else {
             return r#"{"status":"error","code":"result_not_serializable"}"#.to_owned();
         };
         if serialized.chars().count() > MAX_TOOL_RESULT_CHARS {
@@ -318,6 +474,7 @@ pub async fn dispatch(state: &AppState, context: &TurnContext, input: &ToolInput
         ToolInput::CalculateProjectDraft(input) => {
             calculate_project_draft(state, context, &input.patch).await
         }
+        ToolInput::StageProjectPatch(input) => stage_project_patch(state, context, input).await,
     }
 }
 
@@ -413,6 +570,65 @@ async fn calculate_project_draft(
     }
 }
 
+async fn stage_project_patch(
+    state: &AppState,
+    context: &TurnContext,
+    input: &StageProjectPatchInput,
+) -> ToolOutcome {
+    let Some(project) = read_selected_project(state, context).await else {
+        return ToolOutcome::Unavailable {
+            code: "no_selected_project",
+        };
+    };
+    let project = match project {
+        Ok(project) => project,
+        Err(outcome) => return outcome,
+    };
+
+    let candidate = input.patch.apply(&project);
+    let issues = candidate.validate();
+    if !issues.is_empty() {
+        return ToolOutcome::Invalid { errors: issues };
+    }
+
+    let changes = match project_patch_changes(&project, &candidate, &input.patch) {
+        Ok(changes) => changes,
+        Err(()) => {
+            return ToolOutcome::Invalid {
+                errors: vec![ValidationIssue {
+                    pointer: "/patch".to_owned(),
+                    code: "limit",
+                    message: format!(
+                        "A proposal may change at most {MAX_PROPOSAL_CHANGES} individual fields."
+                    ),
+                }],
+            };
+        }
+    };
+    if changes.is_empty() && input.omissions.is_empty() && input.uncertainties.is_empty() {
+        return ToolOutcome::Invalid {
+            errors: vec![ValidationIssue {
+                pointer: "/patch".to_owned(),
+                code: "required",
+                message: "The extraction report must propose a change or identify an omission or uncertainty."
+                    .to_owned(),
+            }],
+        };
+    }
+
+    ToolOutcome::Staged {
+        proposal: (!changes.is_empty()).then(|| {
+            Box::new(ProjectPatchProposal {
+                action: "apply_project_patch",
+                patch: input.patch.clone(),
+                changes,
+            })
+        }),
+        omissions: input.omissions.clone(),
+        uncertainties: input.uncertainties.clone(),
+    }
+}
+
 async fn read_selected_project(
     state: &AppState,
     context: &TurnContext,
@@ -440,6 +656,93 @@ async fn read_selected_project(
         aws_price_snapshot_id: document.aws_price_snapshot_id,
         azure_price_snapshot_id: document.azure_price_snapshot_id,
     }))
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectPatchProposal {
+    pub action: &'static str,
+    pub patch: ProjectPatch,
+    pub changes: Vec<ProjectPatchChange>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProjectPatchChange {
+    pub pointer: String,
+    pub before: Option<Value>,
+    pub after: Option<Value>,
+}
+
+fn project_patch_changes(
+    base: &EditableProject,
+    candidate: &EditableProject,
+    patch: &ProjectPatch,
+) -> Result<Vec<ProjectPatchChange>, ()> {
+    let base = serde_json::to_value(base).map_err(|_| ())?;
+    let candidate = serde_json::to_value(candidate).map_err(|_| ())?;
+    let roots = [
+        patch.name.is_some().then_some("/name"),
+        patch.description.is_some().then_some("/description"),
+        patch.settings.is_some().then_some("/settings"),
+        patch.resources.is_some().then_some("/resources"),
+    ];
+    let mut changes = Vec::new();
+    for pointer in roots.into_iter().flatten() {
+        collect_changes(
+            pointer,
+            base.pointer(pointer),
+            candidate.pointer(pointer),
+            &mut changes,
+        )?;
+    }
+    Ok(changes)
+}
+
+fn collect_changes(
+    pointer: &str,
+    before: Option<&Value>,
+    after: Option<&Value>,
+    changes: &mut Vec<ProjectPatchChange>,
+) -> Result<(), ()> {
+    if before == after {
+        return Ok(());
+    }
+    match (before, after) {
+        (Some(Value::Object(before)), Some(Value::Object(after))) => {
+            let keys = before.keys().chain(after.keys()).collect::<BTreeSet<_>>();
+            for key in keys {
+                let key = key.replace('~', "~0").replace('/', "~1");
+                collect_changes(
+                    &format!("{pointer}/{key}"),
+                    before.get(key.replace("~1", "/").replace("~0", "~").as_str()),
+                    after.get(key.replace("~1", "/").replace("~0", "~").as_str()),
+                    changes,
+                )?;
+            }
+            Ok(())
+        }
+        (Some(Value::Array(before)), Some(Value::Array(after))) => {
+            for index in 0..before.len().max(after.len()) {
+                collect_changes(
+                    &format!("{pointer}/{index}"),
+                    before.get(index),
+                    after.get(index),
+                    changes,
+                )?;
+            }
+            Ok(())
+        }
+        _ => {
+            if changes.len() >= MAX_PROPOSAL_CHANGES {
+                return Err(());
+            }
+            changes.push(ProjectPatchChange {
+                pointer: pointer.to_owned(),
+                before: before.cloned(),
+                after: after.cloned(),
+            });
+            Ok(())
+        }
+    }
 }
 
 fn into_ok<T: Serialize>(value: &T) -> ToolOutcome {
@@ -623,16 +926,26 @@ mod tests {
     }
 
     #[test]
-    fn this_slice_registers_read_only_tools() {
-        for tool in TOOLS {
-            assert_eq!(tool.phase, TurnPhase::ReadPlan, "{}", tool.name);
-            assert_eq!(tool.risk, ToolRisk::Read, "{}", tool.name);
-            assert!(!tool.risk.is_mutating(), "{}", tool.name);
-            assert!(!tool.risk.requires_confirmation(), "{}", tool.name);
-        }
-        assert_eq!(schemas_for_phase(TurnPhase::ReadPlan).len(), TOOLS.len());
-        assert!(schemas_for_phase(TurnPhase::Propose).is_empty());
-        assert!(schemas_for_phase(TurnPhase::Execute).is_empty());
+    fn tools_are_exposed_only_in_their_approved_phases() {
+        let stage = find("stage_project_patch").expect("stage tool");
+        assert_eq!(stage.phase, TurnPhase::Propose);
+        assert_eq!(stage.risk, ToolRisk::Draft);
+        assert!(!stage.risk.is_mutating());
+        assert!(!stage.risk.requires_confirmation());
+
+        assert_eq!(schemas_for_phase(TurnPhase::ReadPlan).len(), 4);
+        assert_eq!(schemas_for_phase(TurnPhase::Propose).len(), TOOLS.len());
+        assert_eq!(schemas_for_phase(TurnPhase::Execute).len(), 4);
+        assert!(
+            schemas_for_phase(TurnPhase::ReadPlan)
+                .iter()
+                .all(|schema| schema.name != "stage_project_patch")
+        );
+        assert!(
+            schemas_for_phase(TurnPhase::Execute)
+                .iter()
+                .all(|schema| schema.name != "stage_project_patch")
+        );
     }
 
     #[test]
@@ -725,6 +1038,77 @@ mod tests {
             schema["properties"]["patch"]["additionalProperties"],
             json!(false)
         );
+    }
+
+    #[test]
+    fn staged_patch_arguments_remain_closed_and_typed() {
+        let definition = find("stage_project_patch").expect("registered");
+
+        assert!(
+            parse_input(
+                definition,
+                r#"{"patch":{"name":"Imported estimate"},"omissions":[],"uncertainties":[]}"#
+            )
+            .is_ok()
+        );
+        assert!(
+            parse_input(
+                definition,
+                r#"{"patch":{"name":"Estimate"},"omissions":[],"uncertainties":[],"confirmed":true}"#
+            )
+            .is_err()
+        );
+        assert!(
+            parse_input(
+                definition,
+                &format!(
+                    r#"{{"patch":{{}},"omissions":["{}"],"uncertainties":[]}}"#,
+                    "a".repeat(MAX_EXTRACTION_NOTE_CHARS + 1)
+                )
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn proposal_diffs_are_leaf_level_and_bounded() {
+        let before = json!({"settings":{"azure_region":"swedencentral"}});
+        let after = json!({"settings":{"azure_region":"southafricanorth"}});
+        let mut changes = Vec::new();
+
+        collect_changes("", Some(&before), Some(&after), &mut changes)
+            .expect("one leaf change fits the bound");
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].pointer, "/settings/azure_region");
+        assert_eq!(changes[0].before, Some(json!("swedencentral")));
+        assert_eq!(changes[0].after, Some(json!("southafricanorth")));
+    }
+
+    #[test]
+    fn a_staged_preview_is_not_serialized_into_model_context() {
+        let outcome = ToolOutcome::Staged {
+            proposal: Some(Box::new(ProjectPatchProposal {
+                action: "apply_project_patch",
+                patch: ProjectPatch {
+                    name: Some("Confidential project".to_owned()),
+                    ..ProjectPatch::default()
+                },
+                changes: vec![ProjectPatchChange {
+                    pointer: "/name".to_owned(),
+                    before: Some(json!("Current confidential name")),
+                    after: Some(json!("Confidential project")),
+                }],
+            })),
+            omissions: vec!["Private omitted value".to_owned()],
+            uncertainties: Vec::new(),
+        };
+
+        assert_eq!(
+            outcome.to_bounded_json(),
+            r#"{"result":{"action":"apply_project_patch","report_recorded":true,"staged":true},"status":"ok"}"#
+        );
+        assert!(!outcome.to_bounded_json().contains("Private omitted value"));
     }
 
     #[test]

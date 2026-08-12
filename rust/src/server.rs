@@ -44,6 +44,13 @@ pub async fn router(mut config: crate::config::Config) -> Result<Router, ServerE
     let consent_gated_router = Router::new()
         .route("/assistant/help", post(api::assistant::help))
         .route("/assistant/turn", post(api::assistant::turn))
+        .route(
+            "/assistant/image",
+            post(api::assistant::image).layer(DefaultBodyLimit::max(
+                crate::assistant::image::MAX_IMAGE_INPUT_BYTES,
+            )),
+        )
+        .route("/assistant/actions", post(api::assistant::action))
         .route("/catalog/aws/regions", get(api::catalog::aws_regions))
         .route("/catalog/azure/regions", get(api::catalog::azure_regions))
         .route(
@@ -337,6 +344,81 @@ async fn api_not_found(request: Request<Body>) -> Problem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn local_config() -> crate::config::Config {
+        crate::config::Config {
+            bind_address: "127.0.0.1:0".parse().expect("bind address"),
+            environment: AppEnvironment::Local,
+            local_auth: Some(crate::config::LocalAuthSettings {
+                tenant_id: uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111")
+                    .expect("tenant UUID"),
+                object_id: uuid::Uuid::parse_str("22222222-2222-2222-2222-222222222222")
+                    .expect("object UUID"),
+                display_name: "Synthetic User".to_owned(),
+            }),
+            cosmos: None,
+            assistant: None,
+            web_asset_dir: PathBuf::from("rust/static"),
+            guest_requests_per_minute: 60,
+            provider_refreshes_per_hour: 8,
+            provider_max_response_bytes: 64 * 1024 * 1024,
+            calculation_concurrency: 10,
+            assistant_requests_per_minute: 10,
+        }
+    }
+
+    #[tokio::test]
+    async fn image_route_overrides_the_normal_api_body_limit() {
+        let app = router(local_config()).await.expect("application router");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener");
+        let address = listener.local_addr().expect("listener address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .expect("test server");
+        });
+        let client = reqwest::Client::new();
+        let consent_status = client
+            .put(format!("http://{address}/api/v1/privacy-consent"))
+            .json(&serde_json::json!({
+                "notice_version": "2026-08-11-internal-pilot-v1",
+                "accepted": true,
+                "allow_contact": false,
+                "email_address": null
+            }))
+            .send()
+            .await
+            .expect("consent response")
+            .status();
+        let body = vec![0_u8; 2 * 1024 * 1024];
+
+        let image_status = client
+            .post(format!("http://{address}/api/v1/assistant/image"))
+            .header(header::CONTENT_TYPE.as_str(), "image/jpeg")
+            .body(body.clone())
+            .send()
+            .await
+            .expect("image response")
+            .status();
+        let normal_status = client
+            .put(format!("http://{address}/api/v1/privacy-consent"))
+            .header(header::CONTENT_TYPE.as_str(), "application/json")
+            .body(body)
+            .send()
+            .await
+            .expect("normal response")
+            .status();
+        server.abort();
+
+        assert_eq!(consent_status, StatusCode::OK);
+        assert_eq!(image_status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(normal_status, StatusCode::PAYLOAD_TOO_LARGE);
+    }
 
     #[test]
     fn hashes_each_inline_script_exactly() {

@@ -8,6 +8,7 @@ pub mod budget;
 pub mod context;
 pub mod foundry;
 pub mod help;
+pub mod image;
 pub mod model;
 pub mod policy;
 pub mod tools;

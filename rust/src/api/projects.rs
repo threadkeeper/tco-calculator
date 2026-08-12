@@ -119,50 +119,57 @@ pub async fn update(
     let project = request
         .map_err(|error| super::json_rejection(error, ITEM_INSTANCE))?
         .0;
-    validate_project(&project, ITEM_INSTANCE)?;
+    let document = update_project_document(
+        &state,
+        &principal.owner_id(),
+        project_id,
+        &if_match,
+        project,
+        ITEM_INSTANCE,
+    )
+    .await?;
+    project_response(StatusCode::OK, document)
+}
+
+pub(crate) async fn update_project_document(
+    state: &AppState,
+    owner_id: &str,
+    project_id: Uuid,
+    if_match: &str,
+    project: EditableProject,
+    instance: &str,
+) -> Result<ProjectDocument, Problem> {
+    validate_project(&project, instance)?;
     let current = state
         .projects
-        .get(&principal.owner_id(), project_id)
+        .get(owner_id, project_id)
         .await
-        .map_err(|error| map_repository_error(error, ITEM_INSTANCE))?;
+        .map_err(|error| map_repository_error(error, instance))?;
     if current.etag != if_match {
-        return Err(Problem::precondition_failed(
-            ITEM_INSTANCE,
-            Some(&current.etag),
-        ));
+        return Err(Problem::precondition_failed(instance, Some(&current.etag)));
     }
     let pricing_unchanged = pricing_inputs_unchanged(&current, &project)
-        .map_err(|error| map_repository_error(error, ITEM_INSTANCE))?;
+        .map_err(|error| map_repository_error(error, instance))?;
     let revision = if pricing_unchanged {
         None
     } else {
-        calculate_revision_if_priced(&state, &project, ITEM_INSTANCE).await?
+        calculate_revision_if_priced(state, &project, instance).await?
     };
 
     match state
         .projects
-        .update(
-            &principal.owner_id(),
-            project_id,
-            &if_match,
-            project,
-            revision,
-        )
+        .update(owner_id, project_id, if_match, project, revision)
         .await
     {
-        Ok(document) => project_response(StatusCode::OK, document),
+        Ok(document) => Ok(document),
         Err(RepositoryError::PreconditionFailed) => {
-            let current = state
-                .projects
-                .get(&principal.owner_id(), project_id)
-                .await
-                .ok();
+            let current = state.projects.get(owner_id, project_id).await.ok();
             Err(Problem::precondition_failed(
-                ITEM_INSTANCE,
+                instance,
                 current.as_ref().map(|document| document.etag.as_str()),
             ))
         }
-        Err(error) => Err(map_repository_error(error, ITEM_INSTANCE)),
+        Err(error) => Err(map_repository_error(error, instance)),
     }
 }
 
@@ -224,7 +231,10 @@ async fn calculate_revision_if_priced(
     }
 }
 
-fn project_response(status: StatusCode, document: ProjectDocument) -> Result<Response, Problem> {
+pub(crate) fn project_response(
+    status: StatusCode,
+    document: ProjectDocument,
+) -> Result<Response, Problem> {
     let etag =
         HeaderValue::from_str(&document.etag).map_err(|_| Problem::internal(ITEM_INSTANCE))?;
     let mut response = (status, Json(ProjectResponse::from(document))).into_response();

@@ -88,7 +88,7 @@ paths:
     post:
       operationId: runAssistantTurn
       tags: [Assistant]
-      summary: Run one bounded read-only assistant turn for the signed-in owner.
+      summary: Run one bounded tool-enabled assistant turn for the signed-in owner.
       security:
         - containerAppsAuth: []
       requestBody:
@@ -109,6 +109,82 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AssistantTurnResponse'
+        default:
+          $ref: '#/components/responses/Problem'
+  /assistant/image:
+    post:
+      operationId: analyzeAssistantImage
+      tags: [Assistant]
+      summary: Normalize one JPEG or PNG and return a validated project patch proposal.
+      security:
+        - containerAppsAuth: []
+      parameters:
+        - name: x-tco-project-id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Owner-scoped saved project selected by the host.
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+          image/png:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+      responses:
+        '200':
+          description: A request-scoped, validated patch proposal. No image or project is saved.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantImageResponse'
+        default:
+          $ref: '#/components/responses/Problem'
+  /assistant/actions:
+    post:
+      operationId: executeAssistantAction
+      tags: [Assistant]
+      summary: Apply one explicitly confirmed project patch through the normal project service.
+      security:
+        - containerAppsAuth: []
+      parameters:
+        - name: x-tco-action-confirmation
+          in: header
+          required: true
+          schema:
+            type: string
+            const: apply_project_patch
+          description: Dedicated same-origin browser confirmation, separate from natural-language intent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantActionRequest'
+      responses:
+        '200':
+          description: Authoritative owner-scoped project after the atomic update and verification read.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
         default:
           $ref: '#/components/responses/Problem'
   /catalog/aws/regions:
@@ -614,11 +690,11 @@ components:
         project_id:
           type: [string, 'null']
           format: uuid
-          description: Optional saved project selected by the host for this read-only turn.
+          description: Optional owner-scoped saved project selected by the host for this turn.
     AssistantTurnResponse:
       type: object
       additionalProperties: false
-      required: [answer, references]
+      required: [answer, references, proposal]
       properties:
         answer:
           type: string
@@ -627,6 +703,106 @@ components:
           maxItems: 24
           items:
             $ref: '#/components/schemas/AssistantHelpReference'
+        proposal:
+          oneOf:
+            - $ref: '#/components/schemas/AssistantProjectPatchProposal'
+            - type: 'null'
+    AssistantAction:
+      type: string
+      enum: [apply_project_patch]
+    AssistantProjectPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: [string, 'null']
+          maxLength: 500
+        settings:
+          $ref: '#/components/schemas/ProjectSettings'
+        resources:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Resource'
+    AssistantProjectPatchChange:
+      type: object
+      additionalProperties: false
+      required: [pointer, before, after]
+      properties:
+        pointer:
+          type: string
+        before: {}
+        after: {}
+    AssistantProjectPatchProposal:
+      type: object
+      additionalProperties: false
+      required: [proposal_id, action, project_id, expected_etag, patch, changes]
+      properties:
+        proposal_id:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+          description: Correlation fingerprint for detecting accidental request drift; it is not authorization or proof of confirmation.
+        action:
+          $ref: '#/components/schemas/AssistantAction'
+        project_id:
+          type: string
+          format: uuid
+        expected_etag:
+          type: string
+        patch:
+          $ref: '#/components/schemas/AssistantProjectPatch'
+        changes:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/AssistantProjectPatchChange'
+    AssistantImageResponse:
+      type: object
+      additionalProperties: false
+      required: [answer, proposal, omissions, uncertainties]
+      properties:
+        answer:
+          type: string
+        proposal:
+          oneOf:
+            - $ref: '#/components/schemas/AssistantProjectPatchProposal'
+            - type: 'null'
+        omissions:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 500
+        uncertainties:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 500
+    AssistantActionRequest:
+      type: object
+      additionalProperties: false
+      required: [proposal_id, action, project_id, expected_etag, patch]
+      properties:
+        proposal_id:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        action:
+          $ref: '#/components/schemas/AssistantAction'
+        project_id:
+          type: string
+          format: uuid
+        expected_etag:
+          type: string
+        patch:
+          $ref: '#/components/schemas/AssistantProjectPatch'
     Region:
       type: object
       required: [code, label]

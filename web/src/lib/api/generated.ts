@@ -62,8 +62,42 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run one bounded read-only assistant turn for the signed-in owner. */
+        /** Run one bounded tool-enabled assistant turn for the signed-in owner. */
         post: operations["runAssistantTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Normalize one JPEG or PNG and return a validated project patch proposal. */
+        post: operations["analyzeAssistantImage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply one explicitly confirmed project patch through the normal project service. */
+        post: operations["executeAssistantAction"];
         delete?: never;
         options?: never;
         head?: never;
@@ -407,13 +441,51 @@ export interface components {
             question: string;
             /**
              * Format: uuid
-             * @description Optional saved project selected by the host for this read-only turn.
+             * @description Optional owner-scoped saved project selected by the host for this turn.
              */
             project_id: string | null;
         };
         AssistantTurnResponse: {
             answer: string;
             references: components["schemas"]["AssistantHelpReference"][];
+            proposal: components["schemas"]["AssistantProjectPatchProposal"] | null;
+        };
+        /** @enum {string} */
+        AssistantAction: "apply_project_patch";
+        AssistantProjectPatch: {
+            name?: string;
+            description?: string | null;
+            settings?: components["schemas"]["ProjectSettings"];
+            resources?: components["schemas"]["Resource"][];
+        };
+        AssistantProjectPatchChange: {
+            pointer: string;
+            before: unknown;
+            after: unknown;
+        };
+        AssistantProjectPatchProposal: {
+            /** @description Correlation fingerprint for detecting accidental request drift; it is not authorization or proof of confirmation. */
+            proposal_id: string;
+            action: components["schemas"]["AssistantAction"];
+            /** Format: uuid */
+            project_id: string;
+            expected_etag: string;
+            patch: components["schemas"]["AssistantProjectPatch"];
+            changes: components["schemas"]["AssistantProjectPatchChange"][];
+        };
+        AssistantImageResponse: {
+            answer: string;
+            proposal: components["schemas"]["AssistantProjectPatchProposal"] | null;
+            omissions: string[];
+            uncertainties: string[];
+        };
+        AssistantActionRequest: {
+            proposal_id: string;
+            action: components["schemas"]["AssistantAction"];
+            /** Format: uuid */
+            project_id: string;
+            expected_etag: string;
+            patch: components["schemas"]["AssistantProjectPatch"];
         };
         Region: {
             code: string;
@@ -901,6 +973,65 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssistantTurnResponse"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    analyzeAssistantImage: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Owner-scoped saved project selected by the host. */
+                "x-tco-project-id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "image/jpeg": string;
+                "image/png": string;
+            };
+        };
+        responses: {
+            /** @description A request-scoped, validated patch proposal. No image or project is saved. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantImageResponse"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    executeAssistantAction: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Dedicated same-origin browser confirmation, separate from natural-language intent. */
+                "x-tco-action-confirmation": "apply_project_patch";
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Authoritative owner-scoped project after the atomic update and verification read. */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
                 };
             };
             default: components["responses"]["Problem"];

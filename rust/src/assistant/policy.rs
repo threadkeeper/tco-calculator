@@ -10,9 +10,9 @@ use thiserror::Error;
 
 use super::{
     budget::{MAX_MUTATING_CALLS_PER_BATCH, MAX_TOOL_CALLS_PER_RESPONSE, TurnBudget},
-    context::TurnContext,
+    context::{TurnContext, TurnPhase},
     model::ProposedToolCall,
-    tools::{self, ToolDefinition, ToolInput},
+    tools::{self, ToolDefinition, ToolInput, ToolRisk},
 };
 
 const MAX_CALL_ID_CHARS: usize = 128;
@@ -79,7 +79,9 @@ pub fn preflight(
         }
 
         let definition = tools::find(&call.name).ok_or(PolicyError::UnknownTool)?;
-        if definition.phase != context.phase() {
+        let is_authoritative_read =
+            definition.phase == TurnPhase::ReadPlan && definition.risk == ToolRisk::Read;
+        if definition.phase != context.phase() && !is_authoritative_read {
             return Err(PolicyError::PhaseNotAllowed);
         }
         if definition.risk.is_mutating() {
@@ -138,6 +140,14 @@ mod tests {
         )
     }
 
+    fn stage_call(id: &str) -> ProposedToolCall {
+        call(
+            id,
+            "stage_project_patch",
+            r#"{"patch":{"name":"Imported estimate"},"omissions":[],"uncertainties":[]}"#,
+        )
+    }
+
     #[test]
     fn a_valid_read_batch_is_accepted() {
         let accepted = preflight(
@@ -186,17 +196,42 @@ mod tests {
     }
 
     #[test]
-    fn a_read_tool_is_unreachable_from_another_phase() {
+    fn authoritative_reads_are_available_in_later_phases() {
         for phase in [TurnPhase::Propose, TurnPhase::Execute] {
-            let error = preflight(
+            let accepted = preflight(
                 &[help_call("call-1")],
                 &context(phase),
                 &TurnBudget::new(),
                 &HashSet::new(),
             )
-            .expect_err("a read tool must not be reachable outside its phase");
+            .expect("a proposal or execution phase may ground itself with authoritative reads");
 
-            assert_eq!(error, PolicyError::PhaseNotAllowed);
+            assert_eq!(accepted[0].definition.risk, ToolRisk::Read);
+        }
+    }
+
+    #[test]
+    fn a_draft_capability_is_available_only_in_the_proposal_phase() {
+        let accepted = preflight(
+            &[stage_call("call-1")],
+            &context(TurnPhase::Propose),
+            &TurnBudget::new(),
+            &HashSet::new(),
+        )
+        .expect("the proposal phase may stage an undoable draft");
+        assert_eq!(accepted[0].definition.risk, ToolRisk::Draft);
+
+        for phase in [TurnPhase::ReadPlan, TurnPhase::Execute] {
+            assert_eq!(
+                preflight(
+                    &[stage_call("call-1")],
+                    &context(phase),
+                    &TurnBudget::new(),
+                    &HashSet::new(),
+                )
+                .expect_err("a draft capability must not cross its phase boundary"),
+                PolicyError::PhaseNotAllowed
+            );
         }
     }
 

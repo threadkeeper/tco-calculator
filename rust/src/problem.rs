@@ -95,6 +95,16 @@ impl Problem {
         )
     }
 
+    pub fn action_confirmation_required(instance: &str) -> Self {
+        Self::new(
+            StatusCode::PRECONDITION_REQUIRED,
+            "urn:azure-sql-tco:problem:action-confirmation-required",
+            "Action Confirmation Required",
+            instance,
+            "Confirm this exact assistant action in the application before applying it.",
+        )
+    }
+
     pub fn privacy_consent_required(instance: &str) -> Self {
         Self::new(
             StatusCode::PRECONDITION_REQUIRED,
@@ -129,6 +139,16 @@ impl Problem {
             "Payload Too Large",
             instance,
             "The request or persisted project exceeds the allowed size.",
+        )
+    }
+
+    pub fn unsupported_media_type(instance: &str) -> Self {
+        Self::new(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "urn:azure-sql-tco:problem:unsupported-media-type",
+            "Unsupported Media Type",
+            instance,
+            "The request must contain one JPEG or PNG image with a matching Content-Type.",
         )
     }
 

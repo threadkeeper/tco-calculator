@@ -50,6 +50,8 @@
   let activeWorkspace = $state<GuestWorkspace | null>(null);
   let activeProjectId = $state<string | null>(null);
   let activeEtag = $state<string | null>(null);
+  let activeProjectDirty = $state(false);
+  let workspaceVersion = $state(0);
   let showSetup = $state(false);
   let setupName = $state('SQL TCO estimate');
   let setupDescription = $state('');
@@ -179,6 +181,7 @@
       activeWorkspace = createGuestWorkspace(project);
       activeProjectId = null;
       activeEtag = null;
+      activeProjectDirty = false;
       showSetup = false;
     } catch (error) {
       problem = messageFromError(error, 'The shared project could not be opened.');
@@ -224,12 +227,14 @@
         activeWorkspace = workspace;
         activeProjectId = null;
         activeEtag = null;
+        activeProjectDirty = false;
       } else {
         await saveGuestWorkspace(workspace);
         availableGuestWorkspace = workspace;
         activeWorkspace = workspace;
         activeProjectId = null;
         activeEtag = null;
+        activeProjectDirty = false;
       }
       showSetup = false;
     } catch (error) {
@@ -263,6 +268,8 @@
     };
     activeProjectId = id;
     activeEtag = etag;
+    activeProjectDirty = false;
+    workspaceVersion += 1;
     showSetup = false;
   }
 
@@ -296,11 +303,13 @@
     activeWorkspace = null;
     activeProjectId = null;
     activeEtag = null;
+    activeProjectDirty = false;
   }
 
   function projectSaved(id: string, etag: string | null) {
     activeProjectId = id;
     activeEtag = etag;
+    activeProjectDirty = false;
   }
 
   function formatDate(value: string): string {
@@ -335,18 +344,21 @@
   }}
 >
   {#if activeWorkspace}
-    <ProjectWorkspace
-      workspace={activeWorkspace}
-      mode={mode === 'authenticated' ? 'authenticated' : 'guest'}
-      projectId={activeProjectId}
-      etag={activeEtag}
-      onclose={closeWorkspace}
-      oncleared={() => {
-        availableGuestWorkspace = null;
-        activeWorkspace = null;
-      }}
-      onprojectsaved={projectSaved}
-    />
+    {#key workspaceVersion}
+      <ProjectWorkspace
+        workspace={activeWorkspace}
+        mode={mode === 'authenticated' ? 'authenticated' : 'guest'}
+        projectId={activeProjectId}
+        etag={activeEtag}
+        onclose={closeWorkspace}
+        oncleared={() => {
+          availableGuestWorkspace = null;
+          activeWorkspace = null;
+        }}
+        onprojectsaved={projectSaved}
+        onprojectdirty={(dirty) => (activeProjectDirty = dirty)}
+      />
+    {/key}
   {:else}
     <main class="home">
       {#if problem}<ProblemBanner message={problem} ondismiss={() => (problem = null)} />{/if}
@@ -515,8 +527,17 @@
   {/if}
 </AppShell>
 
-{#if mode === 'authenticated' && !privacyRequired}
-  <AssistantPanel projectId={activeProjectId} />
+{#if mode !== 'loading' && !privacyRequired}
+  <AssistantPanel
+    authenticated={mode === 'authenticated'}
+    projectId={activeProjectId}
+    projectEtag={activeEtag}
+    projectDirty={activeProjectDirty}
+    onprojectupdated={(document, etag) => {
+      openDocument(document, etag);
+      void loadProjects();
+    }}
+  />
 {/if}
 
 {#if privacyOpen}

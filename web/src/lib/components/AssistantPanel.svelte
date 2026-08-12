@@ -1,21 +1,50 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { MessageCircle, Send, Square, Trash2, X } from 'lucide-svelte';
+  import {
+    Check,
+    FileImage,
+    ImagePlus,
+    MessageCircle,
+    Send,
+    Square,
+    Trash2,
+    X
+  } from 'lucide-svelte';
   import { ApiProblem } from '$lib/api';
   import {
+    executeAssistantAction,
     MAX_ASSISTANT_QUESTION_CHARACTERS,
+    requestAssistantImage,
     requestAssistantTurn,
+    validateAssistantImage,
     validateAssistantQuestion,
-    type AssistantHelpReference
+    type AssistantHelpReference,
+    type AssistantProjectPatchProposal
   } from '$lib/assistant';
 
-  let { projectId = null }: { projectId?: string | null } = $props();
+  let {
+    authenticated = false,
+    projectId = null,
+    projectEtag = null,
+    projectDirty = false,
+    onprojectupdated = () => {}
+  }: {
+    authenticated?: boolean;
+    projectId?: string | null;
+    projectEtag?: string | null;
+    projectDirty?: boolean;
+    onprojectupdated?: (document: unknown, etag: string) => void;
+  } = $props();
 
   type ChatMessage = {
     id: number;
     role: 'user' | 'assistant';
     text: string;
     references: AssistantHelpReference[];
+    proposal: AssistantProjectPatchProposal | null;
+    proposalStatus: 'pending' | 'applied' | 'dismissed' | null;
+    omissions: string[];
+    uncertainties: string[];
   };
 
   let open = $state(false);
@@ -23,20 +52,33 @@
   let messages = $state<ChatMessage[]>([]);
   let problem = $state<string | null>(null);
   let pending = $state(false);
+  let pendingLabel = $state('Working');
+  let selectedImage = $state<File | null>(null);
   let launcherButton = $state<HTMLButtonElement>();
   let composer = $state<HTMLTextAreaElement>();
   let transcript = $state<HTMLDivElement>();
+  let imageInput = $state<HTMLInputElement>();
   let activeRequest: AbortController | null = null;
   let nextMessageId = 1;
 
   const characterCount = $derived(Array.from(question).length);
   const canSend = $derived(
-    question.trim().length > 0 && characterCount <= MAX_ASSISTANT_QUESTION_CHARACTERS && !pending
+    authenticated &&
+      question.trim().length > 0 &&
+      characterCount <= MAX_ASSISTANT_QUESTION_CHARACTERS &&
+      !pending
+  );
+  const canAnalyzeImage = $derived(
+    authenticated && selectedImage !== null && projectId !== null && !projectDirty && !pending
   );
 
   onMount(() => {
     window.addEventListener('keydown', handleWindowKeydown);
-    return () => window.removeEventListener('keydown', handleWindowKeydown);
+    return () => {
+      window.removeEventListener('keydown', handleWindowKeydown);
+      cancelRequest(false);
+      removeImage();
+    };
   });
 
   async function openPanel() {
@@ -48,6 +90,7 @@
 
   async function closePanel() {
     cancelRequest(false);
+    removeImage();
     open = false;
     await tick();
     launcherButton?.focus();
@@ -58,6 +101,7 @@
     question = '';
     messages = [];
     problem = null;
+    removeImage();
     void focusComposer();
   }
 
@@ -80,6 +124,7 @@
   }
 
   async function sendQuestion() {
+    if (!authenticated) return;
     let normalizedQuestion: string;
     try {
       normalizedQuestion = validateAssistantQuestion(question);
@@ -98,7 +143,11 @@
         id: nextMessageId++,
         role: 'user',
         text: normalizedQuestion,
-        references: []
+        references: [],
+        proposal: null,
+        proposalStatus: null,
+        omissions: [],
+        uncertainties: []
       }
     ];
     question = '';
@@ -113,7 +162,11 @@
           id: nextMessageId++,
           role: 'assistant',
           text: response.answer,
-          references: response.references
+          references: response.references,
+          proposal: response.proposal,
+          proposalStatus: response.proposal ? 'pending' : null,
+          omissions: [],
+          uncertainties: []
         }
       ];
       await scrollToLatest();
@@ -128,6 +181,162 @@
         await focusComposer();
       }
     }
+  }
+
+  function chooseImage() {
+    if (!authenticated) {
+      problem = 'Please log in to use the TCO agent.';
+      return;
+    }
+    if (!projectId) {
+      problem = 'Open and save a project before analyzing an image.';
+      return;
+    }
+    if (projectDirty) {
+      problem = 'Save the current project changes before analyzing an image.';
+      return;
+    }
+    imageInput?.click();
+  }
+
+  function selectImage(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const image = input.files?.[0] ?? null;
+    if (!image) return;
+    try {
+      selectedImage = validateAssistantImage(image);
+      problem = null;
+    } catch (error) {
+      selectedImage = null;
+      input.value = '';
+      problem = messageFromError(error);
+    }
+  }
+
+  function removeImage() {
+    selectedImage = null;
+    if (imageInput) imageInput.value = '';
+  }
+
+  async function analyzeImage() {
+    if (!authenticated || !selectedImage || !projectId || projectDirty) return;
+    const image = selectedImage;
+    const controller = new AbortController();
+    activeRequest = controller;
+    pending = true;
+    pendingLabel = 'Analyzing image';
+    problem = null;
+    messages = [
+      ...messages,
+      {
+        id: nextMessageId++,
+        role: 'user',
+        text: 'Analyze the selected image for project inputs.',
+        references: [],
+        proposal: null,
+        proposalStatus: null,
+        omissions: [],
+        uncertainties: []
+      }
+    ];
+    await scrollToLatest();
+
+    try {
+      const response = await requestAssistantImage(image, projectId, controller.signal);
+      if (activeRequest !== controller) return;
+      messages = [
+        ...messages,
+        {
+          id: nextMessageId++,
+          role: 'assistant',
+          text: response.answer,
+          references: [],
+          proposal: response.proposal,
+          proposalStatus: response.proposal ? 'pending' : null,
+          omissions: response.omissions,
+          uncertainties: response.uncertainties
+        }
+      ];
+      removeImage();
+      await scrollToLatest();
+    } catch (error) {
+      if (!controller.signal.aborted && activeRequest === controller) {
+        problem = messageFromError(error);
+      }
+    } finally {
+      if (activeRequest === controller) {
+        activeRequest = null;
+        pending = false;
+        await focusComposer();
+      }
+    }
+  }
+
+  async function applyProposal(messageId: number, proposal: AssistantProjectPatchProposal) {
+    if (!canApplyProposal(proposal)) return;
+    const controller = new AbortController();
+    activeRequest = controller;
+    pending = true;
+    pendingLabel = 'Applying confirmed changes';
+    problem = null;
+    try {
+      const result = await executeAssistantAction(proposal, controller.signal);
+      if (activeRequest !== controller) return;
+      onprojectupdated(result.document, result.etag);
+      messages = messages.map((message) =>
+        message.id === messageId ? { ...message, proposalStatus: 'applied' } : message
+      );
+      await scrollToLatest();
+    } catch (error) {
+      if (!controller.signal.aborted && activeRequest === controller) {
+        problem = messageFromError(error);
+      }
+    } finally {
+      if (activeRequest === controller) {
+        activeRequest = null;
+        pending = false;
+        await focusComposer();
+      }
+    }
+  }
+
+  function dismissProposal(messageId: number) {
+    messages = messages.map((message) =>
+      message.id === messageId ? { ...message, proposalStatus: 'dismissed' } : message
+    );
+  }
+
+  function canApplyProposal(proposal: AssistantProjectPatchProposal): boolean {
+    return (
+      authenticated &&
+      !pending &&
+      !projectDirty &&
+      projectId === proposal.project_id &&
+      projectEtag === proposal.expected_etag
+    );
+  }
+
+  function proposalBlockedReason(proposal: AssistantProjectPatchProposal): string | null {
+    if (projectDirty) return 'Save current edits before applying this proposal.';
+    if (projectId !== proposal.project_id || projectEtag !== proposal.expected_etag) {
+      return 'The open project changed after this proposal was prepared.';
+    }
+    return null;
+  }
+
+  function formatPointer(pointer: string): string {
+    return pointer
+      .split('/')
+      .filter(Boolean)
+      .map((part) => part.replaceAll('~1', '/').replaceAll('~0', '~').replaceAll('_', ' '))
+      .join(' / ');
+  }
+
+  function formatValue(value: unknown): string {
+    if (value === undefined || value === null) return 'Not set';
+    if (typeof value === 'string') return value;
+    const encoded = JSON.stringify(value);
+    return encoded ?? String(value);
   }
 
   function handleComposerKeydown(event: KeyboardEvent) {
@@ -165,7 +374,9 @@
         <span class="heading-icon" aria-hidden="true"><MessageCircle size={18} /></span>
         <div>
           <h2 id="assistant-title">TCO assistant</h2>
-          <p id="assistant-boundary">Read-only project guidance</p>
+          <p id="assistant-boundary">
+            {authenticated ? 'Tool-enabled agent · reviewed actions' : 'Sign-in required'}
+          </p>
         </div>
       </div>
       <div class="header-actions">
@@ -195,8 +406,12 @@
       {#if messages.length === 0}
         <div class="empty-state">
           <MessageCircle size={26} aria-hidden="true" />
-          <p>What would you like to understand?</p>
-          <span>Ask about a field, action, result, or workflow.</span>
+          {#if authenticated}
+            <p>What would you like to understand?</p>
+            <span>Ask about a field, action, result, or workflow.</span>
+          {:else}
+            <p>Please log in to use the TCO agent.</p>
+          {/if}
         </div>
       {:else}
         {#each messages as message (message.id)}
@@ -212,62 +427,172 @@
                 {message.references.map((reference) => reference.label).join(', ')}
               </p>
             {/if}
+            {#if message.omissions.length > 0}
+              <div class="report omissions">
+                <strong>Not mapped</strong>
+                <ul>
+                  {#each message.omissions as item, itemIndex (itemIndex)}<li>{item}</li>{/each}
+                </ul>
+              </div>
+            {/if}
+            {#if message.uncertainties.length > 0}
+              <div class="report uncertainties">
+                <strong>Needs review</strong>
+                <ul>
+                  {#each message.uncertainties as item, itemIndex (itemIndex)}<li>{item}</li>{/each}
+                </ul>
+              </div>
+            {/if}
           </article>
+          {#if message.proposal}
+            <section class="proposal" aria-label="Proposed project update">
+              <div class="proposal-heading">
+                <div>
+                  <strong>Proposed project update</strong>
+                  <span
+                    >{message.proposal.changes.length}
+                    {message.proposal.changes.length === 1 ? 'change' : 'changes'}</span
+                  >
+                </div>
+                {#if message.proposalStatus === 'applied'}
+                  <span class="proposal-state applied"><Check size={14} /> Applied</span>
+                {:else if message.proposalStatus === 'dismissed'}
+                  <span class="proposal-state">Dismissed</span>
+                {/if}
+              </div>
+              <dl class="change-list">
+                {#each message.proposal.changes as change (change.pointer)}
+                  <div>
+                    <dt>{formatPointer(change.pointer)}</dt>
+                    <dd>
+                      <span>{formatValue(change.before)}</span><b aria-hidden="true">→</b><span
+                        >{formatValue(change.after)}</span
+                      >
+                    </dd>
+                  </div>
+                {/each}
+              </dl>
+              {#if message.proposalStatus === 'pending'}
+                {#if proposalBlockedReason(message.proposal)}
+                  <p class="proposal-blocked">{proposalBlockedReason(message.proposal)}</p>
+                {/if}
+                <div class="proposal-actions">
+                  <button type="button" class="dismiss" onclick={() => dismissProposal(message.id)}
+                    >Cancel</button
+                  >
+                  <button
+                    type="button"
+                    class="apply"
+                    disabled={!canApplyProposal(message.proposal)}
+                    onclick={() => void applyProposal(message.id, message.proposal!)}
+                    ><Check size={16} /> Apply changes</button
+                  >
+                </div>
+              {/if}
+            </section>
+          {/if}
         {/each}
       {/if}
       {#if pending}
         <div class="pending" role="status">
-          <span></span><span></span><span></span><span class="visually-hidden">Finding help</span>
+          <span></span><span></span><span></span><span class="visually-hidden">{pendingLabel}</span>
         </div>
       {/if}
     </div>
 
     <div class="composer-area">
       {#if problem}<p class="problem" role="status">{problem}</p>{/if}
-      <form
-        onsubmit={(event) => {
-          event.preventDefault();
-          if (canSend) void sendQuestion();
-        }}
-      >
-        <label class="visually-hidden" for="assistant-question">Ask the TCO assistant</label>
-        <textarea
-          id="assistant-question"
-          rows="2"
-          maxlength={MAX_ASSISTANT_QUESTION_CHARACTERS}
-          placeholder="Ask about this estimate"
-          bind:this={composer}
-          bind:value={question}
-          onkeydown={handleComposerKeydown}></textarea>
-        <div class="composer-actions">
-          <span class:near-limit={characterCount > 900}
-            >{characterCount.toLocaleString('en-US')} / {MAX_ASSISTANT_QUESTION_CHARACTERS.toLocaleString(
-              'en-US'
-            )}</span
-          >
-          {#if pending}
+      {#if authenticated}
+        <input
+          class="visually-hidden"
+          type="file"
+          accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+          bind:this={imageInput}
+          onchange={selectImage}
+          aria-label="Choose project image"
+        />
+        {#if selectedImage}
+          <div class="attachment">
+            <FileImage size={18} aria-hidden="true" />
+            <div>
+              <strong>{selectedImage.name}</strong><span
+                >{(selectedImage.size / 1024).toFixed(1)} KiB</span
+              >
+            </div>
             <button
-              class="cancel"
               type="button"
-              aria-label="Cancel response"
-              title="Cancel response"
-              onclick={() => cancelRequest()}
+              class="analyze"
+              disabled={!canAnalyzeImage}
+              onclick={() => void analyzeImage()}>Analyze</button
             >
-              <Square size={15} fill="currentColor" />
-            </button>
-          {:else}
             <button
-              class="send"
-              type="submit"
-              disabled={!canSend}
-              aria-label="Send question"
-              title="Send question"
+              type="button"
+              class="remove"
+              aria-label="Remove image"
+              title="Remove image"
+              onclick={removeImage}><X size={16} /></button
             >
-              <Send size={17} />
-            </button>
-          {/if}
-        </div>
-      </form>
+          </div>
+        {/if}
+        <form
+          onsubmit={(event) => {
+            event.preventDefault();
+            if (canSend) void sendQuestion();
+          }}
+        >
+          <label class="visually-hidden" for="assistant-question">Ask the TCO assistant</label>
+          <textarea
+            id="assistant-question"
+            rows="2"
+            maxlength={MAX_ASSISTANT_QUESTION_CHARACTERS}
+            placeholder="Ask about this estimate"
+            bind:this={composer}
+            bind:value={question}
+            onkeydown={handleComposerKeydown}></textarea>
+          <div class="composer-actions">
+            <span class:near-limit={characterCount > 900}
+              >{characterCount.toLocaleString('en-US')} / {MAX_ASSISTANT_QUESTION_CHARACTERS.toLocaleString(
+                'en-US'
+              )}</span
+            >
+            <button
+              class="image"
+              type="button"
+              disabled={pending}
+              aria-label="Add JPEG or PNG"
+              title={!projectId
+                ? 'Open and save a project first'
+                : projectDirty
+                  ? 'Save project changes first'
+                  : 'Add JPEG or PNG'}
+              onclick={chooseImage}><ImagePlus size={17} /></button
+            >
+            {#if pending}
+              <button
+                class="cancel"
+                type="button"
+                aria-label="Cancel response"
+                title="Cancel response"
+                onclick={() => cancelRequest()}
+              >
+                <Square size={15} fill="currentColor" />
+              </button>
+            {:else}
+              <button
+                class="send"
+                type="submit"
+                disabled={!canSend}
+                aria-label="Send question"
+                title="Send question"
+              >
+                <Send size={17} />
+              </button>
+            {/if}
+          </div>
+        </form>
+      {:else}
+        <p class="login-required">Please log in to use the TCO agent.</p>
+      {/if}
     </div>
   </div>
 {/if}
@@ -448,6 +773,161 @@
     font-weight: 720;
     text-transform: uppercase;
   }
+  .report {
+    margin-top: 9px;
+    padding-top: 8px;
+    color: #445b60;
+    border-top: 1px solid #dce5e6;
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+  .report strong {
+    display: block;
+    margin-bottom: 3px;
+    color: #68420a;
+  }
+  .report ul {
+    margin: 0;
+    padding-left: 17px;
+  }
+  .report li + li {
+    margin-top: 3px;
+  }
+  .proposal {
+    margin: -3px 0 14px;
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid #8ea5aa;
+    border-left: 4px solid #007f73;
+    border-radius: 6px;
+    box-shadow: 0 3px 10px rgb(26 50 58 / 8%);
+  }
+  .proposal-heading {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 11px;
+    color: #18383c;
+    background: #edf7f5;
+    border-bottom: 1px solid #c8dad7;
+  }
+  .proposal-heading > div {
+    min-width: 0;
+  }
+  .proposal-heading strong,
+  .proposal-heading span {
+    display: block;
+  }
+  .proposal-heading strong {
+    font-size: 0.8rem;
+  }
+  .proposal-heading div span {
+    margin-top: 1px;
+    color: #587075;
+    font-size: 0.68rem;
+  }
+  .proposal-state {
+    flex: 0 0 auto;
+    color: #617579;
+    font-size: 0.7rem;
+    font-weight: 700;
+  }
+  .proposal-state.applied {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: #086d44;
+  }
+  .change-list {
+    margin: 0;
+  }
+  .change-list > div {
+    padding: 8px 10px;
+  }
+  .change-list > div + div {
+    border-top: 1px solid #e2e9ea;
+  }
+  .change-list dt {
+    margin-bottom: 5px;
+    color: #496166;
+    font-size: 0.67rem;
+    font-weight: 700;
+    text-transform: capitalize;
+  }
+  .change-list dd {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr);
+    align-items: start;
+    gap: 5px;
+    margin: 0;
+    font-size: 0.72rem;
+    line-height: 1.35;
+  }
+  .change-list dd span {
+    min-width: 0;
+    padding: 5px 6px;
+    overflow-wrap: anywhere;
+    background: #f4f7f7;
+    border-radius: 3px;
+  }
+  .change-list dd span:last-child {
+    color: #075a4c;
+    background: #e7f5f1;
+  }
+  .change-list dd b {
+    padding-top: 5px;
+    color: #6b7e82;
+    text-align: center;
+  }
+  .proposal-blocked {
+    margin: 0;
+    padding: 7px 10px;
+    color: #7e261f;
+    background: #fff0ee;
+    border-top: 1px solid #efd0cc;
+    font-size: 0.7rem;
+    line-height: 1.35;
+  }
+  .proposal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 7px;
+    padding: 9px 10px;
+    border-top: 1px solid #e2e9ea;
+  }
+  .proposal-actions button,
+  .attachment button {
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 0 11px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.73rem;
+    font-weight: 700;
+  }
+  .proposal-actions .dismiss {
+    color: #294348;
+    background: #fff;
+    border: 1px solid #9dafb3;
+  }
+  .proposal-actions .apply,
+  .attachment .analyze {
+    color: #fff;
+    background: #007f73;
+    border: 1px solid #00665d;
+  }
+  .proposal-actions button:disabled,
+  .attachment button:disabled {
+    color: #819195;
+    background: #e4e9ea;
+    border-color: #c3ced0;
+    cursor: not-allowed;
+  }
   .pending {
     width: 52px;
     display: flex;
@@ -483,6 +963,52 @@
     border-left: 3px solid #b42318;
     font-size: 0.76rem;
     line-height: 1.35;
+  }
+  .login-required {
+    margin: 0;
+    padding: 9px 10px;
+    color: #40575c;
+    background: #f3f7f7;
+    border-left: 3px solid #6d858a;
+    font-size: 0.78rem;
+  }
+  .attachment {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 8px;
+    color: #294348;
+    background: #eef6f5;
+    border: 1px solid #a8bfbd;
+    border-radius: 5px;
+  }
+  .attachment > div {
+    min-width: 0;
+  }
+  .attachment strong,
+  .attachment span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .attachment strong {
+    font-size: 0.73rem;
+  }
+  .attachment span {
+    margin-top: 1px;
+    color: #647a7e;
+    font-size: 0.65rem;
+  }
+  .attachment button.remove {
+    width: 30px;
+    min-height: 30px;
+    padding: 0;
+    color: #4b6267;
+    background: transparent;
+    border: 1px solid transparent;
   }
   form {
     display: grid;
@@ -549,6 +1075,14 @@
     background: #fff;
     border-color: #c58f89;
   }
+  .composer-actions button.image {
+    color: #26545d;
+    background: #eef5f5;
+    border-color: #9db2b6;
+  }
+  .composer-actions button.image:hover {
+    background: #dcebec;
+  }
   .launcher {
     position: fixed;
     right: 22px;
@@ -613,6 +1147,23 @@
       border-bottom: 0;
       border-left: 0;
       border-radius: 8px 8px 0 0;
+    }
+    .change-list dd {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .change-list dd b {
+      display: none;
+    }
+    .attachment {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+    .attachment .analyze {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+    .attachment .remove {
+      grid-column: 3;
+      grid-row: 1;
     }
     .launcher {
       right: 16px;

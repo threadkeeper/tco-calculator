@@ -9,6 +9,7 @@ use std::{sync::Arc, time::Instant};
 use async_trait::async_trait;
 use azure_core::credentials::TokenCredential;
 use azure_identity::ManagedIdentityCredential;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::{Client, StatusCode, Url, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -211,7 +212,7 @@ enum WireMessage<'a> {
     #[serde(rename = "system")]
     System { content: &'a str },
     #[serde(rename = "user")]
-    User { content: &'a str },
+    User { content: WireUserContent<'a> },
     #[serde(rename = "assistant")]
     Assistant { content: &'a str },
     #[serde(rename = "assistant")]
@@ -221,6 +222,25 @@ enum WireMessage<'a> {
         tool_call_id: &'a str,
         content: &'a str,
     },
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum WireUserContent<'a> {
+    Text(&'a str),
+    Parts(Vec<WireUserPart<'a>>),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WireUserPart<'a> {
+    Text { text: &'a str },
+    ImageUrl { image_url: WireImageUrl },
+}
+
+#[derive(Serialize)]
+struct WireImageUrl {
+    url: String,
 }
 
 #[derive(Serialize)]
@@ -253,12 +273,15 @@ struct WireFunction<'a> {
 
 fn encode_request(request: &ModelTurnRequest) -> Result<Value, ModelError> {
     let mut messages = Vec::with_capacity(request.messages.len() + 1);
+    let mut image = request.image.as_ref();
     messages.push(WireMessage::System {
-        content: request.system_instruction,
+        content: &request.system_instruction,
     });
     for message in &request.messages {
         messages.push(match message {
-            TranscriptMessage::User { content } => WireMessage::User { content },
+            TranscriptMessage::User { content } => WireMessage::User {
+                content: wire_user_content(content, image.take()),
+            },
             TranscriptMessage::Assistant { content } => WireMessage::Assistant { content },
             TranscriptMessage::AssistantToolCalls { calls } => WireMessage::AssistantToolCalls {
                 tool_calls: calls
@@ -281,6 +304,9 @@ fn encode_request(request: &ModelTurnRequest) -> Result<Value, ModelError> {
             },
         });
     }
+    if image.is_some() {
+        return Err(ModelError::MalformedResponse);
+    }
 
     let tools = request
         .tools
@@ -295,6 +321,26 @@ fn encode_request(request: &ModelTurnRequest) -> Result<Value, ModelError> {
         n: 1,
     })
     .map_err(|_| ModelError::MalformedResponse)
+}
+
+fn wire_user_content<'a>(
+    text: &'a str,
+    image: Option<&super::model::ModelImage>,
+) -> WireUserContent<'a> {
+    let Some(image) = image else {
+        return WireUserContent::Text(text);
+    };
+    let mut url = String::with_capacity(23 + image.as_bytes().len().div_ceil(3) * 4);
+    url.push_str("data:");
+    url.push_str(super::model::ModelImage::MEDIA_TYPE);
+    url.push_str(";base64,");
+    STANDARD.encode_string(image.as_bytes(), &mut url);
+    WireUserContent::Parts(vec![
+        WireUserPart::Text { text },
+        WireUserPart::ImageUrl {
+            image_url: WireImageUrl { url },
+        },
+    ])
 }
 
 fn wire_tool(schema: &ToolSchema) -> Result<WireTool<'_>, ModelError> {
@@ -463,7 +509,7 @@ mod tests {
 
     fn request() -> ModelTurnRequest {
         ModelTurnRequest {
-            system_instruction: "Use tools.",
+            system_instruction: "Use tools.".to_owned(),
             prompt_version: "test/1",
             messages: vec![
                 TranscriptMessage::User {
@@ -482,6 +528,7 @@ mod tests {
                     content: r#"{"status":"ok"}"#.to_owned(),
                 },
             ],
+            image: None,
             tools: vec![ToolSchema {
                 name: "get_application_help",
                 description: "Read reviewed help.",
@@ -532,6 +579,28 @@ mod tests {
         assert_eq!(body["n"], 1);
         assert_eq!(body["parallel_tool_calls"], true);
         assert!(body.get("model").is_none());
+    }
+
+    #[test]
+    fn normalized_image_is_serialized_as_one_jpeg_data_url() {
+        let mut request = request();
+        request.image = Some(super::super::model::ModelImage::normalized_jpeg(vec![
+            0xff, 0xd8, 0xff, 0x00,
+        ]));
+
+        let body = encode_request(&request).expect("multimodal request should serialize");
+
+        assert_eq!(body["messages"][1]["content"][0]["type"], "text");
+        assert_eq!(
+            body["messages"][1]["content"][0]["text"],
+            "Explain Azure region"
+        );
+        assert_eq!(body["messages"][1]["content"][1]["type"], "image_url");
+        assert_eq!(
+            body["messages"][1]["content"][1]["image_url"]["url"],
+            "data:image/jpeg;base64,/9j/AA=="
+        );
+        assert!(body["messages"][3]["content"].is_string());
     }
 
     #[test]

@@ -51,7 +51,8 @@
     etag = null,
     onclose,
     oncleared,
-    onprojectsaved
+    onprojectsaved,
+    onprojectdirty
   }: {
     workspace: GuestWorkspace;
     mode: 'guest' | 'authenticated';
@@ -60,6 +61,7 @@
     onclose: () => void;
     oncleared: () => void;
     onprojectsaved: (id: string, etag: string | null, name: string) => void;
+    onprojectdirty: (dirty: boolean) => void;
   } = $props();
 
   let currentProjectId = $state(untrack(() => projectId));
@@ -103,8 +105,19 @@
       : workspace.project.settings.project_type.toUpperCase()
   );
 
+  $effect(() => {
+    currentProjectId = projectId;
+    currentEtag = etag;
+  });
+
+  function setDirty(value: boolean) {
+    if (dirty === value) return;
+    dirty = value;
+    onprojectdirty(value);
+  }
+
   function markDirty() {
-    dirty = true;
+    setDirty(true);
     workspace.calculation = null;
     problem = null;
     if (mode !== 'guest') return;
@@ -147,7 +160,7 @@
   async function persistGuest() {
     try {
       await saveGuestWorkspace($state.snapshot(workspace));
-      dirty = false;
+      setDirty(false);
       autosaveStatus = 'saved';
     } catch (error) {
       autosaveStatus = 'error';
@@ -185,7 +198,7 @@
       currentEtag = response.etag;
       workspace.project = savedProject;
       workspace.calculation = document.latest_calculation_revision ?? null;
-      dirty = false;
+      setDirty(false);
       if (currentProjectId) onprojectsaved(currentProjectId, currentEtag, workspace.project.name);
     } catch (error) {
       problem = messageFromError(error, 'The project could not be saved.');
@@ -416,7 +429,7 @@
         method: 'POST',
         body: JSON.stringify(projectRequestPayload(workspace.project))
       });
-      dirty = mode === 'authenticated';
+      setDirty(mode === 'authenticated');
       if (mode === 'guest') await persistGuest();
     } catch (error) {
       if (!problem) problem = messageFromError(error, 'The estimate could not be calculated.');

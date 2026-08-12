@@ -60,12 +60,32 @@ pub struct ToolSchema {
     pub parameters: &'static str,
 }
 
+/// One metadata-free JPEG attachment accepted from the bounded image intake path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelImage {
+    bytes: Vec<u8>,
+}
+
+impl ModelImage {
+    pub const MEDIA_TYPE: &'static str = "image/jpeg";
+
+    pub(crate) fn normalized_jpeg(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 /// One model call within a turn.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelTurnRequest {
-    pub system_instruction: &'static str,
+    pub system_instruction: String,
     pub prompt_version: &'static str,
     pub messages: Vec<TranscriptMessage>,
+    /// Present only on the initial request of an image-assisted turn.
+    pub image: Option<ModelImage>,
     pub tools: Vec<ToolSchema>,
     pub max_output_tokens: u32,
     pub timeout: Duration,
@@ -133,11 +153,12 @@ mod tests {
     async fn the_default_client_fails_closed() {
         let client = DisabledModelClient;
         let request = ModelTurnRequest {
-            system_instruction: "",
+            system_instruction: String::new(),
             prompt_version: "test",
             messages: vec![TranscriptMessage::User {
                 content: "What does the Azure region control?".to_owned(),
             }],
+            image: None,
             tools: Vec::new(),
             max_output_tokens: 1,
             timeout: Duration::from_secs(1),

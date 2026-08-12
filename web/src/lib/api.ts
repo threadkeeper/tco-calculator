@@ -32,7 +32,9 @@ export async function requestJsonResponse(
   init?: RequestInit
 ): Promise<{ payload: unknown; etag: string | null }> {
   const headers = new Headers(init?.headers);
-  if (init?.body !== undefined) headers.set('content-type', 'application/json');
+  if (init?.body !== undefined && !headers.has('content-type')) {
+    headers.set('content-type', 'application/json');
+  }
   headers.set('accept', 'application/json, application/problem+json');
   const response = await fetch(path, { ...init, headers });
   const payload: unknown = response.status === 204 ? null : await response.json();

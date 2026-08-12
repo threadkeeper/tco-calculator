@@ -2,6 +2,30 @@
 
 Snapshot date: 2026-08-11
 
+## Completion Update: 2026-08-12
+
+The 2026-08-11 content below is retained as the historical starting handoff. Its statements that Foundry inference, image intake, proposals, and persisted actions are not implemented are superseded by this update.
+
+Implemented on `feature/autonomous-assistant-actions`:
+
+- a request-bounded Rust reasoning loop with closed host tools, phase-aware schemas, preflight policy, model/tool/time budgets, cancellation, and host-authored awareness of its prompt version, available tools, selected-project state, completed action history, and request-only memory boundary;
+- authenticated Foundry Model Router inference through managed identity and the approved private data plane, with project/workload names redacted and no identity or contact fields in model context;
+- one-shot JPEG/PNG intake with 10 MiB, 25 megapixel, and 16,384-pixel dimension bounds, signature and decode checks, metadata removal, RGB JPEG normalization, and request-scoped byte disposal;
+- typed extraction reports containing project-patch proposals, omissions, and uncertainties;
+- a dedicated confirmed-action endpoint that re-reads and updates only the authenticated owner's project through the existing project service and current ETag;
+- a Svelte upload, review, Apply/Cancel, stale-project, cancellation, and authoritative-editor-refresh flow; and
+- OpenAPI and generated TypeScript contracts for image analysis, proposals, typed notes, and confirmed actions.
+
+The deliberately small application security boundary is:
+
+1. Email address, contact choice, display name, tenant/object claims, and owner identifiers are never included in prompts, image payloads, or model-visible tool data. The email field remains isolated to the privacy/contact workflow.
+2. Signed-out users can open the panel but see `Please log in to use the TCO agent.` The browser does not expose the composer, image picker, or action controls and sends no assistant request until authenticated.
+3. The server derives owner scope from the authenticated principal. Every project read and write uses that owner plus the project ID; another owner's project is returned as not found. ETags and explicit Apply remain data-integrity controls against stale or unintended updates.
+
+The current persisted-action surface is intentionally one useful operation: apply a reviewed project patch. Additional create, delete, share, price-refresh, and client-navigation actions from the original capability matrix are not silently implied and require their own implementation when product demand justifies them.
+
+## Historical Handoff
+
 ## Purpose
 
 This document lets another agent resume the bottom-right TCO assistant work after a workstation shutdown. It records the repository state, completed deterministic implementation, validation evidence, unresolved compile failures, and controls that still block Foundry and image-processing work.

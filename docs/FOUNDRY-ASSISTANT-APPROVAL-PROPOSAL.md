@@ -30,7 +30,7 @@ Use an application-owned, request-bounded Rust orchestration loop backed by an A
 
 Start with signed-in users, ephemeral chat history, read-only help, bounded JPEG/PNG processing, and staged draft changes. Add persisted actions only after their action-specific controls pass. CSV, Excel, and PDF intake are deferred beyond v1.
 
-Implementation status on 2026-08-12: the lean MVP implements ephemeral signed-in text turns and four read-only host tools. Image intake, draft actions, and persisted actions are deferred; no image decoder is installed or present in `Cargo.lock`.
+Implementation status on 2026-08-12: ephemeral signed-in text turns, the bounded Rust-hosted tool loop, owner-scoped reads, deterministic validation/calculation, project-patch proposals, explicit confirmed project updates, and normalized JPEG/PNG extraction are implemented on `feature/autonomous-assistant-actions`. The browser shows a login-required message to guests and issues no model, image, or action request until authentication. Broader create/delete/share/price-refresh and client-navigation capabilities remain future allowlisted actions.
 
 ## 2. Authority and Approved Controls
 
@@ -264,7 +264,7 @@ Do not assume the text/tool router supports every modality. After capability and
 1. the reviewed custom Model Router subset for normalized image input only if every eligible model supports the required image and tool behavior; otherwise use a separately pinned multimodal Foundry deployment; or
 2. deterministic extraction followed by the text/tool router receiving only bounded normalized text and tables.
 
-The selected image decoder and normalizer must be recorded with its exact resolved version, license, provenance, transitive graph, maintenance status, vulnerability evidence, native/build behavior, and rollback before installation. Direct PDF input is not approved; CSV, Excel, and PDF remain deferred.
+The implemented image decoder and normalizer is `image` `0.25.10` from crates.io, published by the image-rs project under `MIT OR Apache-2.0`. It is pinned in `Cargo.toml` and `Cargo.lock` with checksum `85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104`; default features are disabled and only `jpeg` and `png` are enabled. The locked direct transitive set is `bytemuck`, `byteorder-lite`, `moxcms`, `num-traits`, `png`, `zune-core`, and `zune-jpeg`. It performs request-scoped in-memory decode and re-encode with no network permission or persistent storage. The standard library could not safely replace a maintained image codec; format-specific hand-written decoders were rejected. Rollback removes the image route/module/dependency and leaves text turns and project actions intact. Direct PDF input is not approved; CSV, Excel, and PDF remain deferred.
 
 ### 9.3 Authentication and readiness
 
