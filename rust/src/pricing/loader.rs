@@ -887,7 +887,7 @@ mod tests {
 
         assert_eq!(normalized.records.len(), 8);
         assert_eq!(normalized.source_urls.len(), 3);
-        assert_eq!(normalized.warnings.len(), 1);
+        assert!(normalized.warnings.is_empty());
         let record = &normalized.records[0];
         assert_eq!(record.rate.compute_hourly.to_string(), "5.632");
         assert_eq!(record.rate.storage_monthly_per_gb.to_string(), "0.13685");
