@@ -31,6 +31,22 @@ export type ProjectSettingsDraft = {
   electricity_rate_usd_per_kwh: string | null;
 };
 
+export const ON_PREM_PUBLIC_BOOK_REFERENCE = {
+  enterprise_license_sa_usd_per_two_core_pack: '20557',
+  standard_license_sa_usd_per_two_core_pack: '5363',
+  remaining_coverage_months: 12,
+  source_url: 'https://www.microsoft.com/en-us/sql-server/sql-server-2022-pricing',
+  verified_on: '2026-08-07'
+} as const;
+
+export function applyOnPremPublicBookReference(settings: ProjectSettingsDraft): void {
+  settings.enterprise_license_sa_usd_per_two_core_pack =
+    ON_PREM_PUBLIC_BOOK_REFERENCE.enterprise_license_sa_usd_per_two_core_pack;
+  settings.standard_license_sa_usd_per_two_core_pack =
+    ON_PREM_PUBLIC_BOOK_REFERENCE.standard_license_sa_usd_per_two_core_pack;
+  settings.remaining_coverage_months = ON_PREM_PUBLIC_BOOK_REFERENCE.remaining_coverage_months;
+}
+
 type SharedResourceDraft = {
   id: string;
   workload_name: string;
@@ -129,7 +145,7 @@ export function createProjectDraft(
       default_mi_purchase_option: 'ahb',
       enterprise_license_sa_usd_per_two_core_pack: null,
       standard_license_sa_usd_per_two_core_pack: null,
-      remaining_coverage_months: onPrem ? 12 : null,
+      remaining_coverage_months: onPrem ? 36 : null,
       electricity_rate_usd_per_kwh: onPrem ? '0' : null
     },
     resources: [],

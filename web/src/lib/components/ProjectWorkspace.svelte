@@ -5,6 +5,7 @@
     Calculator,
     CloudCog,
     Database,
+    DollarSign,
     Plus,
     RotateCw,
     Save,
@@ -15,6 +16,7 @@
   import {
     ApiProblem,
     asRecord,
+    formatMoney,
     readRecords,
     readString,
     requestJson,
@@ -23,9 +25,11 @@
     type JsonRecord
   } from '$lib/api';
   import {
+    applyOnPremPublicBookReference,
     clearGuestWorkspace,
     createResource,
     editableProject,
+    ON_PREM_PUBLIC_BOOK_REFERENCE,
     projectRequestPayload,
     saveGuestWorkspace,
     type GuestWorkspace
@@ -89,6 +93,8 @@
   let shareExpiresAt = $state('');
   let shareCopied = $state(false);
   let revokingShare = $state(false);
+  let settingsOpen = $state(untrack(() => workspace.project.settings.project_type === 'on_prem'));
+  let settingsValidationAttempted = $state(false);
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   const resourceLabel = $derived(
@@ -107,6 +113,37 @@
     autosaveTimer = setTimeout(() => void persistGuest(), 450);
   }
 
+  function isPositivePrice(value: string | null): boolean {
+    if (value === null || value.trim() === '') return false;
+    const price = Number(value);
+    return Number.isFinite(price) && price > 0;
+  }
+
+  function onPremPriceError(value: string | null, edition: string): string | null {
+    if (!settingsValidationAttempted || isPositivePrice(value)) return null;
+    return `${edition} License + SA price must be greater than 0.`;
+  }
+
+  function validateOnPremPrices(): boolean {
+    if (workspace.project.settings.project_type !== 'on_prem') return true;
+    settingsValidationAttempted = true;
+    const settings = workspace.project.settings;
+    if (
+      isPositivePrice(settings.enterprise_license_sa_usd_per_two_core_pack) &&
+      isPositivePrice(settings.standard_license_sa_usd_per_two_core_pack)
+    ) {
+      return true;
+    }
+    settingsOpen = true;
+    problem = 'Enter both highlighted on-premises License + SA prices before continuing.';
+    return false;
+  }
+
+  function usePublicBookReference() {
+    applyOnPremPublicBookReference(workspace.project.settings);
+    markDirty();
+  }
+
   async function persistGuest() {
     try {
       await saveGuestWorkspace($state.snapshot(workspace));
@@ -123,6 +160,7 @@
       await persistGuest();
       return;
     }
+    if (!validateOnPremPrices()) return;
     saving = true;
     problem = null;
     try {
@@ -369,6 +407,7 @@
       problem = `Add at least one ${resourceLabel.toLowerCase()} workload before calculating.`;
       return;
     }
+    if (!validateOnPremPrices()) return;
     calculating = true;
     problem = null;
     try {
@@ -517,7 +556,7 @@
       {#if catalogWarning}<p class="catalog-warning">{catalogWarning}</p>{/if}
     </section>
 
-    <details class="settings-panel">
+    <details class="settings-panel" bind:open={settingsOpen}>
       <summary>Project settings</summary>
       <div class="settings-grid">
         <label
@@ -558,16 +597,18 @@
             onchange={markDirty}
           />
         </div>
-        <label
-          ><span>Source compute discount</span><input
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            bind:value={workspace.project.settings.source_compute_discount}
-            oninput={markDirty}
-          /></label
-        >
+        {#if workspace.project.settings.project_type !== 'on_prem'}
+          <label
+            ><span>Source compute discount</span><input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              bind:value={workspace.project.settings.source_compute_discount}
+              oninput={markDirty}
+            /></label
+          >
+        {/if}
         <label
           ><span>Source license discount</span><input
             type="number"
@@ -578,16 +619,18 @@
             oninput={markDirty}
           /></label
         >
-        <label
-          ><span>Source storage discount</span><input
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            bind:value={workspace.project.settings.source_storage_discount}
-            oninput={markDirty}
-          /></label
-        >
+        {#if workspace.project.settings.project_type !== 'on_prem'}
+          <label
+            ><span>Source storage discount</span><input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              bind:value={workspace.project.settings.source_storage_discount}
+              oninput={markDirty}
+            /></label
+          >
+        {/if}
         <label
           ><span>Azure compute discount</span><input
             type="number"
@@ -629,44 +672,100 @@
           /></label
         >
         {#if workspace.project.settings.project_type === 'on_prem'}
-          <label
-            ><span>Enterprise License + SA / two-core pack</span><input
-              type="number"
-              min="0.01"
-              step="0.01"
-              required
-              bind:value={workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack}
-              oninput={markDirty}
-            /></label
-          >
-          <label
-            ><span>Standard License + SA / two-core pack</span><input
-              type="number"
-              min="0.01"
-              step="0.01"
-              required
-              bind:value={workspace.project.settings.standard_license_sa_usd_per_two_core_pack}
-              oninput={markDirty}
-            /></label
-          >
-          <label
-            ><span>Remaining coverage months</span><select
-              bind:value={workspace.project.settings.remaining_coverage_months}
-              onchange={markDirty}
-              ><option value={12}>12</option><option value={24}>24</option><option value={36}
-                >36</option
-              ></select
-            ></label
-          >
-          <label
-            ><span>Electricity rate (USD/kWh)</span><input
-              type="number"
-              min="0"
-              step="0.0001"
-              bind:value={workspace.project.settings.electricity_rate_usd_per_kwh}
-              oninput={markDirty}
-            /></label
-          >
+          <fieldset class="on-prem-pricing">
+            <legend>On-premises SQL licensing</legend>
+            <div class="pricing-reference">
+              <div class="reference-copy">
+                <strong>Public first-year USD reference</strong>
+                <span
+                  >Enterprise {formatMoney(
+                    ON_PREM_PUBLIC_BOOK_REFERENCE.enterprise_license_sa_usd_per_two_core_pack
+                  )} · Standard {formatMoney(
+                    ON_PREM_PUBLIC_BOOK_REFERENCE.standard_license_sa_usd_per_two_core_pack
+                  )} · 12 months · verified 7 Aug 2026</span
+                >
+                <span>Taxes excluded. Replace with the applicable EA or customer quote.</span>
+              </div>
+              <div class="reference-actions">
+                <a
+                  href={ON_PREM_PUBLIC_BOOK_REFERENCE.source_url}
+                  target="_blank"
+                  rel="external noreferrer">Microsoft source</a
+                >
+                <button class="secondary compact" type="button" onclick={usePublicBookReference}
+                  ><DollarSign size={16} /> Use public reference</button
+                >
+              </div>
+            </div>
+            <div class="on-prem-fields">
+              <label
+                ><span>Enterprise License + SA quote (USD / 2-core pack)</span><input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  required
+                  aria-invalid={onPremPriceError(
+                    workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack,
+                    'Enterprise'
+                  ) !== null}
+                  aria-describedby="enterprise-license-sa-error"
+                  bind:value={
+                    workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack
+                  }
+                  oninput={markDirty}
+                />
+                {#if onPremPriceError(workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack, 'Enterprise')}
+                  <small class="field-error" id="enterprise-license-sa-error"
+                    >{onPremPriceError(
+                      workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack,
+                      'Enterprise'
+                    )}</small
+                  >
+                {/if}</label
+              >
+              <label
+                ><span>Standard License + SA quote (USD / 2-core pack)</span><input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  required
+                  aria-invalid={onPremPriceError(
+                    workspace.project.settings.standard_license_sa_usd_per_two_core_pack,
+                    'Standard'
+                  ) !== null}
+                  aria-describedby="standard-license-sa-error"
+                  bind:value={workspace.project.settings.standard_license_sa_usd_per_two_core_pack}
+                  oninput={markDirty}
+                />
+                {#if onPremPriceError(workspace.project.settings.standard_license_sa_usd_per_two_core_pack, 'Standard')}
+                  <small class="field-error" id="standard-license-sa-error"
+                    >{onPremPriceError(
+                      workspace.project.settings.standard_license_sa_usd_per_two_core_pack,
+                      'Standard'
+                    )}</small
+                  >
+                {/if}</label
+              >
+              <label
+                ><span>Remaining EA/SA coverage</span><select
+                  bind:value={workspace.project.settings.remaining_coverage_months}
+                  onchange={markDirty}
+                  ><option value={12}>12 months</option><option value={24}>24 months</option><option
+                    value={36}>36 months</option
+                  ></select
+                ></label
+              >
+              <label
+                ><span>Electricity rate (USD/kWh)</span><input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  bind:value={workspace.project.settings.electricity_rate_usd_per_kwh}
+                  oninput={markDirty}
+                /></label
+              >
+            </div>
+          </fieldset>
         {/if}
       </div>
     </details>
@@ -969,6 +1068,67 @@
   .region-field {
     min-width: 0;
   }
+  .on-prem-pricing {
+    display: grid;
+    grid-column: 1 / -1;
+    gap: 12px;
+    min-width: 0;
+    margin: 2px 0 0;
+    padding: 0;
+    border: 0;
+  }
+  .on-prem-pricing legend {
+    margin-bottom: 2px;
+    color: #173338;
+    font:
+      700 0.82rem/1.2 Bahnschrift,
+      sans-serif;
+  }
+  .pricing-reference {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 12px;
+    background: #edf6f4;
+    border-left: 3px solid #087f73;
+  }
+  .reference-copy {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+    color: #526a6d;
+    font-size: 0.74rem;
+    font-weight: 400;
+  }
+  .reference-copy strong {
+    color: #24454a;
+    font-size: 0.78rem;
+  }
+  .reference-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
+  }
+  .reference-actions a {
+    color: #076c63;
+    font-size: 0.74rem;
+    font-weight: 700;
+  }
+  .on-prem-fields {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 13px;
+  }
+  .field-error {
+    color: #b42318;
+    font-size: 0.72rem;
+    font-weight: 650;
+  }
+  input[aria-invalid='true'] {
+    border-color: #b42318;
+  }
   label {
     display: grid;
     gap: 6px;
@@ -1066,6 +1226,9 @@
     .settings-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+    .on-prem-fields {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
   @media (max-width: 620px) {
     main {
@@ -1100,6 +1263,17 @@
       justify-self: start;
     }
     .settings-grid {
+      grid-template-columns: 1fr;
+    }
+    .pricing-reference,
+    .reference-actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .reference-actions a {
+      align-self: start;
+    }
+    .on-prem-fields {
       grid-template-columns: 1fr;
     }
     .danger-button {

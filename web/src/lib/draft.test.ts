@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  applyOnPremPublicBookReference,
   createGuestWorkspace,
   createProjectDraft,
   createResource,
   editableProject,
   projectRequestPayload
 } from './draft';
+import projectWorkspaceSource from './components/ProjectWorkspace.svelte?raw';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -17,6 +19,24 @@ afterEach(() => {
 });
 
 describe('project drafts', () => {
+  it('keeps sourced on-premises License + SA inputs visible in project settings', () => {
+    expect(projectWorkspaceSource).toContain(
+      "untrack(() => workspace.project.settings.project_type === 'on_prem')"
+    );
+    expect(projectWorkspaceSource).toContain(
+      '<details class="settings-panel" bind:open={settingsOpen}>'
+    );
+    expect(projectWorkspaceSource).toContain('On-premises SQL licensing');
+    expect(projectWorkspaceSource).toContain('ON_PREM_PUBLIC_BOOK_REFERENCE');
+    expect(projectWorkspaceSource).toContain('Use public reference');
+    expect(projectWorkspaceSource).toContain('Replace with the applicable EA or customer quote.');
+    expect(projectWorkspaceSource).toContain('Enterprise License + SA quote (USD / 2-core pack)');
+    expect(projectWorkspaceSource).toContain('Standard License + SA quote (USD / 2-core pack)');
+    expect(
+      projectWorkspaceSource.match(/project_type !== 'on_prem'/g)?.length
+    ).toBeGreaterThanOrEqual(3);
+  });
+
   it('creates a cloud project with explicit regional scope', () => {
     const project = createProjectDraft(
       'ec2',
@@ -50,8 +70,20 @@ describe('project drafts', () => {
       aws_region: null,
       enterprise_license_sa_usd_per_two_core_pack: null,
       standard_license_sa_usd_per_two_core_pack: null,
-      remaining_coverage_months: 12,
+      remaining_coverage_months: 36,
       electricity_rate_usd_per_kwh: '0'
+    });
+  });
+
+  it('applies the sourced first-year public book reference only when requested', () => {
+    const project = createProjectDraft('on_prem', 'Datacenter', null);
+
+    applyOnPremPublicBookReference(project.settings);
+
+    expect(project.settings).toMatchObject({
+      enterprise_license_sa_usd_per_two_core_pack: '20557',
+      standard_license_sa_usd_per_two_core_pack: '5363',
+      remaining_coverage_months: 12
     });
   });
 
