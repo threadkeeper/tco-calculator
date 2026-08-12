@@ -25,6 +25,14 @@ This file is the repository's transient coordination board for concurrent agents
 4. Sequence expensive or deployment-related workflows so an earlier applicable run can be reused. Independent local checks may proceed concurrently only when their reserved paths, outputs, ports, and processes do not overlap.
 5. This board coordinates operations but never authorizes them. All approval, security, preview-deployment, environment, and retry restrictions in `.github/copilot-instructions.md` still apply.
 
+## Integration Batches
+
+1. Prefer one bounded integration batch for compatible, independently validated commits waiting to reach the same protected ref. Parallel agents SHOULD keep changes in focused commits and mark them `batch-ready` in their task entry with the exact commit SHA, expected base SHA, validation evidence, required ordering or dependencies, and reserved paths.
+2. One active task MUST own each integration batch and its target ref. The owner records the candidate SHAs and a cutoff condition, fetches the latest target, integrates candidates in the recorded order without squashing or rewriting authorship, resolves no substantive conflict without the originating owner's handoff, and runs checks appropriate to the aggregate change before one fast-forward push.
+3. A batch is closed when its recorded candidates are ready, its bounded cutoff is reached, or waiting longer would block an urgent fix. Late, conflicting, stale, incompletely validated, or dependency-ambiguous candidates move to a later batch; batching MUST NOT become an indefinite barrier to integration.
+4. Preserve each constituent commit so failures remain attributable through job and test output, commit-level inspection, bisect, and focused revert. After integration, the batch owner records the exact aggregate SHA and owns or explicitly hands off its automatic CI run through a terminal result.
+5. A successful aggregate CI run may be reused for later approved workflows only when it covers the exact reviewed aggregate SHA. Batching never authorizes preview or production deployment, permits duplicate or concurrent pushes to the target ref, or weakens exact-SHA, review, security, rollback, or deployment-serialization requirements.
+
 ## Completion And Cleanup
 
 1. A task is complete only after its owned edits and processes are finished, required validation has reached a terminal result, and any owned GitHub Actions run has reached a terminal state or has been explicitly handed off.
