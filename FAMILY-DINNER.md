@@ -1,24 +1,24 @@
 # Family Dinner
 
-This file is the repository's transient coordination board for concurrent agents and chat sessions. It contains active work only. Every agent performing repository work MUST read it before starting and maintain one current entry until the work is completed or explicitly handed off.
+This file is the repository's transient informational board for concurrent agents and chat sessions. It contains active work only. It never reserves source code, branches, refs, CI capacity, or permission to proceed; agents use it to avoid accidental operational collisions while continuing locally scoped work.
 
 ## Flight Controller
 
-Snapshot UTC: `not set`. Durations are point-in-time values at this snapshot, not live counters.
+Snapshot UTC: `not set`. Durations, CI ownership, and mutex ownership are point-in-time values at this snapshot, not live counters.
 
-Pipeline glow: **✨ `workflow-running` ✨** means a CI/CD run is queued or in progress. Priority: 🔴 P0 urgent | 🟠 P1 high | 🟡 P2 normal | 🟢 P3 opportunistic.
+Pipeline glow: **✨ `workflow-running` ✨** means a CI/CD run is queued or in progress. While `.family-dinner.lock/` exists, its `owner` file is the live mutex authority. Priority: 🔴 P0 urgent | 🟠 P1 high | 🟡 P2 normal | 🟢 P3 opportunistic.
 
-| Agent / chat name | Status | Status reason | Status change time (UTC) | Status duration | Blocked by agent | Priority |
-| --- | --- | --- | --- | --- | --- | --- |
+| Agent / chat name | Status | Status reason | Status change time (UTC) | Status duration | Blocked by agent | CI owner | Mutex owner | Priority |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 _No active tasks._
 
 ## Coordination Rules
 
-1. Before the first repository mutation, use the **Board Write Mutex** below to add an entry under **Active Tasks**. Re-read this file immediately before every file edit, mutating command, long-running process change, or GitHub Actions operation.
-2. Give each task a unique ID and identify the agent or chat session. Record the exact files, directories, generated outputs, commands, ports, and other shared resources the task may change or occupy. Use the narrowest practical scope. `FAMILY-DINNER.md` is the shared ledger and MUST NOT be treated as an exclusive reservation.
-3. Treat another active entry's reserved paths and resources as read-only. Do not edit, move, delete, format, generate, build over, or otherwise interfere with them. If scopes overlap, record `waiting` and obtain an explicit handoff in this file; ask the user to arbitrate when ownership is unclear.
-4. Keep the Flight Controller row and task entry current whenever status, status reason, blocker, priority, scope, reserved paths, processes, next action, or workflow information changes. Every agent may edit only its own row and task block; only a task explicitly maintaining the coordination protocol may edit the static rules or template. Preserve every other agent's row and entry, and re-read the file after each update to detect concurrent changes.
+1. Read this board at task start and make a best-effort attempt to add one Flight Controller row and task entry. If the board is busy, missing, or malformed, continue isolated source work, validation, commits, and authorized pushes; retry the informational update later without waiting or starting a watcher solely for the board.
+2. Give each task a unique ID and record its local worktree or branch, expected files, commands, ports, processes, cloud resources, and CI activity. These fields describe intent and current activity; they never grant exclusive ownership or permission and never make another task wait.
+3. Use isolated worktrees or branches for concurrent source changes. Overlapping file paths, branches, target refs, CI runs, or advisory entries are not blockers. Pause only the exact operation that has a concrete collision on a running process, bound port, mutable generated output, deployment/environment mutation, cloud resource mutation, or unresolved Git conflict; continue every unrelated part of the task.
+4. Keep the row and task entry current on a best-effort basis. Every agent normally edits only its own row and block; a protocol-maintenance task may repair the panel or remove board-created blockers while preserving factual task metadata. A busy board never delays implementation or delivery.
 5. Use these statuses: `planning`, `active`, `waiting`, `workflow-running`, or `handoff`. An agent accepting a handoff MUST update the owner and status before continuing.
 6. Do not place secrets, credentials, tokens, customer data, tenant or subscription identifiers, private URLs, or sensitive logs in this file. Use only the minimum coordination metadata.
 
@@ -26,39 +26,40 @@ _No active tasks._
 
 1. Keep **Flight Controller** as the first operational section and maintain exactly one row per active task. The row's agent/chat name MUST equal its task ID so blockers are unambiguous.
 2. On every board write, set `Snapshot UTC` to the write time and refresh all status durations from each row's status-change time. A duration is a compact rounded-down value such as `8m`, `2h 14m`, or `3d 2h`; it is accurate only at the displayed snapshot.
-3. Change a row's status-change time only when its status or status reason changes. Use `none`, an exact active task ID, or `external: <short reason>` for the blocker.
-4. When a task owns a queued or in-progress CI/CD run, use status `workflow-running` and render its Flight Controller status as **✨ `workflow-running` ✨**. Remove the glow immediately when the run reaches a terminal state or ownership is handed off; waiting for integration before a run exists is not pipeline-running.
-5. Render priority as 🔴 P0 for urgent coordination, security, or release blockers; 🟠 P1 for high-priority correctness or release work; 🟡 P2 for normal work; and 🟢 P3 for opportunistic work.
-6. A task owner controls its row's operational values. A protocol-maintenance task may bootstrap or repair the panel from existing task metadata but MUST NOT otherwise reprioritize or change another owner's reported state.
+3. Change a row's status-change time only when its status or status reason changes. Use `none`, an exact task ID, or `external: <short reason>` for a concrete blocker; never list the board, a source-path overlap, a target ref, an integration queue, or another task's CI ownership as a blocker.
+4. In `CI owner`, identify each task's reserved, queued, or in-progress workflow with its workflow, ref, and short commit SHA; use `none` otherwise and clear terminal ownership promptly. When a run is queued or in progress, also use status `workflow-running` and render it as **✨ `workflow-running` ✨**. The cell is informational and does not reserve CI capacity or block another commit or push.
+5. In `Mutex owner`, use `held at snapshot` only on the row whose task ID matches `.family-dinner.lock/owner` while writing the snapshot; use `none` elsewhere. The table is historical after its snapshot, so the owner file is authoritative while the lock exists and an absent lock directory means no current mutex owner.
+6. Render priority as 🔴 P0 for urgent coordination, security, or release blockers; 🟠 P1 for high-priority correctness or release work; 🟡 P2 for normal work; and 🟢 P3 for opportunistic work.
+7. A task owner controls its row's operational values. A protocol-maintenance task may bootstrap or repair the panel from existing task metadata but MUST NOT otherwise reprioritize or change another owner's reported state.
 
 ## Board Write Mutex
 
-1. Before every edit to `FAMILY-DINNER.md`, atomically create the transient root directory `.family-dinner.lock/`. Successful creation grants the write mutex. If it already exists, do not edit this file and do not delete the lock; continue only non-conflicting read-only work or ask the user to resolve a blocked or orphaned lock.
-2. After acquiring the mutex, re-read the entire board, apply the narrowest update that preserves all other task blocks, and validate the resulting board while the mutex is still held. Never hold the mutex while waiting on task work, a user decision, a local process, or a GitHub Actions run.
-3. Release the mutex in a cleanup step immediately after the board update is validated by deleting only the `.family-dinner.lock/` directory created by that writer. Never commit the mutex directory, and never infer that another writer's lock is stale from elapsed time alone.
+1. The mutex serializes edits to this board only. To write, atomically create `.family-dinner.lock/`, then immediately write the task ID to `.family-dinner.lock/owner`. If the directory exists, do not alter or delete it; skip or defer the board update and continue all source edits, tests, commits, pushes, and other locally scoped work without waiting.
+2. After acquiring the mutex, re-read the board, apply the narrowest update, validate it, and release immediately. Never hold the mutex while doing task work, waiting for a decision, watching a process, or monitoring CI; never create a watcher merely to wait for this mutex.
+3. Release the mutex in a cleanup step immediately after the board update is validated by deleting only the `.family-dinner.lock/` directory and owner marker created by that writer. Never commit the mutex directory, and never infer that another writer's lock is stale from elapsed time alone.
 
 ## GitHub Actions Coordination
 
-1. Before dispatching, rerunning, cancelling, approving, or otherwise changing a GitHub Actions run, reserve the workflow operation in the task entry with the workflow name, ref, exact commit SHA when known, intended operation, and reason.
-2. One active task owns a workflow/ref/commit combination at a time. Other agents MUST reuse an applicable existing run or wait; they MUST NOT launch duplicate runs for the same validation or deployment.
-3. Add the run ID and non-sensitive URL as soon as they are available. The owning agent monitors the run to a terminal state and records only the current coordination status needed by other agents.
-4. Sequence expensive or deployment-related workflows so an earlier applicable run can be reused. Independent local checks may proceed concurrently only when their reserved paths, outputs, ports, and processes do not overlap.
+1. Record a workflow operation, ref, exact commit SHA when known, and reason on a best-effort basis before manually changing a run. A busy or stale board never blocks an otherwise authorized workflow operation or an automatic run caused by a push.
+2. Reuse an observed run for the exact same workflow/ref/commit instead of manually duplicating it. Distinct commits and their automatic CI runs may proceed independently; CI ownership in this board is informational rather than exclusive.
+3. Add the run ID and non-sensitive URL when practical, monitor runs required by the task, and clear terminal ownership promptly. Do not wait for another task's unrelated run merely because it appears here.
+4. Coordinate a genuinely shared deployment or environment mutation at that operational boundary. Local checks, commits, and pushes continue concurrently; substantive deployment authorization and safety rules remain controlling.
 5. This board coordinates operations but never authorizes them. All approval, security, preview-deployment, environment, and retry restrictions in `.github/copilot-instructions.md` still apply.
 
 ## Integration Batches
 
-1. Prefer one bounded integration batch for compatible, independently validated commits waiting to reach the same protected ref. Parallel agents SHOULD keep changes in focused commits and mark them `batch-ready` in their task entry with the exact commit SHA, expected base SHA, validation evidence, required ordering or dependencies, and reserved paths.
-2. One active task MUST own each integration batch and its target ref. The owner records the candidate SHAs and a cutoff condition, fetches the latest target, integrates candidates in the recorded order without squashing or rewriting authorship, resolves no substantive conflict without the originating owner's handoff, and runs checks appropriate to the aggregate change before one fast-forward push.
-3. A batch is closed when its recorded candidates are ready, its bounded cutoff is reached, or waiting longer would block an urgent fix. Late, conflicting, stale, incompletely validated, or dependency-ambiguous candidates move to a later batch; batching MUST NOT become an indefinite barrier to integration.
-4. Preserve each constituent commit so failures remain attributable through job and test output, commit-level inspection, bisect, and focused revert. After integration, the batch owner records the exact aggregate SHA and owns or explicitly hands off its automatic CI run through a terminal result.
-5. A successful aggregate CI run may be reused for later approved workflows only when it covers the exact reviewed aggregate SHA. Batching never authorizes preview or production deployment, permits duplicate or concurrent pushes to the target ref, or weakens exact-SHA, review, security, rollback, or deployment-serialization requirements.
+1. Keep changes in focused, independently validated commits. Agents may push those commits independently as soon as they are ready and authorized; never wait solely to form a batch or for another board entry, target-ref owner, or CI owner to clear.
+2. When multiple compatible commits are already ready, agents MAY combine them into one bounded fast-forward push while preserving commit boundaries and authorship. Record exact SHAs, ordering, expected base, and validation when convenient, but the board does not own or lock the target ref.
+3. Before pushing, fetch the latest target and use normal Git integration. If a fast-forward push loses a race, fetch, rebase or merge according to repository policy, resolve only understood conflicts, rerun affected checks, and retry; do not wait for Family Dinner serialization.
+4. Preserve constituent commits so failures remain attributable through test output, commit inspection, bisect, and focused revert. A successful exact-SHA CI run may be reused where substantive workflow policy allows.
+5. Batching and board metadata never authorize preview or production deployment and never weaken review, security, rollback, exact-SHA, or environment-mutation controls.
 
 ## Completion And Cleanup
 
-1. A task is complete only after its owned edits and processes are finished, required validation has reached a terminal result, and any owned GitHub Actions run has reached a terminal state or has been explicitly handed off.
-2. Immediately before the final response, atomically remove both the task's Flight Controller row and its entire entry, including file reservations, process details, workflow metadata, run IDs, status, timestamps, and notes. Do not archive completed entries here.
-3. If work is handed off, keep only the information required for the receiving agent and update the owner; the receiving agent removes the entry after completion.
-4. Do not remove another agent's entry merely because it appears old. First verify that no related edit, process, or workflow is active; when that cannot be established, leave it in place and ask the user to resolve it.
+1. Task completion depends on the requested implementation, validation, and substantive workflow requirements, never on Family Dinner availability or metadata freshness.
+2. Before the final response, make one best-effort attempt to remove the task's row and block. If the mutex is busy, do not wait and do not withhold completed work or the final response; a later successful board write may remove an entry whose owner explicitly reported completion.
+3. For a handoff, keep only useful receiving context when the board is available. Failure to update the board does not block the receiver from proceeding with the actual branch or commit.
+4. Do not remove another task merely because it looks old. Protocol maintenance may remove it only from explicit completion evidence; otherwise leave informationally stale data in place without blocking anyone.
 5. When the final active entry is removed, restore `_No active tasks._` under **Active Tasks**.
 
 ## Active Tasks
@@ -68,14 +69,14 @@ _No active tasks._
 <!--
 When claiming the first active task, remove both empty-state lines above, set the Flight Controller snapshot, add one table row in the form below, and append one task block. Remove the row and entire block together when the task is complete:
 
-| `<task-id>` | `<status>` or **✨ `workflow-running` ✨** | <short reason> | `<ISO 8601 UTC>` | <duration> | `<task-id>` / `external: <reason>` / `none` | 🔴 P0 / 🟠 P1 / 🟡 P2 / 🟢 P3 |
+| `<task-id>` | `<status>` or **✨ `workflow-running` ✨** | <short reason> | `<ISO 8601 UTC>` | <duration> | `<task-id>` / `external: <reason>` / `none` | `<workflow> / <ref> / <short-sha>` / `none` | `held at snapshot` / `none` | 🔴 P0 / 🟠 P1 / 🟡 P2 / 🟢 P3 |
 
 ### <task-id>
 
 - Agent/session: <owner>
 - Status: `planning` | `active` | `waiting` | `workflow-running` | `handoff`
 - Scope: <brief task description>
-- Reserved paths: <exact paths or globs>
+- Informational scope: <local worktree/branch, expected paths, processes, ports, or shared resources>
 - Shared resources: <commands, outputs, processes, ports, or none>
 - GitHub Actions: <workflow, ref, commit, operation, run ID/URL/status, or none>
 - Started UTC: <ISO 8601 timestamp>
