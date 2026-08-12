@@ -58,6 +58,10 @@ jobs:
           if ($env:GITHUB_REF -ne 'refs/heads/main') {
             throw 'Azure application deployment may run only from main.'
           }
+          $mainRef = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/main" | ConvertFrom-Json
+          if ($mainRef.object.sha -ne $env:GITHUB_SHA) {
+            throw 'This deployment run was superseded by a newer main commit; dispatch the current main commit instead.'
+          }
 
           $required = @(
             'AZURE_CLIENT_ID',
@@ -406,6 +410,14 @@ jobs:
             Sort-Object resourceId |
             ForEach-Object { Write-Host "[$($_.changeType)] $($_.resourceId)" }
           "### Azure application deployment validation`n`nImage: ``$env:CONTAINER_IMAGE```n`n$($plan.changes.Count) app-layer changes; no foundation changes or deletions." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Reject superseded deployment
+        shell: pwsh
+        run: |
+          $mainRef = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/main" | ConvertFrom-Json
+          if ($mainRef.object.sha -ne $env:GITHUB_SHA) {
+            throw 'Main advanced while this run was building; dispatch the current main commit instead of rolling dev back.'
+          }
 
       - name: Deploy application
         shell: pwsh

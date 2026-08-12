@@ -126,11 +126,11 @@ az role assignment list `
   --output table
 ```
 
-## Guarded Deployment Sequence
+## Direct Development Deployment
 
-After CI succeeds for the exact current `main` SHA and the user explicitly authorizes the development deployment:
+After CI succeeds for the current `main` commit, any agent may dispatch or retry the development application workflow. A separate preview run is not required:
 
-1. Dispatch the confirmed deployment:
+1. Start the serialized build, validation, and deployment run:
 
    ```powershell
    gh workflow run deploy-app.yml --ref main `
@@ -144,9 +144,9 @@ After CI succeeds for the exact current `main` SHA and the user explicitly autho
    gh run watch <deploy-run-id> --exit-status
    ```
 
-3. The same run must build or reuse the locked dependency image, build and lock the exact-commit application image, resolve its digest, and complete an Azure what-if with no deletions or unexpected foundation changes before any deployment mutation.
+3. Review the run summary. The application `what-if` must contain no deletions or unexpected foundation changes, and the run must reject a commit superseded before Azure mutation.
 
-4. Verify `/healthz`, `/readyz`, `/version`, and that the deployed immutable image corresponds to the exact deployed commit.
+4. Verify `/healthz`, `/readyz`, `/version`, and that the deployed immutable image digest corresponds to the selected commit.
 
 ## Configure the Refresh Workflow
 
@@ -212,8 +212,9 @@ The workflow calls only the application HTTPS API. It has no Cosmos credential o
 
 ## Safety Notes
 
-- Do not deploy until CI passes for the exact current `main` commit.
-- Do not bypass the same-run image-lock, deployment-validation, or what-if checks.
+- Do not deploy until CI passes for the exact commit selected from `main`.
+- Do not dispatch an intentional duplicate when the same workflow and commit already has a queued or in-progress run.
+- Do not bypass the same-run image-lock, deployment-validation, or `what-if` checks.
 - Do not bypass the role-assignment authorization failure.
 - Do not place credentials, tokens, identity headers, or Cosmos keys in the workflow.
 - Do not send project/customer data to AWS pricing endpoints.
