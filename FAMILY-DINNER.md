@@ -6,6 +6,8 @@ This file is the repository's transient coordination board for concurrent agents
 
 Snapshot UTC: `not set`. Durations are point-in-time values at this snapshot, not live counters.
 
+Pipeline glow: **✨ `workflow-running` ✨** means a CI/CD run is queued or in progress. Priority: 🔴 P0 urgent | 🟠 P1 high | 🟡 P2 normal | 🟢 P3 opportunistic.
+
 | Agent / chat name | Status | Status reason | Status change time (UTC) | Status duration | Blocked by agent | Priority |
 | --- | --- | --- | --- | --- | --- | --- |
 
@@ -24,8 +26,10 @@ _No active tasks._
 
 1. Keep **Flight Controller** as the first operational section and maintain exactly one row per active task. The row's agent/chat name MUST equal its task ID so blockers are unambiguous.
 2. On every board write, set `Snapshot UTC` to the write time and refresh all status durations from each row's status-change time. A duration is a compact rounded-down value such as `8m`, `2h 14m`, or `3d 2h`; it is accurate only at the displayed snapshot.
-3. Change a row's status-change time only when its status or status reason changes. Use `none`, an exact active task ID, or `external: <short reason>` for the blocker. Use priority `P0` for urgent coordination, security, or release blockers; `P1` for high-priority correctness or release work; `P2` for normal work; and `P3` for opportunistic work.
-4. A task owner controls its row's operational values. A protocol-maintenance task may bootstrap or repair the panel from existing task metadata but MUST NOT otherwise reprioritize or change another owner's reported state.
+3. Change a row's status-change time only when its status or status reason changes. Use `none`, an exact active task ID, or `external: <short reason>` for the blocker.
+4. When a task owns a queued or in-progress CI/CD run, use status `workflow-running` and render its Flight Controller status as **✨ `workflow-running` ✨**. Remove the glow immediately when the run reaches a terminal state or ownership is handed off; waiting for integration before a run exists is not pipeline-running.
+5. Render priority as 🔴 P0 for urgent coordination, security, or release blockers; 🟠 P1 for high-priority correctness or release work; 🟡 P2 for normal work; and 🟢 P3 for opportunistic work.
+6. A task owner controls its row's operational values. A protocol-maintenance task may bootstrap or repair the panel from existing task metadata but MUST NOT otherwise reprioritize or change another owner's reported state.
 
 ## Board Write Mutex
 
@@ -64,7 +68,7 @@ _No active tasks._
 <!--
 When claiming the first active task, remove both empty-state lines above, set the Flight Controller snapshot, add one table row in the form below, and append one task block. Remove the row and entire block together when the task is complete:
 
-| `<task-id>` | `<status>` | <short reason> | `<ISO 8601 UTC>` | <duration> | `<task-id>` / `external: <reason>` / `none` | P0 / P1 / P2 / P3 |
+| `<task-id>` | `<status>` or **✨ `workflow-running` ✨** | <short reason> | `<ISO 8601 UTC>` | <duration> | `<task-id>` / `external: <reason>` / `none` | 🔴 P0 / 🟠 P1 / 🟡 P2 / 🟢 P3 |
 
 ### <task-id>
 
