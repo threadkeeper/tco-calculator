@@ -395,7 +395,7 @@ if ($null -ne $containerApp) {
         'resource', 'show',
         '--ids', $containerApp.id,
         '--api-version', '2024-03-01',
-        '--query', '{principalId:identity.principalId,fqdn:properties.configuration.ingress.fqdn,image:properties.template.containers[0].image,secretUri:properties.configuration.secrets[?name==`entra-client-secret`]|[0].keyVaultUrl}'
+        '--query', '{principalId:identity.principalId,fqdn:properties.configuration.ingress.fqdn,image:properties.template.containers[0].image,secretUris:properties.configuration.secrets[?name==`entra-client-secret`].keyVaultUrl}'
     )
     $authConfig = Invoke-AzureJson @(
         'resource', 'show',
@@ -410,7 +410,7 @@ if ($null -ne $containerApp) {
     $containerAppPrincipalId = [string]$containerAppDetails.principalId
     $containerImage = [string]$containerAppDetails.image
     $entraClientId = [string]$authConfig.clientId
-    $entraClientSecretUri = [string]$containerAppDetails.secretUri
+    $entraClientSecretUri = [string]@($containerAppDetails.secretUris)[0]
 
     if ($containerImage -notmatch '(@sha256:[0-9a-fA-F]{64}|:[0-9a-fA-F]{40,64})$') {
         throw 'The deployed Container App image is not pinned to a commit SHA tag or image digest.'
