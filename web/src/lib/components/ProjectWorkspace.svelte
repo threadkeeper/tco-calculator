@@ -32,6 +32,7 @@
   } from '$lib/draft';
   import { projectShareUrl } from '$lib/project-share';
   import { readRegionOptions, type RegionOption } from '$lib/regions';
+  import CalculationDetailGrid from './CalculationDetailGrid.svelte';
   import CalculationResults from './CalculationResults.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import ProblemBanner from './ProblemBanner.svelte';
@@ -712,6 +713,7 @@
         calculation={workspace.calculation}
         resources={workspace.project.resources}
       />
+      <CalculationDetailGrid calculation={workspace.calculation} project={workspace.project} />
     {/if}
 
     {#if mode === 'guest'}

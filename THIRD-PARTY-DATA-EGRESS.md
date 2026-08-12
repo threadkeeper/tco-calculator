@@ -2,6 +2,10 @@
 
 Azure SQL TCO sends only public catalog selectors required to resolve prices. It never sends project names, workload names, quantities, customer inventories, totals, tenant identifiers, subscription identifiers, or commercial agreements to pricing providers.
 
+## Client-Side CSV Export
+
+The user can explicitly download the currently visible project and latest calculation as an Excel-compatible CSV. The browser constructs the file locally; no export API, server-side export copy, telemetry event, upload, or third-party destination is involved. The CSV contains confidential project settings, inventory inputs, server-returned results, and non-secret pricing provenance, but excludes owner and identity claims, display names, contact/consent data, ETags, capability secrets, and authorization metadata. Cells are quoted and text is hardened against spreadsheet formula injection. After download, the file is governed by the user's managed-device and storage controls.
+
 As of 2026-08-10, local mode performs no pricing-provider egress. It loads a frozen reviewed public-price fixture. The source contains pure provider-response normalizers and a host-allowlisted bounded HTTPS transport, but live provider orchestration is not yet constructed in application state. See [docs/PRODUCTION-ADAPTER-READINESS.md](docs/PRODUCTION-ADAPTER-READINESS.md).
 
 ## AWS Public Pricing

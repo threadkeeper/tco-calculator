@@ -19,9 +19,9 @@ use crate::{
 
 use super::{
     cost::{
-        AzureCostBreakdown, CostError, OnPremExplanation, SavingsBreakdown, SourceCostBreakdown,
-        calculate_azure, calculate_ec2_source, calculate_on_prem_source, calculate_rds_source,
-        calculate_savings, source_max_iops,
+        AzureCostBreakdown, AzureRate, CostError, OnPremExplanation, SavingsBreakdown,
+        SourceCostBreakdown, calculate_azure, calculate_ec2_source, calculate_on_prem_source,
+        calculate_rds_source, calculate_savings, source_max_iops,
     },
     target_selector::{
         CapabilityCatalog, MappingStatus, TargetSelection, TargetSelectionError,
@@ -295,6 +295,12 @@ impl CalculationEngine {
         source
             .explanation_steps
             .push(source_input_step(source_vcpu, source_max_iops, resource));
+        if let Some(source_costs) = source.costs.as_ref()
+            && let Some(step) =
+                source_cost_formula_step(resource, source_vcpu, input.settings, source_costs)
+        {
+            source.explanation_steps.push(step);
+        }
 
         if target_selection.mapping_status == MappingStatus::NoMapping {
             return Ok(ResourceCalculation {
@@ -315,12 +321,10 @@ impl CalculationEngine {
             .selected
             .as_ref()
             .ok_or(CalculationError::InvalidTargetSelection)?;
-        let (azure_costs, azure_pricing_status, azure_unresolved, azure_step) =
+        let (azure_costs, azure_pricing_status, azure_unresolved, azure_steps) =
             resolve_azure_costs(selected, resource, input);
         source.unresolved_components.extend(azure_unresolved);
-        if let Some(step) = azure_step {
-            source.explanation_steps.push(step);
-        }
+        source.explanation_steps.extend(azure_steps);
         let savings =
             source
                 .costs
@@ -333,6 +337,17 @@ impl CalculationEngine {
                         input.settings.selected_parity_adjustment,
                     )
                 });
+        if let Some(((source_costs, azure_costs), savings)) = source
+            .costs
+            .as_ref()
+            .zip(azure_costs.as_ref())
+            .zip(savings.as_ref())
+        {
+            source.explanation_steps.extend([
+                savings_formula_step(source_costs, azure_costs, savings),
+                parity_formula_step(source_costs, azure_costs, savings),
+            ]);
+        }
 
         Ok(ResourceCalculation {
             resource_id: shared.id,
@@ -446,12 +461,16 @@ fn resolve_on_prem_source(
     settings: &ProjectSettings,
 ) -> Result<ResolvedSource, CostError> {
     let result = calculate_on_prem_source(resource, settings)?;
+    let explanation_steps = vec![
+        on_prem_power_step(&result.explanation, resource),
+        on_prem_cost_formula_step(resource, settings, &result.costs, &result.explanation),
+    ];
     Ok(ResolvedSource {
         source_vcpu: Some(resource.source_vcpu),
         source_max_iops: Some(resource.source_max_iops),
         costs: Some(result.costs),
         pricing_status: PricingStatus::NotRequired,
-        explanation_steps: vec![on_prem_power_step(&result.explanation, resource)],
+        explanation_steps,
         unresolved_components: Vec::new(),
     })
 }
@@ -464,7 +483,7 @@ fn resolve_azure_costs(
     Option<AzureCostBreakdown>,
     PricingStatus,
     Vec<UnresolvedComponent>,
-    Option<ExplanationStep>,
+    Vec<ExplanationStep>,
 ) {
     let Some(snapshot) = input.azure_snapshot else {
         return (
@@ -475,7 +494,7 @@ fn resolve_azure_costs(
                 code: "azure_snapshot_unavailable".to_owned(),
                 message: "A usable Azure price snapshot is required for target cost.".to_owned(),
             }],
-            None,
+            Vec::new(),
         );
     };
     if !snapshot.has_complete_mi_rate_set(&selected.configuration_key) {
@@ -488,7 +507,7 @@ fn resolve_azure_costs(
                 message: "The selected target does not have all eight purchase options and required component prices."
                     .to_owned(),
             }],
-            None,
+            Vec::new(),
         );
     }
     let Some(record) = snapshot.mi_rate(
@@ -504,7 +523,7 @@ fn resolve_azure_costs(
                 message: "The selected target does not have a complete purchase-option rate."
                     .to_owned(),
             }],
-            None,
+            Vec::new(),
         );
     };
     match calculate_azure(
@@ -516,20 +535,26 @@ fn resolve_azure_costs(
         record.rate,
         input.settings,
     ) {
-        Ok(costs) => (
-            Some(costs),
-            pricing_status(snapshot.metadata.status),
-            Vec::new(),
-            Some(target_provenance_step(
-                &record.provenance.source_url,
-                &snapshot.metadata.retrieved_at,
-            )),
-        ),
+        Ok(costs) => {
+            let explanation_steps = vec![
+                target_provenance_step(
+                    &record.provenance.source_url,
+                    &snapshot.metadata.retrieved_at,
+                ),
+                azure_cost_formula_step(selected, resource, record.rate, input.settings, &costs),
+            ];
+            (
+                Some(costs),
+                pricing_status(snapshot.metadata.status),
+                Vec::new(),
+                explanation_steps,
+            )
+        }
         Err(error) => (
             None,
             PricingStatus::Unavailable,
             vec![cost_unresolved(Provider::Azure, error)],
-            None,
+            Vec::new(),
         ),
     }
 }
@@ -657,6 +682,378 @@ fn source_input_step(
     }
 }
 
+fn source_cost_formula_step(
+    resource: &Resource,
+    source_vcpu: u32,
+    settings: &ProjectSettings,
+    costs: &SourceCostBreakdown,
+) -> Option<ExplanationStep> {
+    let shared = resource.shared();
+    let quantity = Decimal::from(shared.quantity);
+    let hours = shared.annual_hours_per_instance.0;
+    let mut values = BTreeMap::from([
+        (
+            "compute_formula".to_owned(),
+            "compute_gross = quantity * annual_hours_per_instance * compute_hourly".to_owned(),
+        ),
+        ("quantity".to_owned(), shared.quantity.to_string()),
+        (
+            "annual_hours_per_instance".to_owned(),
+            shared.annual_hours_per_instance.to_string(),
+        ),
+        (
+            "compute_hourly".to_owned(),
+            divide_or_zero(costs.compute_gross.0, quantity * hours).to_string(),
+        ),
+        ("compute_gross".to_owned(), costs.compute_gross.to_string()),
+        (
+            "compute_net_formula".to_owned(),
+            "compute_net = compute_gross * (1 - source_compute_discount)".to_owned(),
+        ),
+        (
+            "source_compute_discount".to_owned(),
+            settings.source_compute_discount.to_string(),
+        ),
+        ("compute_net".to_owned(), costs.compute_net.to_string()),
+        (
+            "license_net_formula".to_owned(),
+            "license_net = license_gross * (1 - source_license_discount)".to_owned(),
+        ),
+        (
+            "source_license_discount".to_owned(),
+            settings.source_license_discount.to_string(),
+        ),
+        ("license_gross".to_owned(), costs.license_gross.to_string()),
+        ("license_net".to_owned(), costs.license_net.to_string()),
+        (
+            "storage_net_formula".to_owned(),
+            "storage_net = storage_gross * (1 - source_storage_discount)".to_owned(),
+        ),
+        (
+            "source_storage_discount".to_owned(),
+            settings.source_storage_discount.to_string(),
+        ),
+        ("storage_gross".to_owned(), costs.storage_gross.to_string()),
+        ("storage_net".to_owned(), costs.storage_net.to_string()),
+        (
+            "source_total_formula".to_owned(),
+            "source_total = compute_net + license_net + storage_net".to_owned(),
+        ),
+        ("source_total".to_owned(), costs.total.to_string()),
+    ]);
+
+    match resource {
+        Resource::Ec2(_) => {
+            values.insert(
+                "license_formula".to_owned(),
+                "license_gross = quantity * annual_hours_per_instance * license_hourly".to_owned(),
+            );
+            values.insert(
+                "license_hourly".to_owned(),
+                divide_or_zero(costs.license_gross.0, quantity * hours).to_string(),
+            );
+            values.insert(
+                "storage_formula".to_owned(),
+                "storage_gross = quantity * 12 * monthly_storage_per_instance".to_owned(),
+            );
+            values.insert(
+                "monthly_storage_per_instance".to_owned(),
+                divide_or_zero(costs.storage_gross.0, quantity * Decimal::from(12)).to_string(),
+            );
+        }
+        Resource::Rds(_) => {
+            values.insert(
+                "license_formula".to_owned(),
+                "license_gross = quantity * annual_hours_per_instance * source_vcpu * regional_edition_core_hourly"
+                    .to_owned(),
+            );
+            values.insert("source_vcpu".to_owned(), source_vcpu.to_string());
+            values.insert(
+                "regional_edition_core_hourly".to_owned(),
+                divide_or_zero(
+                    costs.license_gross.0,
+                    quantity * hours * Decimal::from(source_vcpu),
+                )
+                .to_string(),
+            );
+            values.insert(
+                "storage_formula".to_owned(),
+                "storage_gross = quantity * sql_data_gb_per_instance * 12 * storage_monthly_per_gb"
+                    .to_owned(),
+            );
+            values.insert(
+                "sql_data_gb_per_instance".to_owned(),
+                shared.sql_data_gb_per_instance.to_string(),
+            );
+            values.insert(
+                "storage_monthly_per_gb".to_owned(),
+                divide_or_zero(
+                    costs.storage_gross.0,
+                    quantity * shared.sql_data_gb_per_instance.0 * Decimal::from(12),
+                )
+                .to_string(),
+            );
+        }
+        Resource::OnPrem(_) => return None,
+    }
+
+    Some(ExplanationStep {
+        code: "source_cost_formula".to_owned(),
+        message: "Source component costs were calculated from the resolved AWS rates and project discounts."
+            .to_owned(),
+        values,
+    })
+}
+
+fn azure_cost_formula_step(
+    selected: &super::target_selector::SelectedTarget,
+    resource: &Resource,
+    rate: AzureRate,
+    settings: &ProjectSettings,
+    costs: &AzureCostBreakdown,
+) -> ExplanationStep {
+    let shared = resource.shared();
+    ExplanationStep {
+        code: "azure_cost_formula".to_owned(),
+        message: "Azure component costs were calculated from the selected MI shape and resolved purchase-option rates."
+            .to_owned(),
+        values: BTreeMap::from([
+            (
+                "compute_formula".to_owned(),
+                "compute_gross = quantity * annual_hours_per_instance * mi_compute_hourly"
+                    .to_owned(),
+            ),
+            ("quantity".to_owned(), shared.quantity.to_string()),
+            (
+                "annual_hours_per_instance".to_owned(),
+                shared.annual_hours_per_instance.to_string(),
+            ),
+            ("mi_compute_hourly".to_owned(), rate.compute_hourly.to_string()),
+            ("compute_gross".to_owned(), costs.compute_gross.to_string()),
+            (
+                "additional_ram_gb_formula".to_owned(),
+                "additional_ram_gb = max(0, selected_mi_ram_gb - included_mi_ram_gb)"
+                    .to_owned(),
+            ),
+            (
+                "included_mi_ram_gb".to_owned(),
+                selected.included_memory_gb.to_string(),
+            ),
+            (
+                "selected_mi_ram_gb".to_owned(),
+                selected.selected_memory_gb.to_string(),
+            ),
+            (
+                "additional_ram_gb".to_owned(),
+                costs.additional_ram_gb.to_string(),
+            ),
+            (
+                "additional_ram_formula".to_owned(),
+                "additional_ram_gross = quantity * annual_hours_per_instance * additional_ram_gb * additional_memory_per_gb_hourly"
+                    .to_owned(),
+            ),
+            (
+                "additional_memory_per_gb_hourly".to_owned(),
+                rate.additional_memory_per_gb_hourly.to_string(),
+            ),
+            (
+                "additional_ram_gross".to_owned(),
+                costs.additional_ram_gross.to_string(),
+            ),
+            (
+                "compute_plus_ram_net_formula".to_owned(),
+                "compute_plus_ram_net = (compute_gross + additional_ram_gross) * (1 - azure_compute_discount)"
+                    .to_owned(),
+            ),
+            (
+                "azure_compute_discount".to_owned(),
+                settings.azure_compute_discount.to_string(),
+            ),
+            (
+                "compute_plus_ram_net".to_owned(),
+                costs.compute_plus_ram_net.to_string(),
+            ),
+            (
+                "license_formula".to_owned(),
+                "license_gross = quantity * annual_hours_per_instance * mi_license_hourly"
+                    .to_owned(),
+            ),
+            ("mi_license_hourly".to_owned(), rate.license_hourly.to_string()),
+            ("license_gross".to_owned(), costs.license_gross.to_string()),
+            (
+                "license_net_formula".to_owned(),
+                "license_net = license_gross * (1 - azure_license_discount)".to_owned(),
+            ),
+            (
+                "azure_license_discount".to_owned(),
+                settings.azure_license_discount.to_string(),
+            ),
+            ("license_net".to_owned(), costs.license_net.to_string()),
+            (
+                "storage_formula".to_owned(),
+                "storage_gross = quantity * sql_data_gb_per_instance * 12 * mi_storage_monthly_per_gb"
+                    .to_owned(),
+            ),
+            (
+                "sql_data_gb_per_instance".to_owned(),
+                shared.sql_data_gb_per_instance.to_string(),
+            ),
+            (
+                "mi_storage_monthly_per_gb".to_owned(),
+                rate.storage_monthly_per_gb.to_string(),
+            ),
+            ("storage_gross".to_owned(), costs.storage_gross.to_string()),
+            (
+                "storage_net_formula".to_owned(),
+                "storage_net = storage_gross * (1 - azure_storage_discount)".to_owned(),
+            ),
+            (
+                "azure_storage_discount".to_owned(),
+                settings.azure_storage_discount.to_string(),
+            ),
+            ("storage_net".to_owned(), costs.storage_net.to_string()),
+            (
+                "azure_total_before_parity_formula".to_owned(),
+                "azure_total_before_parity = compute_plus_ram_net + license_net + storage_net"
+                    .to_owned(),
+            ),
+            (
+                "azure_total_before_parity".to_owned(),
+                costs.total_before_parity.to_string(),
+            ),
+        ]),
+    }
+}
+
+fn savings_formula_step(
+    source: &SourceCostBreakdown,
+    azure: &AzureCostBreakdown,
+    savings: &SavingsBreakdown,
+) -> ExplanationStep {
+    ExplanationStep {
+        code: "savings_formula".to_owned(),
+        message: "Savings before parity are source component costs minus Azure component costs."
+            .to_owned(),
+        values: BTreeMap::from([
+            (
+                "compute_savings_formula".to_owned(),
+                "compute_savings = source_compute_net - azure_compute_plus_ram_net".to_owned(),
+            ),
+            (
+                "source_compute_net".to_owned(),
+                source.compute_net.to_string(),
+            ),
+            (
+                "azure_compute_plus_ram_net".to_owned(),
+                azure.compute_plus_ram_net.to_string(),
+            ),
+            (
+                "compute_savings".to_owned(),
+                savings.compute_savings.to_string(),
+            ),
+            (
+                "license_savings_formula".to_owned(),
+                "license_savings = source_license_net - azure_license_net".to_owned(),
+            ),
+            (
+                "source_license_net".to_owned(),
+                source.license_net.to_string(),
+            ),
+            (
+                "azure_license_net".to_owned(),
+                azure.license_net.to_string(),
+            ),
+            (
+                "license_savings".to_owned(),
+                savings.license_savings.to_string(),
+            ),
+            (
+                "storage_savings_formula".to_owned(),
+                "storage_savings = source_storage_net - azure_storage_net".to_owned(),
+            ),
+            (
+                "source_storage_net".to_owned(),
+                source.storage_net.to_string(),
+            ),
+            (
+                "azure_storage_net".to_owned(),
+                azure.storage_net.to_string(),
+            ),
+            (
+                "storage_savings".to_owned(),
+                savings.storage_savings.to_string(),
+            ),
+            (
+                "total_savings_formula".to_owned(),
+                "total_savings = source_total - azure_total_before_parity".to_owned(),
+            ),
+            ("source_total".to_owned(), source.total.to_string()),
+            (
+                "azure_total_before_parity".to_owned(),
+                azure.total_before_parity.to_string(),
+            ),
+            (
+                "total_savings".to_owned(),
+                savings.total_savings.to_string(),
+            ),
+        ]),
+    }
+}
+
+fn parity_formula_step(
+    source: &SourceCostBreakdown,
+    azure: &AzureCostBreakdown,
+    savings: &SavingsBreakdown,
+) -> ExplanationStep {
+    ExplanationStep {
+        code: "parity_formula".to_owned(),
+        message: "Parity applies the selected adjustment to the Azure total and compares it with the source total."
+            .to_owned(),
+        values: BTreeMap::from([
+            (
+                "required_adjustment_formula".to_owned(),
+                "required_adjustment = if azure_total_before_parity == 0 then 0 else 1 - source_total / azure_total_before_parity"
+                    .to_owned(),
+            ),
+            ("source_total".to_owned(), source.total.to_string()),
+            (
+                "azure_total_before_parity".to_owned(),
+                azure.total_before_parity.to_string(),
+            ),
+            (
+                "required_adjustment".to_owned(),
+                savings.required_adjustment.to_string(),
+            ),
+            (
+                "azure_after_selected_parity_formula".to_owned(),
+                "azure_after_selected_parity = azure_total_before_parity * (1 - selected_adjustment)"
+                    .to_owned(),
+            ),
+            (
+                "selected_adjustment".to_owned(),
+                savings.selected_adjustment.to_string(),
+            ),
+            (
+                "azure_after_selected_parity".to_owned(),
+                savings.azure_after_selected_parity.to_string(),
+            ),
+            (
+                "difference_formula".to_owned(),
+                "difference = azure_after_selected_parity - source_total".to_owned(),
+            ),
+            ("difference".to_owned(), savings.difference.to_string()),
+        ]),
+    }
+}
+
+fn divide_or_zero(numerator: Decimal, denominator: Decimal) -> Decimal {
+    if denominator == Decimal::ZERO {
+        Decimal::ZERO
+    } else {
+        numerator / denominator
+    }
+}
+
 fn source_provenance_step(source_url: &str, retrieved_at: &str) -> ExplanationStep {
     ExplanationStep {
         code: "source_price_provenance".to_owned(),
@@ -714,6 +1111,103 @@ fn on_prem_power_step(
                 explanation.power_override_applied.to_string(),
             ),
             ("annual_kwh".to_owned(), explanation.annual_kwh.to_string()),
+        ]),
+    }
+}
+
+fn on_prem_cost_formula_step(
+    resource: &OnPremResource,
+    settings: &ProjectSettings,
+    costs: &SourceCostBreakdown,
+    explanation: &OnPremExplanation,
+) -> ExplanationStep {
+    let license_price = match resource.shared.sql_edition {
+        crate::domain::resource::SqlEdition::Standard => {
+            settings.standard_license_sa_usd_per_two_core_pack
+        }
+        crate::domain::resource::SqlEdition::Enterprise => {
+            settings.enterprise_license_sa_usd_per_two_core_pack
+        }
+    };
+    ExplanationStep {
+        code: "source_cost_formula".to_owned(),
+        message: "On-premises component costs were calculated from hardware depreciation, License + SA, and electricity inputs."
+            .to_owned(),
+        values: BTreeMap::from([
+            ("quantity".to_owned(), resource.shared.quantity.to_string()),
+            (
+                "annual_hours_per_instance".to_owned(),
+                resource.shared.annual_hours_per_instance.to_string(),
+            ),
+            (
+                "hardware_formula".to_owned(),
+                "hardware_annual = quantity * hardware_capex_usd / depreciation_years"
+                    .to_owned(),
+            ),
+            (
+                "hardware_capex_usd".to_owned(),
+                resource.hardware_capex_usd.to_string(),
+            ),
+            (
+                "depreciation_years".to_owned(),
+                resource.depreciation_years.to_string(),
+            ),
+            ("hardware_annual".to_owned(), costs.hardware_annual.to_string()),
+            ("compute_gross".to_owned(), costs.compute_gross.to_string()),
+            ("compute_net".to_owned(), costs.compute_net.to_string()),
+            (
+                "license_formula".to_owned(),
+                "license_gross = quantity * license_pack_count * license_sa_usd_per_two_core_pack * 12 / remaining_coverage_months"
+                    .to_owned(),
+            ),
+            (
+                "licensable_cores".to_owned(),
+                resource.licensable_cores.to_string(),
+            ),
+            (
+                "license_pack_count".to_owned(),
+                explanation.license_pack_count.to_string(),
+            ),
+            (
+                "license_sa_usd_per_two_core_pack".to_owned(),
+                license_price.map_or_else(String::new, |value| value.to_string()),
+            ),
+            (
+                "remaining_coverage_months".to_owned(),
+                settings
+                    .remaining_coverage_months
+                    .map_or_else(String::new, |value| value.to_string()),
+            ),
+            ("license_gross".to_owned(), costs.license_gross.to_string()),
+            (
+                "license_net_formula".to_owned(),
+                "license_net = license_gross * (1 - source_license_discount)".to_owned(),
+            ),
+            (
+                "source_license_discount".to_owned(),
+                settings.source_license_discount.to_string(),
+            ),
+            ("license_net".to_owned(), costs.license_net.to_string()),
+            (
+                "electricity_formula".to_owned(),
+                "electricity_annual = annual_kwh * electricity_rate_usd_per_kwh".to_owned(),
+            ),
+            ("annual_kwh".to_owned(), explanation.annual_kwh.to_string()),
+            (
+                "electricity_rate_usd_per_kwh".to_owned(),
+                settings
+                    .electricity_rate_usd_per_kwh
+                    .map_or_else(String::new, |value| value.to_string()),
+            ),
+            (
+                "electricity_annual".to_owned(),
+                costs.electricity_annual.to_string(),
+            ),
+            (
+                "source_total_formula".to_owned(),
+                "source_total = hardware_annual + license_net + electricity_annual".to_owned(),
+            ),
+            ("source_total".to_owned(), costs.total.to_string()),
         ]),
     }
 }
@@ -791,6 +1285,175 @@ mod tests {
         assert!(row.source_costs.is_some());
         assert_eq!(row.azure_pricing_status, PricingStatus::Unavailable);
         assert!(row.savings.is_none());
+    }
+
+    #[test]
+    fn mapped_resource_explains_cost_savings_and_parity_formulas() {
+        let engine = engine(None);
+        let settings = settings();
+        let resource = Resource::Ec2(ec2_resource("100"));
+        let aws = aws_snapshot();
+        let azure = azure_snapshot();
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: Some(&azure),
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("calculation");
+
+        let row = &revision.resource_results[0];
+        let source_costs = row.source_costs.as_ref().expect("source costs");
+        let azure_costs = row.azure_costs.as_ref().expect("Azure costs");
+        let savings = row.savings.as_ref().expect("savings");
+        let step = |code: &str| {
+            row.explanation_steps
+                .iter()
+                .find(|step| step.code == code)
+                .unwrap_or_else(|| panic!("missing {code} explanation step"))
+        };
+
+        let source = step("source_cost_formula");
+        assert_eq!(
+            source.values.get("compute_formula").map(String::as_str),
+            Some("compute_gross = quantity * annual_hours_per_instance * compute_hourly")
+        );
+        assert_eq!(
+            source.values.get("compute_net"),
+            Some(&source_costs.compute_net.to_string())
+        );
+        assert_eq!(
+            source.values.get("source_total"),
+            Some(&source_costs.total.to_string())
+        );
+
+        let azure = step("azure_cost_formula");
+        assert_eq!(
+            azure
+                .values
+                .get("additional_ram_formula")
+                .map(String::as_str),
+            Some(
+                "additional_ram_gross = quantity * annual_hours_per_instance * additional_ram_gb * additional_memory_per_gb_hourly"
+            )
+        );
+        assert_eq!(
+            azure.values.get("compute_plus_ram_net"),
+            Some(&azure_costs.compute_plus_ram_net.to_string())
+        );
+        assert_eq!(
+            azure.values.get("azure_total_before_parity"),
+            Some(&azure_costs.total_before_parity.to_string())
+        );
+
+        let savings_step = step("savings_formula");
+        assert_eq!(
+            savings_step
+                .values
+                .get("total_savings_formula")
+                .map(String::as_str),
+            Some("total_savings = source_total - azure_total_before_parity")
+        );
+        assert_eq!(
+            savings_step.values.get("total_savings"),
+            Some(&savings.total_savings.to_string())
+        );
+
+        let parity = step("parity_formula");
+        assert_eq!(
+            parity
+                .values
+                .get("required_adjustment_formula")
+                .map(String::as_str),
+            Some(
+                "required_adjustment = if azure_total_before_parity == 0 then 0 else 1 - source_total / azure_total_before_parity"
+            )
+        );
+        assert_eq!(
+            parity.values.get("required_adjustment"),
+            Some(&savings.required_adjustment.to_string())
+        );
+        assert_eq!(
+            parity.values.get("difference"),
+            Some(&savings.difference.to_string())
+        );
+    }
+
+    #[test]
+    fn on_prem_resource_explains_hardware_license_and_electricity_formulas() {
+        let engine = engine(None);
+        let mut settings = settings();
+        settings.project_type = ProjectType::OnPrem;
+        settings.aws_region = None;
+        settings.source_license_discount = decimal("0.05");
+        settings.standard_license_sa_usd_per_two_core_pack = Some(decimal("1200"));
+        settings.enterprise_license_sa_usd_per_two_core_pack = Some(decimal("4800"));
+        settings.remaining_coverage_months = Some(36);
+        settings.electricity_rate_usd_per_kwh = Some(decimal("0.20"));
+        let resource = Resource::OnPrem(OnPremResource {
+            shared: SharedResource {
+                id: Uuid::new_v4(),
+                workload_name: "Synthetic on-prem workload".to_owned(),
+                quantity: 2,
+                sql_edition: SqlEdition::Enterprise,
+                license_basis: LicenseBasis::LicenseIncluded,
+                sql_data_gb_per_instance: decimal("1024"),
+                source_ram_gb_per_instance: decimal("256"),
+                annual_hours_per_instance: decimal("8760"),
+                mi_purchase_option: PurchaseOption::Ahb,
+            },
+            source_vcpu: 16,
+            licensable_cores: 16,
+            source_max_iops: 5000,
+            hardware_capex_usd: decimal("24000"),
+            depreciation_years: decimal("4"),
+            average_power_kw_override: Some(decimal("0.75")),
+        });
+        let azure = azure_snapshot();
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: None,
+                azure_snapshot: Some(&azure),
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("calculation");
+
+        let row = &revision.resource_results[0];
+        let costs = row.source_costs.as_ref().expect("source costs");
+        let source = row
+            .explanation_steps
+            .iter()
+            .find(|step| step.code == "source_cost_formula")
+            .expect("source formula explanation");
+        assert_eq!(
+            source.values.get("hardware_formula").map(String::as_str),
+            Some("hardware_annual = quantity * hardware_capex_usd / depreciation_years")
+        );
+        assert_eq!(
+            source.values.get("license_pack_count").map(String::as_str),
+            Some("8")
+        );
+        assert_eq!(
+            source
+                .values
+                .get("license_sa_usd_per_two_core_pack")
+                .map(String::as_str),
+            Some("4800")
+        );
+        assert_eq!(
+            source.values.get("electricity_annual"),
+            Some(&costs.electricity_annual.to_string())
+        );
+        assert_eq!(
+            source.values.get("source_total"),
+            Some(&costs.total.to_string())
+        );
     }
 
     fn engine(maximum_storage_gb: Option<&str>) -> CalculationEngine {
