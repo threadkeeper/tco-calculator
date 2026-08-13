@@ -178,11 +178,14 @@ impl LivePricingLoader {
         &self,
         source_region: &str,
     ) -> Result<AwsPriceSnapshot, ProviderError> {
-        let (ec2, rds, ebs) = tokio::try_join!(
+        let (ec2, rds, ebs) = tokio::join!(
             log_aws_component_failure("ec2", self.load_aws_ec2(source_region)),
             log_aws_component_failure("rds", self.load_aws_rds(source_region)),
             log_aws_component_failure("ebs", self.load_aws_ebs(source_region)),
-        )?;
+        );
+        let ec2 = ec2?;
+        let rds = allow_missing_rds(rds)?;
+        let ebs = ebs?;
         let mut warnings = ec2.warnings;
         warnings.extend(rds.warnings);
         warnings.extend(ebs.warnings);
@@ -435,6 +438,21 @@ async fn log_aws_component_failure<T>(
             "AWS pricing component refresh failed"
         );
     })
+}
+
+fn allow_missing_rds(
+    result: Result<RdsNormalization, ProviderError>,
+) -> Result<RdsNormalization, ProviderError> {
+    match result {
+        Err(ProviderError::NotFound) => Ok(RdsNormalization {
+            records: Vec::new(),
+            warnings: vec![
+                "RDS SQL Server Custom prices are unavailable in this AWS region; EC2 and EBS prices remain usable."
+                    .to_owned(),
+            ],
+        }),
+        result => result,
+    }
 }
 
 fn snapshot_sources<'a>(
@@ -847,6 +865,24 @@ mod tests {
             record.provenance.source_version.as_deref(),
             Some("20260806022930")
         );
+    }
+
+    #[test]
+    fn missing_rds_prices_leave_other_aws_components_usable() {
+        let normalized = allow_missing_rds(Err(ProviderError::NotFound))
+            .expect("tolerate a region without supported RDS Custom prices");
+
+        assert!(normalized.records.is_empty());
+        assert_eq!(normalized.warnings.len(), 1);
+        assert!(normalized.warnings[0].contains("EC2 and EBS prices remain usable"));
+    }
+
+    #[test]
+    fn rds_schema_failures_still_fail_closed() {
+        assert!(matches!(
+            allow_missing_rds(Err(ProviderError::SchemaChanged)),
+            Err(ProviderError::SchemaChanged)
+        ));
     }
 
     #[tokio::test]

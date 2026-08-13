@@ -700,8 +700,18 @@ pub fn normalize_rds_leaves(
         }
     }
 
-    let compute = collapse_compute_offers(compute_offers)?;
-    let mut warnings = Vec::new();
+    let (compute, conflicting_compute) = collapse_compute_offers(compute_offers)?;
+    let mut warnings = conflicting_compute
+        .into_iter()
+        .map(|key| {
+            format!(
+                "RDS {} {} {} has conflicting edition-specific compute rates and was omitted.",
+                key.instance_type,
+                key.deployment.as_key(),
+                key.commercial_term
+            )
+        })
+        .collect::<Vec<_>>();
     let standard_license = license_or_fallback(
         standard_license,
         STANDARD_LICENSE_FALLBACK,
@@ -919,30 +929,43 @@ fn add_license_dimension(
 
 fn collapse_compute_offers(
     offers: BTreeMap<OfferKey, ComputeAccumulator>,
-) -> Result<BTreeMap<ComputeKey, ComputeComponent>, RdsNormalizationError> {
+) -> Result<(BTreeMap<ComputeKey, ComputeComponent>, BTreeSet<ComputeKey>), RdsNormalizationError> {
     let mut compute = BTreeMap::<ComputeKey, ComputeComponent>::new();
+    let mut conflicts = BTreeSet::new();
     for offer in offers.into_values() {
         let effective_hourly = offer.recurring_hourly
             + offer.upfront / commercial_term_hours(&offer.key.commercial_term)?;
-        let component = compute
-            .entry(offer.key)
-            .or_insert_with(|| ComputeComponent {
-                source_vcpu: offer.source_vcpu,
-                memory_gb: offer.memory_gb,
-                effective_hourly,
-                meter_ids: BTreeSet::new(),
-                source: offer.source.clone(),
-            });
+        let key = offer.key;
+        if conflicts.contains(&key) {
+            continue;
+        }
+        let Some(component) = compute.get_mut(&key) else {
+            compute.insert(
+                key,
+                ComputeComponent {
+                    source_vcpu: offer.source_vcpu,
+                    memory_gb: offer.memory_gb,
+                    effective_hourly,
+                    meter_ids: offer.meter_ids,
+                    source: offer.source,
+                },
+            );
+            continue;
+        };
         if component.source_vcpu != offer.source_vcpu
             || component.memory_gb != offer.memory_gb
-            || component.effective_hourly != effective_hourly
             || component.source != offer.source
         {
             return Err(RdsNormalizationError::ConflictingComponent);
         }
-        component.meter_ids.extend(offer.meter_ids);
+        if component.effective_hourly != effective_hourly {
+            compute.remove(&key);
+            conflicts.insert(key);
+        } else {
+            component.meter_ids.extend(offer.meter_ids);
+        }
     }
-    Ok(compute)
+    Ok((compute, conflicts))
 }
 
 fn commercial_term(dimension: &RawDimension) -> Result<String, RdsNormalizationError> {
@@ -1224,6 +1247,85 @@ mod tests {
                 .to_string(),
             "3.00"
         );
+    }
+
+    #[test]
+    fn omits_compute_keys_with_conflicting_edition_specific_rates() {
+        let mut unambiguous_compute = compute(
+            "unambiguous-sku",
+            "unambiguous-rate",
+            "Standard",
+            "Hrs",
+            "4.20",
+            None,
+        );
+        unambiguous_compute["instance_type"] = serde_json::json!("db.m7i.8xlarge");
+        let rds = leaf(
+            "AmazonRDS",
+            &[
+                compute(
+                    "standard-sku",
+                    "standard-rate",
+                    "Standard",
+                    "Hrs",
+                    "5.10",
+                    None,
+                ),
+                compute(
+                    "enterprise-sku",
+                    "enterprise-rate",
+                    "Enterprise",
+                    "Hrs",
+                    "6.20",
+                    None,
+                ),
+                unambiguous_compute,
+                storage("gp3-standard", "Standard", "0.127"),
+                storage("gp3-enterprise", "Enterprise", "0.127"),
+            ],
+        );
+
+        let normalized = normalize_rds_leaves(context(), &[payload(&rds, "AmazonRDS")])
+            .expect("omit only the ambiguous compute key");
+
+        assert_eq!(normalized.records.len(), 1);
+        assert_eq!(
+            normalized.records[0].stable_key,
+            "eu-west-1|db.m7i.8xlarge|single-az|on-demand|gp3"
+        );
+        assert!(
+            normalized
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("conflicting edition-specific compute rates"))
+        );
+    }
+
+    #[test]
+    fn rejects_structural_conflicts_for_the_same_compute_key() {
+        let standard = compute(
+            "standard-sku",
+            "standard-rate",
+            "Standard",
+            "Hrs",
+            "5.10",
+            None,
+        );
+        let mut enterprise = compute(
+            "enterprise-sku",
+            "enterprise-rate",
+            "Enterprise",
+            "Hrs",
+            "5.10",
+            None,
+        );
+        enterprise["vcpu"] = serde_json::json!("64");
+        let rds = leaf("AmazonRDS", &[standard, enterprise]);
+
+        assert!(matches!(
+            normalize_rds_leaves(context(), &[payload(&rds, "AmazonRDS")]),
+            Err(RdsNormalizationError::ConflictingComponent)
+        ));
     }
 
     #[test]

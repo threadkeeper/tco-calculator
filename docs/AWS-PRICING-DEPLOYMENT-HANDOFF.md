@@ -184,7 +184,7 @@ GitHub UI equivalent:
 1. Open **Actions**.
 2. Select **Pull AWS Pricing Data**.
 3. Choose **Run workflow** on `main`.
-4. Open the run and confirm all eight regions report `Refreshed <region> at <timestamp>`.
+4. Open the run and confirm every region reports either a fresh refresh or an explicitly retained usable snapshot. A successful run may retain no more than two regions.
 
 Regions refreshed sequentially:
 
@@ -197,12 +197,12 @@ Regions refreshed sequentially:
 - `eu-west-2`
 - `eu-west-3`
 
-The workflow calls only the application HTTPS API. It has no Cosmos credential or direct Cosmos access. It fails closed unless each response is `fresh` with a snapshot ID.
+The workflow calls only the application HTTPS API. It has no Cosmos credential or direct Cosmos access. Each region is attempted up to three times. A `cached` or `stale` result is accepted only when the application returns a non-empty snapshot ID, and the aggregate run succeeds with warnings only when no more than two regions use retained snapshots. Any `unavailable` region, a retained result without a snapshot ID, or more than two retained regions fails the run.
 
 ## Post-Prime Verification
 
 - `GET /api/v1/catalog/aws/regions` should return all eight regions with available data.
-- Check the workflow log for a fresh result from every region.
+- Check the workflow log for all eight regional outcomes. Investigate retained snapshots even when the bounded aggregate run succeeds.
 - Check Container App logs only for opaque request IDs/statuses; do not expose provider payloads or customer data.
 - If a component exceeds Cosmos limits, the application should return a failure rather than truncate records.
 - Do not manually write pricing documents into Cosmos.
