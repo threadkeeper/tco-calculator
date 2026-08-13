@@ -124,8 +124,10 @@ appsettings.*.local.json
 # Build and dependency artifacts
 /rust/target/
 /web/node_modules/
+/.svelte-kit/
 /web/.svelte-kit/
 /web/build/
 /web/coverage/
 /test-results/
+/web/test-results/
 /playwright-report/

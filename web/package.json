@@ -12,6 +12,7 @@
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "test": "vitest run",
+    "test:browser": "playwright test",
     "api:generate": "openapi-typescript ../openapi/openapi.yaml -o src/lib/api/generated.ts && prettier --write src/lib/api/generated.ts",
     "lockfile:check": "node scripts/validate-lockfile.mjs"
   },
