@@ -1,0 +1,42 @@
+name: Temporary Rust coverage
+
+on:
+  push:
+    branches:
+      - coverage/ca822e6
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Rust line coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install pinned Rust coverage toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component llvm-tools-preview
+
+      - name: Install reviewed cargo-llvm-cov
+        run: cargo +1.97.1 install cargo-llvm-cov --version 0.8.7 --locked
+
+      - name: Verify coverage tool
+        run: test "$(cargo +1.97.1 llvm-cov --version)" = "cargo-llvm-cov 0.8.7"
+
+      - name: Measure and enforce Rust line coverage
+        run: |
+          cargo +1.97.1 llvm-cov --all-features --locked --lcov --output-path lcov.info
+          cargo +1.97.1 llvm-cov report --summary-only --fail-under-lines 80 | tee coverage-summary.txt
+          {
+            echo '### Rust coverage for ca822e6'
+            echo '```text'
+            cat coverage-summary.txt
+            echo '```'
+            echo "LCOV SHA-256: $(sha256sum lcov.info | cut -d ' ' -f 1)"
+          } >> "$GITHUB_STEP_SUMMARY"
