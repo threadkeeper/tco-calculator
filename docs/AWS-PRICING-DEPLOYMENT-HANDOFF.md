@@ -128,40 +128,22 @@ az role assignment list `
 
 ## Guarded Deployment Sequence
 
-Do not reuse a preview from another commit. After CI succeeds for the exact current `main` SHA, obtain explicit authorization for one build-preview. Preview authorization does not authorize a retry or deployment.
+An explicit development deployment request authorizes this complete workflow for the exact current `main` commit, including dependency and final immutable-image builds, the application what-if, deployment, and verification. After exact-commit CI succeeds:
 
-1. Start the authorized build-preview:
+1. Start the guarded deployment with the exact resource-group confirmation:
 
    ```powershell
-   gh workflow run deploy-app.yml --ref main -f operation=build-preview
+   gh workflow run deploy-app.yml --ref main -f confirmation='DEPLOY APP rg-tco'
    ```
 
 2. Find and monitor its run ID:
 
    ```powershell
    gh run list --workflow deploy-app.yml --limit 5
-   gh run watch <preview-run-id> --exit-status
-   ```
-
-3. Review the successful run and its Azure `what-if`. It must contain no deletions or unexpected foundation changes.
-
-4. Only with explicit deployment authorization, deploy using that exact preview run:
-
-   ```powershell
-   gh workflow run deploy-app.yml --ref main `
-     -f operation=deploy `
-     -f preview_run_id=<preview-run-id> `
-     -f confirmation='DEPLOY APP rg-tco'
-   ```
-
-5. Find and monitor the deployment run ID:
-
-   ```powershell
-   gh run list --workflow deploy-app.yml --limit 5
    gh run watch <deploy-run-id> --exit-status
    ```
 
-6. Verify `/healthz`, `/readyz`, `/version`, and that the deployed immutable image digest corresponds to the reviewed commit.
+3. Confirm the run completed a deletion-free application what-if, deployed the exact immutable image built for the commit, and passed `/healthz`, `/readyz`, `/version`, identity, authorization, and persistence checks.
 
 ## Configure the Refresh Workflow
 

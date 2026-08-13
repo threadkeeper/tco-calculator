@@ -3,21 +3,9 @@ name: Deploy Azure application
 on:
   workflow_dispatch:
     inputs:
-      operation:
-        description: Build and preview first; deploy requires that reviewed run.
-        required: true
-        default: build-preview
-        type: choice
-        options:
-          - build-preview
-          - deploy
-      preview_run_id:
-        description: Successful build-preview run ID for this exact commit (required for deploy).
-        required: false
-        type: string
       confirmation:
-        description: For deploy, enter DEPLOY APP followed by a space and the dev resource-group name.
-        required: false
+        description: Enter DEPLOY APP followed by a space and the dev resource-group name.
+        required: true
         type: string
 
 concurrency:
@@ -29,7 +17,7 @@ permissions:
 
 jobs:
   application:
-    name: ${{ inputs.operation == 'deploy' && 'Deploy' || 'Build and preview' }} application
+    name: Deploy application
     runs-on: ubuntu-latest
     environment:
       name: dev
@@ -62,8 +50,6 @@ jobs:
       WEB_BUILD_IMAGE: ${{ vars.WEB_BUILD_IMAGE }}
       RUST_BUILD_IMAGE: ${{ vars.RUST_BUILD_IMAGE }}
       RUNTIME_IMAGE: ${{ vars.RUNTIME_IMAGE }}
-      OPERATION: ${{ inputs.operation }}
-      PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
       DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -145,15 +131,8 @@ jobs:
             }
           }
 
-          if ($env:OPERATION -eq 'deploy') {
-            if ($env:PREVIEW_RUN_ID -notmatch '^\d+$') {
-              throw 'Deploy requires a numeric preview_run_id.'
-            }
-            if ($env:DEPLOY_CONFIRMATION -cne "DEPLOY APP $env:AZURE_RESOURCE_GROUP") {
-              throw "Deploy confirmation must exactly match: DEPLOY APP $env:AZURE_RESOURCE_GROUP"
-            }
-          } elseif ($env:OPERATION -ne 'build-preview') {
-            throw 'Operation must be build-preview or deploy.'
+          if ($env:DEPLOY_CONFIRMATION -cne "DEPLOY APP $env:AZURE_RESOURCE_GROUP") {
+            throw "Deploy confirmation must exactly match: DEPLOY APP $env:AZURE_RESOURCE_GROUP"
           }
 
       - name: Verify successful application CI
@@ -165,36 +144,6 @@ jobs:
             Select-Object -First 1
           if ($null -eq $matchingRun) {
             throw 'This commit does not have a successful main-branch CI run.'
-          }
-
-      - name: Verify reviewed build-preview
-        if: inputs.operation == 'deploy'
-        shell: pwsh
-        run: |
-          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:PREVIEW_RUN_ID" | ConvertFrom-Json
-          if ($run.name -ne $env:GITHUB_WORKFLOW -or $run.event -ne 'workflow_dispatch') {
-            throw 'The supplied run is not a manual run of this application workflow.'
-          }
-          if ($run.conclusion -ne 'success' -or $run.head_sha -ne $env:GITHUB_SHA) {
-            throw 'The build-preview must have succeeded for this exact commit.'
-          }
-
-          $jobs = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:PREVIEW_RUN_ID/jobs?per_page=100" | ConvertFrom-Json
-          $dependencyStep = $jobs.jobs.steps | Where-Object name -eq 'Build or reuse Rust dependency image' | Select-Object -First 1
-          $buildStep = $jobs.jobs.steps | Where-Object name -eq 'Build or reuse immutable image' | Select-Object -First 1
-          $previewStep = $jobs.jobs.steps | Where-Object name -eq 'Preview application deployment' | Select-Object -First 1
-          $deployStep = $jobs.jobs.steps | Where-Object name -eq 'Deploy application' | Select-Object -First 1
-          if ($null -eq $dependencyStep -or $dependencyStep.conclusion -ne 'success') {
-            throw 'The supplied run did not build or verify the immutable Rust dependency image.'
-          }
-          if ($null -eq $buildStep -or $buildStep.conclusion -ne 'success') {
-            throw 'The supplied run did not build or verify the immutable application image.'
-          }
-          if ($null -eq $previewStep -or $previewStep.conclusion -ne 'success') {
-            throw 'The supplied run did not complete the application what-if successfully.'
-          }
-          if ($null -eq $deployStep -or $deployStep.conclusion -ne 'skipped') {
-            throw 'The supplied run was not build-preview only.'
           }
 
       # Priority 2 precedent: Gaia uses this exact Microsoft-published commit for OIDC login.
@@ -281,7 +230,6 @@ jobs:
           az bicep build --file infra/main.bicep --stdout | Out-Null
 
       - name: Build or reuse Rust dependency image
-        if: inputs.operation == 'build-preview'
         shell: pwsh
         run: |
           $dependencyInputs = @(
@@ -356,7 +304,6 @@ jobs:
           "RUST_DEPENDENCY_IMAGE=$dependencyReference" >> $env:GITHUB_ENV
 
       - name: Build or reuse immutable image
-        if: inputs.operation == 'build-preview'
         shell: pwsh
         run: |
           $image = "tco-calculator:$env:GITHUB_SHA"
@@ -498,7 +445,6 @@ jobs:
           "### Azure application preview`n`nImage: ``$env:CONTAINER_IMAGE```n`n$($plan.changes.Count) app-layer changes; no foundation changes or deletions." >> $env:GITHUB_STEP_SUMMARY
 
       - name: Reject superseded deployment
-        if: inputs.operation == 'deploy'
         shell: pwsh
         run: |
           $mainRef = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/main" | ConvertFrom-Json
@@ -507,7 +453,6 @@ jobs:
           }
 
       - name: Refresh Azure login with OIDC for deployment
-        if: inputs.operation == 'deploy'
         uses: Azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -515,7 +460,6 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy application
-        if: inputs.operation == 'deploy'
         shell: pwsh
         run: |
           $bootstrapName = "tco-app-bootstrap-$env:GITHUB_RUN_ID"
@@ -708,7 +652,6 @@ jobs:
             --output none
 
       - name: Refresh Azure login with OIDC for verification
-        if: inputs.operation == 'deploy'
         uses: Azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -717,7 +660,6 @@ jobs:
 
       - name: Verify deployed application
         id: verify
-        if: inputs.operation == 'deploy'
         shell: pwsh
         run: |
           $deploymentName = "tco-application-$env:GITHUB_RUN_ID"
