@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import { Database, GitBranch, ShieldCheck } from 'lucide-svelte';
   import { text } from '$lib/i18n/en';
+  import AppUpdateControl from './AppUpdateControl.svelte';
   import IdentityMenu from './IdentityMenu.svelte';
 
   let {
@@ -47,6 +48,7 @@
       <GitBranch size={19} />
     </a>
     <IdentityMenu {mode} {displayName} />
+    <AppUpdateControl />
   </div>
 </header>
 
