@@ -14,6 +14,7 @@ use crate::{
     pricing::{
         provider::{Provider, ResolutionStatus},
         snapshot::{AwsPriceSnapshot, AzurePriceSnapshot},
+        warnings::relevant_for_resources,
     },
 };
 
@@ -161,15 +162,16 @@ impl CalculationEngine {
             calculate_portfolio(&resource_results, input.settings.selected_parity_adjustment);
         let mut warnings = input
             .aws_snapshot
-            .into_iter()
-            .flat_map(|snapshot| snapshot.metadata.warnings.iter().cloned())
-            .chain(
-                input
-                    .azure_snapshot
-                    .into_iter()
-                    .flat_map(|snapshot| snapshot.metadata.warnings.iter().cloned()),
-            )
-            .collect::<Vec<_>>();
+            .map(|snapshot| relevant_for_resources(&snapshot.metadata.warnings, input.resources))
+            .unwrap_or_default();
+        warnings.extend(
+            input
+                .azure_snapshot
+                .map(|snapshot| {
+                    relevant_for_resources(&snapshot.metadata.warnings, input.resources)
+                })
+                .unwrap_or_default(),
+        );
         if input
             .aws_snapshot
             .is_some_and(|snapshot| snapshot.metadata.status == ResolutionStatus::Stale)
@@ -1261,6 +1263,40 @@ mod tests {
             DecimalValue::ZERO
         );
         assert!(revision.portfolio_totals.aws_all_rows_total.is_some());
+    }
+
+    #[test]
+    fn calculation_excludes_snapshot_warnings_for_unsubmitted_resources() {
+        let engine = engine(None);
+        let settings = settings();
+        let resource = Resource::Ec2(ec2_resource("100"));
+        let mut aws = aws_snapshot();
+        aws.metadata.warnings = vec![
+            "EC2 Standard SQL rate for m-test uses the regional four-core-minimum fallback."
+                .to_owned(),
+            "EC2 Enterprise SQL rate for c4.large uses the regional four-core-minimum fallback."
+                .to_owned(),
+            "Catalog data was normalized with a documented fallback.".to_owned(),
+        ];
+        let azure = azure_snapshot();
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: Some(&azure),
+                expected_formula_version: None,
+            })
+            .expect("calculation");
+
+        assert_eq!(
+            revision.warnings,
+            vec![
+                "Catalog data was normalized with a documented fallback.",
+                "EC2 Standard SQL rate for m-test uses the regional four-core-minimum fallback.",
+            ]
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@
     readString,
     type JsonRecord
   } from '$lib/api';
+  import { calculationTargetOutcome } from '$lib/calculation-outcome';
   import { relevantCalculationWarnings } from '$lib/calculation-warnings';
   import type { ResourceDraft } from '$lib/draft';
 
@@ -21,11 +22,16 @@
   const azurePortfolioTotal = $derived(readString(portfolio, 'portfolio_after_selected_parity'));
   const portfolioDifference = $derived(readString(portfolio, 'portfolio_difference'));
   const comparableResourceCount = $derived(readNumber(portfolio, 'comparable_resource_count') ?? 0);
+  const noMappingResourceCount = $derived(readNumber(portfolio, 'no_mapping_resource_count') ?? 0);
   const priceUnavailableResourceCount = $derived(
     readNumber(portfolio, 'price_unavailable_resource_count') ?? 0
   );
-  const noComparablePrices = $derived(
-    comparableResourceCount === 0 && priceUnavailableResourceCount > 0
+  const targetOutcome = $derived(
+    calculationTargetOutcome(
+      comparableResourceCount,
+      noMappingResourceCount,
+      priceUnavailableResourceCount
+    )
   );
   const warnings = $derived(relevantCalculationWarnings(revision?.warnings));
 
@@ -39,9 +45,16 @@
   }
 
   function excludedPriceMessage(): string {
-    if (noComparablePrices) return 'No workloads have complete source and Azure pricing.';
+    if (targetOutcome === 'price_unavailable')
+      return 'No workloads have complete source and Azure pricing.';
     const noun = priceUnavailableResourceCount === 1 ? 'workload' : 'workloads';
     return `${priceUnavailableResourceCount} ${noun} excluded because pricing is unavailable.`;
+  }
+
+  function targetTotal(value: string | null): string {
+    if (targetOutcome === 'no_mapping') return 'NO MAPPING';
+    if (targetOutcome === 'price_unavailable') return 'PRICE UNAVAILABLE';
+    return formatMoney(value);
   }
 </script>
 
@@ -70,10 +83,12 @@
     </div>
     <div class="total-block azure">
       <span>Azure SQL MI</span>
-      <strong class:unavailable={noComparablePrices}
-        >{noComparablePrices ? 'PRICE UNAVAILABLE' : formatMoney(azurePortfolioTotal)}</strong
+      <strong class:unavailable={targetOutcome !== 'available'}
+        >{targetTotal(azurePortfolioTotal)}</strong
       >
-      {#if priceUnavailableResourceCount > 0}
+      {#if targetOutcome === 'no_mapping'}
+        <small class="metric-error">No workload fits an approved Azure SQL MI target.</small>
+      {:else if priceUnavailableResourceCount > 0}
         <small class="metric-error">{excludedPriceMessage()}</small>
       {:else}
         <small>Mapped rows after selected parity</small>
@@ -81,10 +96,12 @@
     </div>
     <div class="total-block difference">
       <span>Annual difference</span>
-      <strong class:unavailable={noComparablePrices}
-        >{noComparablePrices ? 'PRICE UNAVAILABLE' : formatMoney(portfolioDifference)}</strong
+      <strong class:unavailable={targetOutcome !== 'available'}
+        >{targetTotal(portfolioDifference)}</strong
       >
-      {#if priceUnavailableResourceCount > 0}
+      {#if targetOutcome === 'no_mapping'}
+        <small class="metric-error">A comparison requires at least one mapped workload.</small>
+      {:else if priceUnavailableResourceCount > 0}
         <small class="metric-error">{excludedPriceMessage()}</small>
       {:else}
         <small>Source minus Azure</small>
@@ -94,7 +111,7 @@
 
   <div class="comparison-meta">
     <span><b>{comparableResourceCount}</b> comparable</span>
-    <span><b>{readNumber(portfolio, 'no_mapping_resource_count') ?? 0}</b> no mapping</span>
+    <span><b>{noMappingResourceCount}</b> no mapping</span>
     <span class:unavailable={priceUnavailableResourceCount > 0}
       ><b>{priceUnavailableResourceCount}</b> price unavailable</span
     >
@@ -121,6 +138,7 @@
       {@const steps = readRecords(result, 'explanation_steps')}
       {@const awsUnavailable = readString(result, 'aws_pricing_status') === 'unavailable'}
       {@const azureUnavailable = readString(result, 'azure_pricing_status') === 'unavailable'}
+      {@const noMapping = readString(result, 'mapping_status') === 'no_mapping'}
       {@const pricingIncomplete = awsUnavailable || azureUnavailable}
       {@const sourceAnnual = readString(sourceCosts, 'total')}
       {@const azureAnnual = readString(azureCosts, 'total_before_parity')}
@@ -160,14 +178,14 @@
           </div>
           <div>
             <span>Azure annual</span><strong class:unavailable={azureUnavailable}
-              >{formatMoney(azureAnnual)}</strong
+              >{noMapping ? 'NO MAPPING' : formatMoney(azureAnnual)}</strong
             >
             {#if azureUnavailable}<small class="metric-error">Azure price is unavailable.</small
               >{/if}
           </div>
           <div>
             <span>Estimated savings</span><strong class:unavailable={pricingIncomplete}
-              >{formatMoney(totalSavings)}</strong
+              >{noMapping ? 'NO MAPPING' : formatMoney(totalSavings)}</strong
             >
             {#if pricingIncomplete}<small class="metric-error"
                 >Savings require complete source and Azure prices.</small
@@ -196,6 +214,14 @@
             <div>
               <span>Hardware</span><strong>{readString(selected, 'hardware_family')}</strong>
             </div>
+          </div>
+        {:else if noMapping}
+          <div class="target-strip">
+            <div><span>Recommended target</span><strong>NO MAPPING</strong></div>
+            <div><span>vCores</span><strong>NO MAPPING</strong></div>
+            <div><span>Selected memory</span><strong>NO MAPPING</strong></div>
+            <div><span>Additional memory</span><strong>NO MAPPING</strong></div>
+            <div><span>Hardware</span><strong>NO MAPPING</strong></div>
           </div>
         {/if}
 

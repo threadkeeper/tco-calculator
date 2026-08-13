@@ -10,3 +10,4 @@ pub mod local_fixture;
 pub mod provider;
 pub mod repository;
 pub mod snapshot;
+pub mod warnings;

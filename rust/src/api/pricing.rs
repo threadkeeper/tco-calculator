@@ -10,6 +10,7 @@ use crate::{
         coordinator::SnapshotResolution,
         provider::{Provider, ResolutionStatus},
         snapshot::{AwsPriceSnapshot, AzurePriceSnapshot, SnapshotMetadata},
+        warnings::relevant_for_resources,
     },
     problem::Problem,
     state::AppState,
@@ -92,7 +93,11 @@ async fn resolve_aws_request(
             .await
     }
     .map_err(|_| Problem::internal(AWS_INSTANCE))?;
-    Ok(Json(response(resolution, Provider::Aws)))
+    Ok(Json(response(
+        resolution,
+        Provider::Aws,
+        &request.resources,
+    )))
 }
 
 async fn resolve_azure_request(
@@ -117,7 +122,11 @@ async fn resolve_azure_request(
             .await
     }
     .map_err(|_| Problem::internal(AZURE_INSTANCE))?;
-    Ok(Json(response(resolution, Provider::Azure)))
+    Ok(Json(response(
+        resolution,
+        Provider::Azure,
+        &request.resources,
+    )))
 }
 
 fn parse_request(
@@ -175,12 +184,13 @@ impl SnapshotWithMetadata for AzurePriceSnapshot {
 fn response<T: SnapshotWithMetadata>(
     resolution: SnapshotResolution<T>,
     provider: Provider,
+    resources: &[Resource],
 ) -> PriceResolutionResponse {
     let Some(snapshot) = resolution.snapshot else {
         return unavailable(provider, resolution.warnings);
     };
     let metadata = snapshot.metadata();
-    let mut warnings = metadata.warnings.clone();
+    let mut warnings = relevant_for_resources(&metadata.warnings, resources);
     warnings.extend(resolution.warnings);
     warnings.sort();
     warnings.dedup();
