@@ -5,11 +5,48 @@ export type MiCommitment = 'payg' | 'one-year' | 'three-year' | 'sv-one-year';
 export const MI_COMMITMENT_OPTIONS: ReadonlyArray<{
   value: MiCommitment;
   label: string;
+  summary: string;
+  discount: string;
+  details: string;
 }> = [
-  { value: 'payg', label: 'Pay as you go' },
-  { value: 'one-year', label: '1-year reserved' },
-  { value: 'three-year', label: '3-year reserved' },
-  { value: 'sv-one-year', label: '1-year savings plan' }
+  {
+    value: 'payg',
+    label: 'Pay as you go',
+    summary: 'No long-term commitment. Pay for the SQL Managed Instance compute hours you use.',
+    discount: 'Commitment discount: none. The estimate uses the current pay-as-you-go rate.',
+    details:
+      'This is the most flexible choice when usage might change or stop. SQL licensing, storage, and networking are priced separately.'
+  },
+  {
+    value: 'one-year',
+    label: '1-year reserved',
+    summary:
+      'Commit to matching SQL Managed Instance compute for one year. Azure applies the benefit automatically to eligible instances in the reservation scope.',
+    discount:
+      'Microsoft advertises SQL reservations at up to 33% off compute. The actual saving depends on region, tier, hardware, and utilization; this estimate uses the current catalog rate.',
+    details:
+      'The benefit is use-it-or-lose-it each hour and covers compute, not SQL licensing, storage, or networking. Azure Hybrid Benefit can reduce eligible SQL licensing costs separately.'
+  },
+  {
+    value: 'three-year',
+    label: '3-year reserved',
+    summary:
+      'Commit to matching SQL Managed Instance compute for three years. The longer term usually provides a lower compute rate than a one-year reservation.',
+    discount:
+      'Microsoft advertises SQL reservations at up to 33% off compute. The actual saving depends on region, tier, hardware, and utilization; this estimate uses the current catalog rate.',
+    details:
+      'Choose this for stable workloads you expect to keep. Unused reservation hours do not roll over, and SQL licensing, storage, and networking remain separate charges.'
+  },
+  {
+    value: 'sv-one-year',
+    label: '1-year savings plan',
+    summary:
+      'Commit to a fixed hourly database spend for one year. The benefit can move across eligible database usage, making it more flexible than a reservation.',
+    discount:
+      'There is no single fixed discount percentage. Azure applies the current savings-plan rate for each eligible meter; this estimate uses the current catalog rate.',
+    details:
+      'Reservations are applied first when both benefits could cover the same usage. A savings plan can then cover other eligible usage, up to its hourly commitment.'
+  }
 ];
 
 const PURCHASE_OPTIONS = {

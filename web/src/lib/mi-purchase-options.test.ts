@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   hasMiCommitment,
+  MI_COMMITMENT_OPTIONS,
   miPurchaseOption,
   miPurchaseOptionLabel,
   miPurchaseOptionParts,
@@ -84,5 +85,21 @@ describe('SQL MI purchase options', () => {
     expect(selectorSource).toContain('SQL license included');
     expect(selectorSource).toContain('active Software Assurance or qualifying');
     expect(selectorSource).toContain('Verify the customer licensing entitlement.');
+  });
+
+  it('provides plain-language details and discount guidance for every commitment option', () => {
+    expect(MI_COMMITMENT_OPTIONS).toHaveLength(4);
+    for (const option of MI_COMMITMENT_OPTIONS) {
+      expect(option.summary.length).toBeGreaterThan(40);
+      expect(option.discount.toLocaleLowerCase()).toMatch(/discount|off|rate/);
+      expect(option.details.length).toBeGreaterThan(40);
+    }
+
+    expect(selectorSource).toContain('aria-label={`About ${option.label}`}');
+    expect(selectorSource).toContain('About Azure Hybrid Benefit');
+    expect(selectorSource).toContain('can save up to 55%');
+    expect(selectorSource).toContain('total savings can reach up to 82%');
+    expect(selectorSource).toContain('role="dialog"');
+    expect(selectorSource).toContain('aria-modal="true"');
   });
 });

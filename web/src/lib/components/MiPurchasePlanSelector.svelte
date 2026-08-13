@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { AlertTriangle } from 'lucide-svelte';
+  import { tick } from 'svelte';
+  import { AlertTriangle, Check, ChevronDown, Info, X } from 'lucide-svelte';
   import type { PurchaseOption } from '$lib/draft';
   import {
     MI_COMMITMENT_OPTIONS,
@@ -20,12 +21,40 @@
     onchange?: () => void;
   } = $props();
 
-  const selected = $derived(miPurchaseOptionParts(value));
+  type PurchaseHelp = {
+    title: string;
+    summary: string;
+    discount: string;
+    details: string;
+  };
 
-  function selectCommitment(event: Event) {
-    const commitment = (event.currentTarget as HTMLSelectElement).value as MiCommitment;
+  const AHB_HELP: PurchaseHelp = {
+    title: 'Azure Hybrid Benefit',
+    summary:
+      'Bring eligible SQL Server licenses you already own instead of paying for the SQL license again in Azure.',
+    discount:
+      'Microsoft says Azure Hybrid Benefit can save up to 55% on SQL Managed Instance. Combined with a reservation, total savings can reach up to 82%.',
+    details:
+      'You need qualifying SQL Server licenses with active Software Assurance or an eligible subscription. The calculator does not verify entitlement, so confirm it with the customer licensing team before using this option.'
+  };
+
+  let menuOpen = $state(false);
+  let help = $state<PurchaseHelp | null>(null);
+  let trigger: HTMLButtonElement;
+  let closeButton = $state<HTMLButtonElement>();
+  let returnFocus: HTMLElement | null = null;
+
+  const selected = $derived(miPurchaseOptionParts(value));
+  const selectedOption = $derived(
+    MI_COMMITMENT_OPTIONS.find((option) => option.value === selected.commitment) ??
+      MI_COMMITMENT_OPTIONS[0]
+  );
+
+  function selectCommitment(commitment: MiCommitment) {
     value = miPurchaseOption(commitment, selected.usesAzureHybridBenefit);
+    menuOpen = false;
     onchange();
+    trigger.focus();
   }
 
   function selectLicense(event: Event) {
@@ -33,35 +62,125 @@
     value = miPurchaseOption(selected.commitment, usesAzureHybridBenefit);
     onchange();
   }
+
+  async function showHelp(event: MouseEvent, nextHelp: PurchaseHelp) {
+    returnFocus = menuOpen ? trigger : (event.currentTarget as HTMLElement);
+    menuOpen = false;
+    help = nextHelp;
+    await tick();
+    closeButton?.focus();
+  }
+
+  async function hideHelp() {
+    help = null;
+    await tick();
+    returnFocus?.focus();
+  }
+
+  function handleFocusOut(event: FocusEvent) {
+    const container = event.currentTarget as HTMLElement;
+    if (event.relatedTarget instanceof Node && container.contains(event.relatedTarget)) return;
+    menuOpen = false;
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape') return;
+    if (help) {
+      event.preventDefault();
+      void hideHelp();
+    } else if (menuOpen) {
+      event.preventDefault();
+      menuOpen = false;
+      trigger.focus();
+    }
+  }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <fieldset class="purchase-plan">
   <legend>{legend}</legend>
-  <label class="commitment" for={`${id}-commitment`}>
-    <span>Compute commitment</span>
-    <select id={`${id}-commitment`} value={selected.commitment} onchange={selectCommitment}>
-      {#each MI_COMMITMENT_OPTIONS as option (option.value)}
-        <option value={option.value}>{option.label}</option>
-      {/each}
-    </select>
-  </label>
-  <label class="license-choice" for={`${id}-ahb`}>
-    <input
-      id={`${id}-ahb`}
-      type="checkbox"
-      checked={selected.usesAzureHybridBenefit}
-      aria-describedby={selected.usesAzureHybridBenefit ? `${id}-ahb-warning` : undefined}
-      onchange={selectLicense}
-    />
-    <span class="license-copy">
-      <strong>Azure Hybrid Benefit</strong>
-      <span
-        >{selected.usesAzureHybridBenefit
-          ? 'Eligible licenses applied'
-          : 'SQL license included'}</span
+  <div class="commitment" onfocusout={handleFocusOut}>
+    <span id={`${id}-commitment-label`}>Compute commitment</span>
+    <div class="plan-select">
+      <button
+        bind:this={trigger}
+        id={`${id}-commitment`}
+        type="button"
+        class="plan-trigger"
+        aria-labelledby={`${id}-commitment-label ${id}-commitment-value`}
+        aria-controls={`${id}-commitment-options`}
+        aria-expanded={menuOpen}
+        onclick={() => (menuOpen = !menuOpen)}
       >
-    </span>
-  </label>
+        <span id={`${id}-commitment-value`}>{selectedOption.label}</span>
+        <ChevronDown size={17} aria-hidden="true" />
+      </button>
+      {#if menuOpen}
+        <ul id={`${id}-commitment-options`} aria-label="Compute commitment options">
+          {#each MI_COMMITMENT_OPTIONS as option (option.value)}
+            <li>
+              <button
+                type="button"
+                class="option-choice"
+                aria-pressed={option.value === selected.commitment}
+                onclick={() => selectCommitment(option.value)}
+              >
+                <span>{option.label}</span>
+                {#if option.value === selected.commitment}<Check
+                    size={17}
+                    aria-hidden="true"
+                  />{/if}
+              </button>
+              <button
+                type="button"
+                class="info-button"
+                aria-label={`About ${option.label}`}
+                title={`About ${option.label}`}
+                onclick={(event) =>
+                  showHelp(event, {
+                    title: option.label,
+                    summary: option.summary,
+                    discount: option.discount,
+                    details: option.details
+                  })}
+              >
+                <Info size={17} aria-hidden="true" />
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  </div>
+  <div class="license-row">
+    <label class="license-choice" for={`${id}-ahb`}>
+      <input
+        id={`${id}-ahb`}
+        type="checkbox"
+        checked={selected.usesAzureHybridBenefit}
+        aria-describedby={selected.usesAzureHybridBenefit ? `${id}-ahb-warning` : undefined}
+        onchange={selectLicense}
+      />
+      <span class="license-copy">
+        <strong>Azure Hybrid Benefit</strong>
+        <span
+          >{selected.usesAzureHybridBenefit
+            ? 'Eligible licenses applied'
+            : 'SQL license included'}</span
+        >
+      </span>
+    </label>
+    <button
+      type="button"
+      class="info-button ahb-info"
+      aria-label="About Azure Hybrid Benefit"
+      title="About Azure Hybrid Benefit"
+      onclick={(event) => showHelp(event, AHB_HELP)}
+    >
+      <Info size={17} aria-hidden="true" />
+    </button>
+  </div>
   {#if selected.usesAzureHybridBenefit}
     <p class="eligibility-warning" id={`${id}-ahb-warning`}>
       <AlertTriangle size={16} aria-hidden="true" />
@@ -72,6 +191,45 @@
     </p>
   {/if}
 </fieldset>
+
+{#if help}
+  <div class="backdrop" role="presentation">
+    <div
+      class="help-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={`${id}-help-title`}
+      aria-describedby={`${id}-help-summary ${id}-help-discount ${id}-help-details`}
+    >
+      <div class="dialog-heading">
+        <div>
+          <span class="eyebrow">Pricing explained</span>
+          <h2 id={`${id}-help-title`}>{help.title}</h2>
+        </div>
+        <button
+          bind:this={closeButton}
+          type="button"
+          class="dialog-close"
+          aria-label="Close pricing explanation"
+          title="Close"
+          onclick={hideHelp}
+        >
+          <X size={19} aria-hidden="true" />
+        </button>
+      </div>
+      <p id={`${id}-help-summary`}>{help.summary}</p>
+      <p id={`${id}-help-discount`} class="discount"><strong>Discount</strong>{help.discount}</p>
+      <p id={`${id}-help-details`} class="details">{help.details}</p>
+      <p class="estimate-note">
+        This calculator provides an estimate, not a quote. Actual eligibility and billed rates can
+        vary.
+      </p>
+      <div class="dialog-actions">
+        <button type="button" class="done" onclick={hideHelp}>Got it</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .purchase-plan {
@@ -101,7 +259,14 @@
     font-size: 0.76rem;
     font-weight: 700;
   }
-  select {
+  .plan-select {
+    position: relative;
+  }
+  .plan-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
     width: 100%;
     min-width: 0;
     min-height: 38px;
@@ -119,8 +284,10 @@
       650 0.9rem/1.3 Aptos,
       'Trebuchet MS',
       sans-serif;
+    text-align: left;
+    cursor: pointer;
   }
-  select:hover {
+  .plan-trigger:hover {
     background: color-mix(in srgb, var(--copilot-purple-light) 12%, var(--surface-input));
     border-color: var(--copilot-purple);
     box-shadow:
@@ -128,13 +295,80 @@
       0 0 0 1px rgb(200 152 253 / 18%),
       0 0 18px rgb(133 52 243 / 26%);
   }
-  select:focus {
+  .plan-trigger:focus {
     border-color: var(--copilot-purple);
     outline: 3px solid rgb(200 152 253 / 32%);
     box-shadow:
       inset 3px 0 0 var(--copilot-purple),
       0 0 0 1px rgb(200 152 253 / 24%),
       0 0 20px rgb(133 52 243 / 30%);
+  }
+  ul {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 4px);
+    right: 0;
+    left: 0;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--border-input);
+    border-radius: 4px;
+    box-shadow: 0 10px 24px rgb(8 20 26 / 24%);
+  }
+  li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 38px;
+    align-items: stretch;
+    gap: 2px;
+  }
+  .option-choice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+    min-height: 42px;
+    padding: 7px 9px;
+    color: var(--ink);
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .option-choice:hover,
+  .option-choice:focus,
+  .option-choice[aria-pressed='true'] {
+    background: var(--azure-soft);
+    outline: none;
+  }
+  .info-button {
+    display: grid;
+    width: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0;
+    place-items: center;
+    color: var(--azure-text);
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .info-button:hover,
+  .info-button:focus {
+    color: var(--ink);
+    background: var(--azure-soft);
+    outline: 2px solid var(--azure-focus);
+  }
+  .license-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 38px;
+    align-items: stretch;
+    min-width: 0;
   }
   .license-choice {
     display: flex;
@@ -149,6 +383,16 @@
     border: 1px solid var(--border-input);
     border-radius: 4px;
     cursor: pointer;
+  }
+  .ahb-info {
+    width: 38px;
+    min-width: 38px;
+    border: 1px solid var(--border-input);
+    border-left: 0;
+    border-radius: 0 4px 4px 0;
+  }
+  .license-row .license-choice {
+    border-radius: 4px 0 0 4px;
   }
   .license-choice:focus-within {
     border-color: var(--azure);
@@ -188,6 +432,98 @@
     font-size: 0.75rem;
     font-weight: 500;
     line-height: 1.35;
+  }
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: grid;
+    padding: 16px;
+    place-items: center;
+    background: rgb(5 14 18 / 68%);
+  }
+  .help-dialog {
+    width: min(100%, 520px);
+    max-height: min(680px, calc(100vh - 32px));
+    padding: 20px;
+    overflow-y: auto;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 22px 60px rgb(3 10 13 / 38%);
+  }
+  .dialog-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .eyebrow {
+    color: var(--azure-text);
+    font-size: 0.7rem;
+    font-weight: 750;
+    text-transform: uppercase;
+  }
+  h2 {
+    margin: 3px 0 0;
+    font:
+      700 1.25rem/1.2 Bahnschrift,
+      sans-serif;
+  }
+  .dialog-close {
+    display: grid;
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    place-items: center;
+    color: var(--ink-soft);
+    background: var(--surface-input);
+    border: 1px solid var(--border-input);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .help-dialog p {
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+  .discount {
+    display: grid;
+    gap: 3px;
+    padding: 10px 12px;
+    color: var(--ink) !important;
+    background: var(--azure-soft);
+    border-left: 3px solid var(--azure);
+  }
+  .discount strong {
+    color: var(--azure-text);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+  }
+  .details {
+    margin-bottom: 0;
+  }
+  .estimate-note {
+    color: var(--muted) !important;
+    font-size: 0.76rem !important;
+  }
+  .dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 18px;
+  }
+  .done {
+    min-height: 38px;
+    padding: 8px 16px;
+    color: white;
+    background: var(--azure);
+    border: 1px solid var(--azure-dark);
+    border-radius: 4px;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
   }
   @media (max-width: 620px) {
     .purchase-plan {
