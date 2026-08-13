@@ -33,6 +33,8 @@ pub enum PolicyError {
     UnknownTool,
     #[error("the model proposed a tool that is unavailable in this phase")]
     PhaseNotAllowed,
+    #[error("the model proposed a tool that is unavailable for the selected-project state")]
+    ProjectContextNotAllowed,
     #[error("the tool batch contained more than one mutating call")]
     TooManyMutations,
     #[error("the model supplied arguments the tool schema rejects")]
@@ -84,6 +86,9 @@ pub fn preflight(
         if definition.phase != context.phase() && !is_authoritative_read {
             return Err(PolicyError::PhaseNotAllowed);
         }
+        if !definition.is_available(context) {
+            return Err(PolicyError::ProjectContextNotAllowed);
+        }
         if definition.risk.is_mutating() {
             mutating_calls += 1;
             if mutating_calls > MAX_MUTATING_CALLS_PER_BATCH {
@@ -118,10 +123,22 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::assistant::{budget::MAX_TOOL_CALLS, context::TurnPhase};
+    use crate::assistant::{
+        budget::MAX_TOOL_CALLS,
+        context::{SelectedProject, TurnPhase},
+    };
 
     fn context(phase: TurnPhase) -> TurnContext {
         TurnContext::new("entra:tenant:owner", Uuid::nil(), phase)
+    }
+
+    fn context_with_project(phase: TurnPhase) -> TurnContext {
+        context(phase).with_project(SelectedProject {
+            id: Uuid::nil(),
+            etag: "etag".to_owned(),
+            aws_price_snapshot_id: None,
+            azure_price_snapshot_id: None,
+        })
     }
 
     fn call(id: &str, name: &str, arguments: &str) -> ProposedToolCall {
@@ -155,7 +172,7 @@ mod tests {
                 help_call("call-1"),
                 call("call-2", "get_current_project", "{}"),
             ],
-            &context(TurnPhase::ReadPlan),
+            &context_with_project(TurnPhase::ReadPlan),
             &TurnBudget::new(),
             &HashSet::new(),
         )
@@ -173,7 +190,7 @@ mod tests {
                 help_call("call-1"),
                 call("call-2", "get_current_project", "{\"x\":1}"),
             ],
-            &context(TurnPhase::ReadPlan),
+            &context_with_project(TurnPhase::ReadPlan),
             &TurnBudget::new(),
             &HashSet::new(),
         )
@@ -186,7 +203,7 @@ mod tests {
     fn an_unknown_tool_rejects_the_whole_batch() {
         let error = preflight(
             &[help_call("call-1"), call("call-2", "run_shell", "{}")],
-            &context(TurnPhase::ReadPlan),
+            &context_with_project(TurnPhase::ReadPlan),
             &TurnBudget::new(),
             &HashSet::new(),
         )
@@ -214,7 +231,7 @@ mod tests {
     fn a_draft_capability_is_available_only_in_the_proposal_phase() {
         let accepted = preflight(
             &[stage_call("call-1")],
-            &context(TurnPhase::Propose),
+            &context_with_project(TurnPhase::Propose),
             &TurnBudget::new(),
             &HashSet::new(),
         )
@@ -236,6 +253,34 @@ mod tests {
     }
 
     #[test]
+    fn project_context_requirements_are_enforced_even_for_known_tool_names() {
+        assert_eq!(
+            preflight(
+                &[call("call-1", "get_current_project", "{}")],
+                &context(TurnPhase::ReadPlan),
+                &TurnBudget::new(),
+                &HashSet::new(),
+            )
+            .expect_err("a project read requires a selected project"),
+            PolicyError::ProjectContextNotAllowed
+        );
+        assert_eq!(
+            preflight(
+                &[call(
+                    "call-1",
+                    "stage_new_project_draft",
+                    r#"{"project_type":"on_prem","omissions":[],"uncertainties":[]}"#,
+                )],
+                &context_with_project(TurnPhase::Propose),
+                &TurnBudget::new(),
+                &HashSet::new(),
+            )
+            .expect_err("a new draft requires no selected project"),
+            PolicyError::ProjectContextNotAllowed
+        );
+    }
+
+    #[test]
     fn batch_size_is_bounded() {
         let batch = (0..=MAX_TOOL_CALLS_PER_RESPONSE)
             .map(|index| help_call(&format!("call-{index}")))
@@ -243,7 +288,7 @@ mod tests {
 
         let error = preflight(
             &batch,
-            &context(TurnPhase::ReadPlan),
+            &context_with_project(TurnPhase::ReadPlan),
             &TurnBudget::new(),
             &HashSet::new(),
         )
@@ -323,7 +368,7 @@ mod tests {
                 "get_current_project",
                 r#"{"owner_id":"entra:other-tenant:other-owner"}"#,
             )],
-            &context(TurnPhase::ReadPlan),
+            &context_with_project(TurnPhase::ReadPlan),
             &TurnBudget::new(),
             &HashSet::new(),
         )

@@ -98,6 +98,21 @@ describe('assistant help client', () => {
     ).toThrow('proposal was not recognized');
   });
 
+  it('preserves a validated unsaved project draft from a model turn', () => {
+    const proposal = newProjectDraftProposal();
+
+    expect(
+      parseAssistantTurnResponse({ answer: 'Open this draft.', references: [], proposal }).proposal
+    ).toEqual(proposal);
+    expect(() =>
+      parseAssistantTurnResponse({
+        answer: 'Bad draft',
+        references: [],
+        proposal: { ...proposal, project: { name: 'Missing project settings' } }
+      })
+    ).toThrow('proposal was not recognized');
+  });
+
   it('uploads only bounded JPEG or PNG bytes with the host-selected project ID', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -128,6 +143,30 @@ describe('assistant help client', () => {
     await expect(
       requestAssistantImage(new File(['bad'], 'bad.gif', { type: 'image/gif' }), 'project-id')
     ).rejects.toThrow('JPEG or PNG');
+  });
+
+  it('omits the project header when an image starts a new browser draft', async () => {
+    const proposal = newProjectDraftProposal();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          answer: 'Open the extracted draft.',
+          proposal,
+          omissions: [],
+          uncertainties: []
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const image = new File([new Uint8Array([0xff, 0xd8, 0xff])], 'inventory.jpg', {
+      type: 'image/jpeg'
+    });
+
+    await expect(requestAssistantImage(image, null)).resolves.toMatchObject({ proposal });
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(request.headers).get('content-type')).toBe('image/jpeg');
+    expect(new Headers(request.headers).has('x-tco-project-id')).toBe(false);
   });
 
   it('requires bounded typed image omissions and uncertainties', () => {
@@ -175,5 +214,38 @@ function projectProposal() {
     expected_etag: '"etag-1"',
     patch: { name: 'Imported estimate' },
     changes: [{ pointer: '/name', before: 'Estimate', after: 'Imported estimate' }]
+  };
+}
+
+function newProjectDraftProposal() {
+  return {
+    proposal_id: `sha256:${'b'.repeat(64)}`,
+    action: 'open_project_draft' as const,
+    project: {
+      name: 'Imported inventory',
+      description: null,
+      settings: {
+        project_type: 'on_prem' as const,
+        aws_region: null,
+        azure_region: 'swedencentral',
+        currency: 'USD' as const,
+        source_compute_discount: '0',
+        source_license_discount: '0',
+        source_storage_discount: '0',
+        azure_compute_discount: '0',
+        azure_license_discount: '0',
+        azure_storage_discount: '0',
+        selected_parity_adjustment: '0',
+        default_annual_hours: '8760',
+        default_mi_purchase_option: 'ahb' as const,
+        enterprise_license_sa_usd_per_two_core_pack: '20557',
+        standard_license_sa_usd_per_two_core_pack: '5363',
+        remaining_coverage_months: 12 as const,
+        electricity_rate_usd_per_kwh: '0'
+      },
+      resources: [],
+      aws_price_snapshot_id: null,
+      azure_price_snapshot_id: null
+    }
   };
 }

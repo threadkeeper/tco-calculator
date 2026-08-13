@@ -79,7 +79,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Normalize one JPEG or PNG and return a validated project patch proposal. */
+        /** Normalize one JPEG or PNG and return a validated project proposal. */
         post: operations["analyzeAssistantImage"];
         delete?: never;
         options?: never;
@@ -448,7 +448,7 @@ export interface components {
         AssistantTurnResponse: {
             answer: string;
             references: components["schemas"]["AssistantHelpReference"][];
-            proposal: components["schemas"]["AssistantProjectPatchProposal"] | null;
+            proposal: components["schemas"]["AssistantProposal"] | null;
         };
         /** @enum {string} */
         AssistantAction: "apply_project_patch";
@@ -466,16 +466,31 @@ export interface components {
         AssistantProjectPatchProposal: {
             /** @description Correlation fingerprint for detecting accidental request drift; it is not authorization or proof of confirmation. */
             proposal_id: string;
-            action: components["schemas"]["AssistantAction"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "apply_project_patch";
             /** Format: uuid */
             project_id: string;
             expected_etag: string;
             patch: components["schemas"]["AssistantProjectPatch"];
             changes: components["schemas"]["AssistantProjectPatchChange"][];
         };
+        AssistantNewProjectDraftProposal: {
+            /** @description Correlation fingerprint for detecting accidental response drift; it is not authorization or proof of persistence. */
+            proposal_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "open_project_draft";
+            project: components["schemas"]["EditableProject"];
+        };
+        AssistantProposal: components["schemas"]["AssistantProjectPatchProposal"] | components["schemas"]["AssistantNewProjectDraftProposal"];
         AssistantImageResponse: {
             answer: string;
-            proposal: components["schemas"]["AssistantProjectPatchProposal"] | null;
+            proposal: components["schemas"]["AssistantProposal"] | null;
             omissions: string[];
             uncertainties: string[];
         };
@@ -768,7 +783,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            source_type: "Ec2Resource";
+            source_type: "ec2";
         };
         EbsVolume: {
             /** Format: uuid */
@@ -795,7 +810,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            source_type: "RdsResource";
+            source_type: "rds";
         };
         OnPremResource: components["schemas"]["SharedResourceProperties"] & {
             /** @constant */
@@ -811,7 +826,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            source_type: "OnPremResource";
+            source_type: "on_prem";
         };
         Project: components["schemas"]["EditableProjectFields"] & {
             /** Format: uuid */
@@ -981,9 +996,9 @@ export interface operations {
     analyzeAssistantImage: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Owner-scoped saved project selected by the host. */
-                "x-tco-project-id": string;
+            header?: {
+                /** @description Optional owner-scoped saved project selected by the host. When absent, the agent may stage a new unsaved browser draft. */
+                "x-tco-project-id"?: string;
             };
             path?: never;
             cookie?: never;
@@ -995,7 +1010,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description A request-scoped, validated patch proposal. No image or project is saved. */
+            /** @description A request-scoped, validated patch or new browser-draft proposal. No image or project is saved. */
             200: {
                 headers: {
                     "Cache-Control"?: "no-store";

@@ -10,6 +10,7 @@
 
 use std::collections::BTreeSet;
 
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -21,8 +22,12 @@ use crate::{
         target_selector::MappingStatus,
     },
     domain::{
+        decimal::DecimalValue,
         project::{EditableProject, ProjectSettings, ValidationIssue},
-        resource::Resource,
+        resource::{
+            EbsVolume, EbsVolumeType, Ec2Resource, LicenseBasis, OnPremResource, ProjectType,
+            PurchaseOption, RdsDeployment, RdsResource, Resource, SharedResource, SqlEdition,
+        },
     },
     persistence::repository::RepositoryError,
     state::AppState,
@@ -54,6 +59,13 @@ pub enum ToolRisk {
     Destructive,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectRequirement {
+    Any,
+    Selected,
+    Unselected,
+}
+
 impl ToolRisk {
     pub fn is_mutating(self) -> bool {
         matches!(self, Self::Persist | Self::Destructive)
@@ -73,6 +85,7 @@ pub struct ToolDefinition {
     pub parameters: &'static str,
     pub phase: TurnPhase,
     pub risk: ToolRisk,
+    pub project_requirement: ProjectRequirement,
 }
 
 impl ToolDefinition {
@@ -82,6 +95,17 @@ impl ToolDefinition {
             description: self.description,
             parameters: self.parameters,
         }
+    }
+
+    pub fn is_available(&self, context: &TurnContext) -> bool {
+        let phase_available = self.phase == context.phase()
+            || (self.phase == TurnPhase::ReadPlan && self.risk == ToolRisk::Read);
+        let project_available = match self.project_requirement {
+            ProjectRequirement::Any => true,
+            ProjectRequirement::Selected => context.project().is_some(),
+            ProjectRequirement::Unselected => context.project().is_none(),
+        };
+        phase_available && project_available
     }
 }
 
@@ -103,6 +127,12 @@ const APPLICATION_HELP_SCHEMA: &str = r#"{
       "description": "Optional stable control identifier returned by an earlier help result."
     }
   }
+}"#;
+
+const AGENT_CAPABILITIES_SCHEMA: &str = r#"{
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
 }"#;
 
 const CURRENT_PROJECT_SCHEMA: &str = r#"{
@@ -176,14 +206,122 @@ const STAGE_PROJECT_PATCH_SCHEMA: &str = r#"{
     }
 }"#;
 
+const STAGE_NEW_PROJECT_DRAFT_SCHEMA: &str = r#"{
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["project_type", "omissions", "uncertainties"],
+    "properties": {
+        "project_type": {
+            "type": "string",
+            "enum": ["ec2", "rds", "on_prem"],
+            "description": "Source estate for the new unsaved project draft."
+        },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "description": { "type": ["string", "null"], "maxLength": 500 },
+        "settings": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "aws_region": { "type": ["string", "null"] },
+                "azure_region": { "type": "string" },
+                "source_compute_discount": { "type": "string" },
+                "source_license_discount": { "type": "string" },
+                "source_storage_discount": { "type": "string" },
+                "azure_compute_discount": { "type": "string" },
+                "azure_license_discount": { "type": "string" },
+                "azure_storage_discount": { "type": "string" },
+                "selected_parity_adjustment": { "type": "string" },
+                "default_annual_hours": { "type": "string" },
+                "default_mi_purchase_option": {
+                    "type": "string",
+                    "enum": ["payg", "ahb", "one-year", "ahbone-year", "three-year", "ahbthree-year", "sv-one-year", "ahbsv-one-year"]
+                },
+                "enterprise_license_sa_usd_per_two_core_pack": { "type": ["string", "null"] },
+                "standard_license_sa_usd_per_two_core_pack": { "type": ["string", "null"] },
+                "remaining_coverage_months": { "type": ["integer", "null"], "enum": [12, 24, 36, null] },
+                "electricity_rate_usd_per_kwh": { "type": ["string", "null"] }
+            }
+        },
+        "resources": {
+            "type": "array",
+            "maxItems": 100,
+            "description": "Workloads visible in the request. Omit or use an empty array for one host-defaulted starter workload.",
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["source_type"],
+                "properties": {
+                    "source_type": { "type": "string", "enum": ["ec2", "rds", "on_prem"] },
+                    "workload_name": { "type": "string", "minLength": 1, "maxLength": 160 },
+                    "quantity": { "type": "integer", "minimum": 1, "maximum": 10000 },
+                    "sql_edition": { "type": "string", "enum": ["standard", "enterprise"] },
+                    "license_basis": { "type": "string", "enum": ["license_included", "byol"] },
+                    "sql_data_gb_per_instance": { "type": "string" },
+                    "source_ram_gb_per_instance": { "type": "string" },
+                    "annual_hours_per_instance": { "type": "string" },
+                    "mi_purchase_option": {
+                        "type": "string",
+                        "enum": ["payg", "ahb", "one-year", "ahbone-year", "three-year", "ahbthree-year", "sv-one-year", "ahbsv-one-year"]
+                    },
+                    "instance_type": { "type": "string" },
+                    "volumes": {
+                        "type": "array",
+                        "maxItems": 50,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+                                "aws_volume_id": { "type": ["string", "null"], "maxLength": 128 },
+                                "volume_type": { "type": "string", "enum": ["gp3", "io2", "ephemeral"] },
+                                "capacity_gb": { "type": "string" },
+                                "provisioned_iops": { "type": ["integer", "null"], "minimum": 0 },
+                                "throughput_mibps": { "type": ["string", "null"] }
+                            }
+                        }
+                    },
+                    "deployment": { "type": "string", "enum": ["single_az", "multi_az"] },
+                    "commercial_term": { "type": "string" },
+                    "storage_class": { "type": "string" },
+                    "source_vcpu": { "type": "integer", "minimum": 1, "maximum": 100000 },
+                    "licensable_cores": { "type": "integer", "minimum": 1, "maximum": 100000 },
+                    "source_max_iops": { "type": "integer", "minimum": 0, "maximum": 1000000000 },
+                    "hardware_capex_usd": { "type": "string" },
+                    "depreciation_years": { "type": "string" },
+                    "average_power_kw_override": { "type": ["string", "null"] }
+                }
+            }
+        },
+        "omissions": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "uncertainties": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+    }
+}"#;
+
 /// Every registered tool. Dispatch matches explicitly over this list.
 pub const TOOLS: &[ToolDefinition] = &[
+    ToolDefinition {
+        name: "get_agent_capabilities",
+        description: "Read the host-authored description of this agent's programming, available tools, action boundaries, selected-project state, image support, action history, and request-scoped memory. Use this for questions about abilities, tools, autonomy, or how the agent works.",
+        parameters: AGENT_CAPABILITIES_SCHEMA,
+        phase: TurnPhase::ReadPlan,
+        risk: ToolRisk::Read,
+        project_requirement: ProjectRequirement::Any,
+    },
     ToolDefinition {
         name: "get_application_help",
         description: "Read the reviewed application help catalog for a field, button, state, or workflow. Returns product behaviour statements and the control identifiers they came from. This is the only approved source of product behaviour claims.",
         parameters: APPLICATION_HELP_SCHEMA,
         phase: TurnPhase::ReadPlan,
         risk: ToolRisk::Read,
+        project_requirement: ProjectRequirement::Any,
     },
     ToolDefinition {
         name: "get_current_project",
@@ -191,6 +329,7 @@ pub const TOOLS: &[ToolDefinition] = &[
         parameters: CURRENT_PROJECT_SCHEMA,
         phase: TurnPhase::ReadPlan,
         risk: ToolRisk::Read,
+        project_requirement: ProjectRequirement::Selected,
     },
     ToolDefinition {
         name: "validate_project_patch",
@@ -198,6 +337,7 @@ pub const TOOLS: &[ToolDefinition] = &[
         parameters: PROJECT_PATCH_SCHEMA,
         phase: TurnPhase::ReadPlan,
         risk: ToolRisk::Read,
+        project_requirement: ProjectRequirement::Selected,
     },
     ToolDefinition {
         name: "calculate_project_draft",
@@ -205,6 +345,7 @@ pub const TOOLS: &[ToolDefinition] = &[
         parameters: PROJECT_PATCH_SCHEMA,
         phase: TurnPhase::ReadPlan,
         risk: ToolRisk::Read,
+        project_requirement: ProjectRequirement::Selected,
     },
     ToolDefinition {
         name: "stage_project_patch",
@@ -212,6 +353,15 @@ pub const TOOLS: &[ToolDefinition] = &[
         parameters: STAGE_PROJECT_PATCH_SCHEMA,
         phase: TurnPhase::Propose,
         risk: ToolRisk::Draft,
+        project_requirement: ProjectRequirement::Selected,
+    },
+    ToolDefinition {
+        name: "stage_new_project_draft",
+        description: "Stage a complete validated new project as an unsaved browser draft when no project is open. The host supplies deterministic defaults and identifiers. Report source omissions and uncertainties. This never saves the project.",
+        parameters: STAGE_NEW_PROJECT_DRAFT_SCHEMA,
+        phase: TurnPhase::Propose,
+        risk: ToolRisk::Draft,
+        project_requirement: ProjectRequirement::Unselected,
     },
 ];
 
@@ -220,13 +370,10 @@ pub fn find(name: &str) -> Option<&'static ToolDefinition> {
 }
 
 /// Tools exposed to the model for a phase. A model never sees a capability it cannot use.
-pub fn schemas_for_phase(phase: TurnPhase) -> Vec<ToolSchema> {
+pub fn schemas_for_context(context: &TurnContext) -> Vec<ToolSchema> {
     TOOLS
         .iter()
-        .filter(|tool| {
-            tool.phase == phase
-                || (tool.phase == TurnPhase::ReadPlan && tool.risk == ToolRisk::Read)
-        })
+        .filter(|tool| tool.is_available(context))
         .map(ToolDefinition::schema)
         .collect()
 }
@@ -292,14 +439,105 @@ pub struct StageProjectPatchInput {
     pub uncertainties: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewProjectSettingsInput {
+    pub aws_region: Option<String>,
+    pub azure_region: Option<String>,
+    pub source_compute_discount: Option<DecimalValue>,
+    pub source_license_discount: Option<DecimalValue>,
+    pub source_storage_discount: Option<DecimalValue>,
+    pub azure_compute_discount: Option<DecimalValue>,
+    pub azure_license_discount: Option<DecimalValue>,
+    pub azure_storage_discount: Option<DecimalValue>,
+    pub selected_parity_adjustment: Option<DecimalValue>,
+    pub default_annual_hours: Option<DecimalValue>,
+    pub default_mi_purchase_option: Option<PurchaseOption>,
+    pub enterprise_license_sa_usd_per_two_core_pack: Option<DecimalValue>,
+    pub standard_license_sa_usd_per_two_core_pack: Option<DecimalValue>,
+    pub remaining_coverage_months: Option<u8>,
+    pub electricity_rate_usd_per_kwh: Option<DecimalValue>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewVolumeInput {
+    pub label: Option<String>,
+    pub aws_volume_id: Option<String>,
+    pub volume_type: Option<EbsVolumeType>,
+    pub capacity_gb: Option<DecimalValue>,
+    pub provisioned_iops: Option<u64>,
+    pub throughput_mibps: Option<DecimalValue>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewResourceInput {
+    pub source_type: ProjectType,
+    pub workload_name: Option<String>,
+    pub quantity: Option<u32>,
+    pub sql_edition: Option<SqlEdition>,
+    pub license_basis: Option<LicenseBasis>,
+    pub sql_data_gb_per_instance: Option<DecimalValue>,
+    pub source_ram_gb_per_instance: Option<DecimalValue>,
+    pub annual_hours_per_instance: Option<DecimalValue>,
+    pub mi_purchase_option: Option<PurchaseOption>,
+    pub instance_type: Option<String>,
+    pub volumes: Option<Vec<NewVolumeInput>>,
+    pub deployment: Option<RdsDeployment>,
+    pub commercial_term: Option<String>,
+    pub storage_class: Option<String>,
+    pub source_vcpu: Option<u32>,
+    pub licensable_cores: Option<u32>,
+    pub source_max_iops: Option<u64>,
+    pub hardware_capex_usd: Option<DecimalValue>,
+    pub depreciation_years: Option<DecimalValue>,
+    pub average_power_kw_override: Option<DecimalValue>,
+}
+
+impl NewResourceInput {
+    fn fields_match_source_type(&self) -> bool {
+        let ec2_fields = self.volumes.is_some();
+        let rds_fields = self.deployment.is_some()
+            || self.commercial_term.is_some()
+            || self.storage_class.is_some();
+        let on_prem_fields = self.source_vcpu.is_some()
+            || self.licensable_cores.is_some()
+            || self.hardware_capex_usd.is_some()
+            || self.depreciation_years.is_some()
+            || self.average_power_kw_override.is_some();
+        match self.source_type {
+            ProjectType::Ec2 => !rds_fields && !on_prem_fields,
+            ProjectType::Rds => !ec2_fields && !on_prem_fields,
+            ProjectType::OnPrem => self.instance_type.is_none() && !ec2_fields && !rds_fields,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StageNewProjectDraftInput {
+    pub project_type: ProjectType,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub settings: NewProjectSettingsInput,
+    #[serde(default)]
+    pub resources: Vec<NewResourceInput>,
+    pub omissions: Vec<String>,
+    pub uncertainties: Vec<String>,
+}
+
 /// Typed, validated arguments for one registered tool.
 #[derive(Clone, Debug)]
 pub enum ToolInput {
+    AgentCapabilities,
     ApplicationHelp(ApplicationHelpInput),
     CurrentProject,
     ValidateProjectPatch(ProjectPatchInput),
     CalculateProjectDraft(ProjectPatchInput),
     StageProjectPatch(StageProjectPatchInput),
+    StageNewProjectDraft(StageNewProjectDraftInput),
 }
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -317,6 +555,11 @@ pub fn parse_input(
         arguments
     };
     match definition.name {
+        "get_agent_capabilities" => {
+            let _input: CurrentProjectInput =
+                serde_json::from_str(arguments).map_err(|_| InvalidToolArguments)?;
+            Ok(ToolInput::AgentCapabilities)
+        }
         "get_application_help" => {
             let input: ApplicationHelpInput =
                 serde_json::from_str(arguments).map_err(|_| InvalidToolArguments)?;
@@ -351,6 +594,20 @@ pub fn parse_input(
             normalize_extraction_notes(&mut input.uncertainties)?;
             Ok(ToolInput::StageProjectPatch(input))
         }
+        "stage_new_project_draft" => {
+            let mut input: StageNewProjectDraftInput =
+                serde_json::from_str(arguments).map_err(|_| InvalidToolArguments)?;
+            normalize_extraction_notes(&mut input.omissions)?;
+            normalize_extraction_notes(&mut input.uncertainties)?;
+            if input
+                .resources
+                .iter()
+                .any(|resource| !resource.fields_match_source_type())
+            {
+                return Err(InvalidToolArguments);
+            }
+            Ok(ToolInput::StageNewProjectDraft(input))
+        }
         _ => Err(InvalidToolArguments),
     }
 }
@@ -382,7 +639,7 @@ pub enum ToolOutcome {
         result: Value,
     },
     Staged {
-        proposal: Option<Box<ProjectPatchProposal>>,
+        proposal: Option<Box<AssistantProposal>>,
         omissions: Vec<String>,
         uncertainties: Vec<String>,
     },
@@ -398,7 +655,7 @@ pub enum ToolOutcome {
 }
 
 impl ToolOutcome {
-    pub fn proposal(&self) -> Option<&ProjectPatchProposal> {
+    pub fn proposal(&self) -> Option<&AssistantProposal> {
         match self {
             Self::Staged {
                 proposal: Some(proposal),
@@ -445,7 +702,7 @@ impl ToolOutcome {
             serde_json::to_string(&json!({
                 "status": "ok",
                 "result": {
-                    "action": proposal.as_ref().map(|proposal| proposal.action),
+                    "action": proposal.as_ref().map(|proposal| proposal.action()),
                     "staged": proposal.is_some(),
                     "report_recorded": true
                 }
@@ -466,6 +723,7 @@ impl ToolOutcome {
 /// Execute one preflighted tool call against existing application services.
 pub async fn dispatch(state: &AppState, context: &TurnContext, input: &ToolInput) -> ToolOutcome {
     match input {
+        ToolInput::AgentCapabilities => agent_capabilities(context),
         ToolInput::ApplicationHelp(input) => application_help(input),
         ToolInput::CurrentProject => current_project(state, context).await,
         ToolInput::ValidateProjectPatch(input) => {
@@ -475,7 +733,26 @@ pub async fn dispatch(state: &AppState, context: &TurnContext, input: &ToolInput
             calculate_project_draft(state, context, &input.patch).await
         }
         ToolInput::StageProjectPatch(input) => stage_project_patch(state, context, input).await,
+        ToolInput::StageNewProjectDraft(input) => stage_new_project_draft(context, input),
     }
+}
+
+fn agent_capabilities(context: &TurnContext) -> ToolOutcome {
+    into_ok(&json!({
+        "programming": "A bounded Rust-hosted reasoning loop backed by Microsoft Foundry inference. The host owns identity, authorization, validation, calculations, persistence, and tool execution.",
+        "available_tools": schemas_for_context(context)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>(),
+        "selected_project": context.project().is_some(),
+        "supported_actions": if context.project().is_some() {
+            vec!["read the selected project", "validate project changes", "calculate a project draft", "stage a reviewed project patch", "analyze a JPEG or PNG for project inputs"]
+        } else {
+            vec!["explain application controls", "describe agent capabilities", "stage a validated new unsaved project draft", "analyze a JPEG or PNG into a new unsaved project draft"]
+        },
+        "action_boundary": "Project changes are staged for review. Persisted changes require a separate explicit confirmation.",
+        "memory_boundary": "Conversation, image, and action history are request-scoped. There is no hidden or cross-session memory."
+    }))
 }
 
 fn application_help(input: &ApplicationHelpInput) -> ToolOutcome {
@@ -618,15 +895,250 @@ async fn stage_project_patch(
 
     ToolOutcome::Staged {
         proposal: (!changes.is_empty()).then(|| {
-            Box::new(ProjectPatchProposal {
-                action: "apply_project_patch",
-                patch: input.patch.clone(),
-                changes,
-            })
+            Box::new(
+                ProjectPatchProposal {
+                    action: "apply_project_patch",
+                    patch: input.patch.clone(),
+                    changes,
+                }
+                .into(),
+            )
         }),
         omissions: input.omissions.clone(),
         uncertainties: input.uncertainties.clone(),
     }
+}
+
+fn stage_new_project_draft(
+    context: &TurnContext,
+    input: &StageNewProjectDraftInput,
+) -> ToolOutcome {
+    if context.project().is_some() {
+        return ToolOutcome::Unavailable {
+            code: "project_already_selected",
+        };
+    }
+
+    let project = new_project_draft(input);
+    let issues = project.validate();
+    if !issues.is_empty() {
+        return ToolOutcome::Invalid { errors: issues };
+    }
+
+    let mut uncertainties = input.uncertainties.clone();
+    if input.project_type == ProjectType::OnPrem
+        && (input
+            .settings
+            .enterprise_license_sa_usd_per_two_core_pack
+            .is_none()
+            || input
+                .settings
+                .standard_license_sa_usd_per_two_core_pack
+                .is_none())
+    {
+        uncertainties.push(
+            "Missing License + SA pack prices use the reviewed SQL Server 2022 public-book reference verified 2026-08-07."
+                .to_owned(),
+        );
+    }
+
+    ToolOutcome::Staged {
+        proposal: Some(Box::new(
+            NewProjectDraftProposal {
+                action: "open_project_draft",
+                project,
+            }
+            .into(),
+        )),
+        omissions: input.omissions.clone(),
+        uncertainties,
+    }
+}
+
+fn new_project_draft(input: &StageNewProjectDraftInput) -> EditableProject {
+    let on_prem = input.project_type == ProjectType::OnPrem;
+    let settings = ProjectSettings {
+        project_type: input.project_type,
+        aws_region: if on_prem {
+            None
+        } else {
+            Some(
+                input
+                    .settings
+                    .aws_region
+                    .clone()
+                    .unwrap_or_else(|| "eu-west-1".to_owned()),
+            )
+        },
+        azure_region: input
+            .settings
+            .azure_region
+            .clone()
+            .unwrap_or_else(|| "swedencentral".to_owned()),
+        currency: "USD".to_owned(),
+        source_compute_discount: input.settings.source_compute_discount.unwrap_or_default(),
+        source_license_discount: input.settings.source_license_discount.unwrap_or_default(),
+        source_storage_discount: input.settings.source_storage_discount.unwrap_or_default(),
+        azure_compute_discount: input.settings.azure_compute_discount.unwrap_or_default(),
+        azure_license_discount: input.settings.azure_license_discount.unwrap_or_default(),
+        azure_storage_discount: input.settings.azure_storage_discount.unwrap_or_default(),
+        selected_parity_adjustment: input
+            .settings
+            .selected_parity_adjustment
+            .unwrap_or_default(),
+        default_annual_hours: input
+            .settings
+            .default_annual_hours
+            .unwrap_or_else(|| decimal(8_760)),
+        default_mi_purchase_option: input
+            .settings
+            .default_mi_purchase_option
+            .unwrap_or(PurchaseOption::Ahb),
+        enterprise_license_sa_usd_per_two_core_pack: input
+            .settings
+            .enterprise_license_sa_usd_per_two_core_pack
+            .or(on_prem.then(|| decimal(20_557))),
+        standard_license_sa_usd_per_two_core_pack: input
+            .settings
+            .standard_license_sa_usd_per_two_core_pack
+            .or(on_prem.then(|| decimal(5_363))),
+        remaining_coverage_months: input
+            .settings
+            .remaining_coverage_months
+            .or(on_prem.then_some(12)),
+        electricity_rate_usd_per_kwh: input
+            .settings
+            .electricity_rate_usd_per_kwh
+            .or(on_prem.then_some(DecimalValue::ZERO)),
+    };
+    let resources = if input.resources.is_empty() {
+        vec![new_resource(&NewResourceInput {
+            source_type: input.project_type,
+            workload_name: None,
+            quantity: None,
+            sql_edition: None,
+            license_basis: None,
+            sql_data_gb_per_instance: None,
+            source_ram_gb_per_instance: None,
+            annual_hours_per_instance: None,
+            mi_purchase_option: None,
+            instance_type: None,
+            volumes: None,
+            deployment: None,
+            commercial_term: None,
+            storage_class: None,
+            source_vcpu: None,
+            licensable_cores: None,
+            source_max_iops: None,
+            hardware_capex_usd: None,
+            depreciation_years: None,
+            average_power_kw_override: None,
+        })]
+    } else {
+        input.resources.iter().map(new_resource).collect()
+    };
+
+    EditableProject {
+        name: input
+            .name
+            .clone()
+            .unwrap_or_else(|| "SQL TCO estimate".to_owned()),
+        description: input.description.clone(),
+        settings,
+        resources,
+        aws_price_snapshot_id: None,
+        azure_price_snapshot_id: None,
+    }
+}
+
+fn new_resource(input: &NewResourceInput) -> Resource {
+    let shared = SharedResource {
+        id: Uuid::new_v4(),
+        workload_name: input
+            .workload_name
+            .clone()
+            .unwrap_or_else(|| "SQL workload".to_owned()),
+        quantity: input.quantity.unwrap_or(1),
+        sql_edition: input.sql_edition.unwrap_or(SqlEdition::Enterprise),
+        license_basis: input.license_basis.unwrap_or(LicenseBasis::Byol),
+        sql_data_gb_per_instance: input
+            .sql_data_gb_per_instance
+            .unwrap_or_else(|| decimal(1_024)),
+        source_ram_gb_per_instance: input.source_ram_gb_per_instance.unwrap_or_else(|| {
+            decimal(if input.source_type == ProjectType::Rds {
+                128
+            } else {
+                256
+            })
+        }),
+        annual_hours_per_instance: input
+            .annual_hours_per_instance
+            .unwrap_or_else(|| decimal(8_760)),
+        mi_purchase_option: input.mi_purchase_option.unwrap_or(PurchaseOption::Ahb),
+    };
+
+    match input.source_type {
+        ProjectType::Ec2 => {
+            let volumes = input
+                .volumes
+                .as_ref()
+                .map(|volumes| volumes.iter().map(new_volume).collect())
+                .unwrap_or_else(|| vec![new_volume(&NewVolumeInput::default())]);
+            Resource::Ec2(Ec2Resource {
+                shared,
+                instance_type: input
+                    .instance_type
+                    .clone()
+                    .unwrap_or_else(|| "r6id.8xlarge".to_owned()),
+                volumes,
+            })
+        }
+        ProjectType::Rds => Resource::Rds(RdsResource {
+            shared,
+            instance_type: input
+                .instance_type
+                .clone()
+                .unwrap_or_else(|| "db.m6i.8xlarge".to_owned()),
+            deployment: input.deployment.unwrap_or(RdsDeployment::SingleAz),
+            commercial_term: input
+                .commercial_term
+                .clone()
+                .unwrap_or_else(|| "on-demand".to_owned()),
+            storage_class: input
+                .storage_class
+                .clone()
+                .unwrap_or_else(|| "gp3".to_owned()),
+            source_max_iops: input.source_max_iops.unwrap_or(0),
+        }),
+        ProjectType::OnPrem => Resource::OnPrem(OnPremResource {
+            shared,
+            source_vcpu: input.source_vcpu.unwrap_or(32),
+            licensable_cores: input.licensable_cores.unwrap_or(32),
+            source_max_iops: input.source_max_iops.unwrap_or(0),
+            hardware_capex_usd: input.hardware_capex_usd.unwrap_or_default(),
+            depreciation_years: input.depreciation_years.unwrap_or_else(|| decimal(5)),
+            average_power_kw_override: input.average_power_kw_override,
+        }),
+    }
+}
+
+fn new_volume(input: &NewVolumeInput) -> EbsVolume {
+    EbsVolume {
+        id: Uuid::new_v4(),
+        label: input
+            .label
+            .clone()
+            .unwrap_or_else(|| "Instance storage".to_owned()),
+        aws_volume_id: input.aws_volume_id.clone(),
+        volume_type: input.volume_type.unwrap_or(EbsVolumeType::Ephemeral),
+        capacity_gb: input.capacity_gb.unwrap_or_default(),
+        provisioned_iops: input.provisioned_iops,
+        throughput_mibps: input.throughput_mibps,
+    }
+}
+
+fn decimal(value: i64) -> DecimalValue {
+    DecimalValue(Decimal::from(value))
 }
 
 async fn read_selected_project(
@@ -658,11 +1170,44 @@ async fn read_selected_project(
     }))
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub enum AssistantProposal {
+    ProjectPatch(ProjectPatchProposal),
+    NewProjectDraft(NewProjectDraftProposal),
+}
+
+impl AssistantProposal {
+    pub fn action(&self) -> &'static str {
+        match self {
+            Self::ProjectPatch(proposal) => proposal.action,
+            Self::NewProjectDraft(proposal) => proposal.action,
+        }
+    }
+}
+
+impl From<ProjectPatchProposal> for AssistantProposal {
+    fn from(proposal: ProjectPatchProposal) -> Self {
+        Self::ProjectPatch(proposal)
+    }
+}
+
+impl From<NewProjectDraftProposal> for AssistantProposal {
+    fn from(proposal: NewProjectDraftProposal) -> Self {
+        Self::NewProjectDraft(proposal)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProjectPatchProposal {
     pub action: &'static str,
     pub patch: ProjectPatch,
     pub changes: Vec<ProjectPatchChange>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NewProjectDraftProposal {
+    pub action: &'static str,
+    pub project: EditableProject,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -875,6 +1420,20 @@ mod tests {
         serde_json::from_str(definition.parameters).expect("the schema must be valid JSON")
     }
 
+    fn turn_context(phase: TurnPhase, with_project: bool) -> TurnContext {
+        let context = TurnContext::new("entra:tenant:owner", Uuid::nil(), phase);
+        if with_project {
+            context.with_project(super::super::context::SelectedProject {
+                id: Uuid::nil(),
+                etag: "etag".to_owned(),
+                aws_price_snapshot_id: None,
+                azure_price_snapshot_id: None,
+            })
+        } else {
+            context
+        }
+    }
+
     #[test]
     fn every_tool_schema_is_a_closed_object() {
         for tool in TOOLS {
@@ -933,18 +1492,115 @@ mod tests {
         assert!(!stage.risk.is_mutating());
         assert!(!stage.risk.requires_confirmation());
 
-        assert_eq!(schemas_for_phase(TurnPhase::ReadPlan).len(), 4);
-        assert_eq!(schemas_for_phase(TurnPhase::Propose).len(), TOOLS.len());
-        assert_eq!(schemas_for_phase(TurnPhase::Execute).len(), 4);
+        let read = turn_context(TurnPhase::ReadPlan, true);
+        let propose = turn_context(TurnPhase::Propose, true);
+        let execute = turn_context(TurnPhase::Execute, true);
+        assert_eq!(schemas_for_context(&read).len(), 5);
+        assert_eq!(schemas_for_context(&propose).len(), 6);
+        assert_eq!(schemas_for_context(&execute).len(), 5);
         assert!(
-            schemas_for_phase(TurnPhase::ReadPlan)
+            schemas_for_context(&read)
                 .iter()
                 .all(|schema| schema.name != "stage_project_patch")
         );
         assert!(
-            schemas_for_phase(TurnPhase::Execute)
+            schemas_for_context(&execute)
                 .iter()
                 .all(|schema| schema.name != "stage_project_patch")
+        );
+        assert!(
+            schemas_for_context(&propose)
+                .iter()
+                .all(|schema| schema.name != "stage_new_project_draft")
+        );
+    }
+
+    #[test]
+    fn a_turn_without_a_project_exposes_only_context_free_tools() {
+        let read = turn_context(TurnPhase::ReadPlan, false);
+        let propose = turn_context(TurnPhase::Propose, false);
+        let execute = turn_context(TurnPhase::Execute, false);
+        assert_eq!(
+            schema_names(&read),
+            ["get_agent_capabilities", "get_application_help"]
+        );
+        assert_eq!(
+            schema_names(&propose),
+            [
+                "get_agent_capabilities",
+                "get_application_help",
+                "stage_new_project_draft"
+            ]
+        );
+        assert_eq!(
+            schema_names(&execute),
+            ["get_agent_capabilities", "get_application_help"]
+        );
+    }
+
+    fn schema_names(context: &TurnContext) -> Vec<&'static str> {
+        schemas_for_context(context)
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect()
+    }
+
+    #[test]
+    fn a_new_on_prem_project_is_staged_as_a_valid_unsaved_draft() {
+        let definition = find("stage_new_project_draft").expect("registered");
+        let input = parse_input(
+            definition,
+            r#"{
+                "project_type":"on_prem",
+                "name":"Datacenter estimate",
+                "resources":[{
+                    "source_type":"on_prem",
+                    "workload_name":"SQL estate",
+                    "source_vcpu":64,
+                    "licensable_cores":64
+                }],
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect("typed draft input");
+        let ToolInput::StageNewProjectDraft(input) = input else {
+            panic!("expected new-project input");
+        };
+
+        let outcome = stage_new_project_draft(&turn_context(TurnPhase::Propose, false), &input);
+        let proposal = outcome.proposal().expect("draft proposal");
+        let AssistantProposal::NewProjectDraft(proposal) = proposal else {
+            panic!("expected a new-project proposal");
+        };
+
+        assert_eq!(proposal.action, "open_project_draft");
+        assert_eq!(proposal.project.name, "Datacenter estimate");
+        assert_eq!(proposal.project.settings.project_type, ProjectType::OnPrem);
+        assert_eq!(proposal.project.settings.aws_region, None);
+        assert_eq!(proposal.project.settings.azure_region, "swedencentral");
+        assert!(proposal.project.aws_price_snapshot_id.is_none());
+        assert!(proposal.project.azure_price_snapshot_id.is_none());
+        assert!(proposal.project.validate().is_empty());
+        assert_ne!(proposal.project.resources[0].shared().id, Uuid::nil());
+    }
+
+    #[test]
+    fn a_new_project_cannot_supply_host_ids_or_cross_source_fields() {
+        let definition = find("stage_new_project_draft").expect("registered");
+        assert!(
+            parse_input(
+                definition,
+                r#"{"project_type":"on_prem","resources":[{"source_type":"on_prem","id":"11111111-1111-1111-1111-111111111111"}],"omissions":[],"uncertainties":[]}"#,
+            )
+            .is_err()
+        );
+        assert!(
+            parse_input(
+                definition,
+                r#"{"project_type":"on_prem","resources":[{"source_type":"on_prem","instance_type":"r6i.2xlarge"}],"omissions":[],"uncertainties":[]}"#,
+            )
+            .is_err()
         );
     }
 
@@ -989,6 +1645,11 @@ mod tests {
         assert!(parse_input(project_tool, r#"{"project_id":"any"}"#).is_err());
         assert!(parse_input(project_tool, "{}").is_ok());
         assert!(parse_input(project_tool, "").is_ok());
+
+        let capabilities_tool = find("get_agent_capabilities").expect("registered");
+        assert!(parse_input(capabilities_tool, "{}").is_ok());
+        assert!(parse_input(capabilities_tool, "").is_ok());
+        assert!(parse_input(capabilities_tool, r#"{"question":"what can you do"}"#).is_err());
     }
 
     #[test]
@@ -1020,6 +1681,7 @@ mod tests {
             parameters: CURRENT_PROJECT_SCHEMA,
             phase: TurnPhase::ReadPlan,
             risk: ToolRisk::Read,
+            project_requirement: ProjectRequirement::Any,
         };
 
         assert!(parse_input(&borrowed, "{}").is_err());
@@ -1088,18 +1750,21 @@ mod tests {
     #[test]
     fn a_staged_preview_is_not_serialized_into_model_context() {
         let outcome = ToolOutcome::Staged {
-            proposal: Some(Box::new(ProjectPatchProposal {
-                action: "apply_project_patch",
-                patch: ProjectPatch {
-                    name: Some("Confidential project".to_owned()),
-                    ..ProjectPatch::default()
-                },
-                changes: vec![ProjectPatchChange {
-                    pointer: "/name".to_owned(),
-                    before: Some(json!("Current confidential name")),
-                    after: Some(json!("Confidential project")),
-                }],
-            })),
+            proposal: Some(Box::new(
+                ProjectPatchProposal {
+                    action: "apply_project_patch",
+                    patch: ProjectPatch {
+                        name: Some("Confidential project".to_owned()),
+                        ..ProjectPatch::default()
+                    },
+                    changes: vec![ProjectPatchChange {
+                        pointer: "/name".to_owned(),
+                        before: Some(json!("Current confidential name")),
+                        after: Some(json!("Confidential project")),
+                    }],
+                }
+                .into(),
+            )),
             omissions: vec!["Private omitted value".to_owned()],
             uncertainties: Vec::new(),
         };

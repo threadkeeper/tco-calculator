@@ -400,6 +400,7 @@ mod tests {
         let image_status = client
             .post(format!("http://{address}/api/v1/assistant/image"))
             .header(header::CONTENT_TYPE.as_str(), "image/jpeg")
+            .header("x-tco-project-id", "not-a-uuid")
             .body(body.clone())
             .send()
             .await

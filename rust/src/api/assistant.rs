@@ -20,7 +20,10 @@ use crate::{
         help as help_catalog,
         image::{ImageIntakeError, ImageMediaType, MAX_IMAGE_INPUT_BYTES, normalize_image},
         model::{ModelError, ModelImage},
-        tools::{ProjectPatch, ProjectPatchChange, ProjectPatchProposal},
+        tools::{
+            AssistantProposal, NewProjectDraftProposal, ProjectPatch, ProjectPatchChange,
+            ProjectPatchProposal,
+        },
         turn::{PROMPT_VERSION, TurnError, run_turn, run_turn_with_image},
     },
     domain::project::{EditableProject, ProjectDocument, ValidationIssue},
@@ -35,7 +38,8 @@ const TURN_INSTANCE: &str = "/api/v1/assistant/turn";
 const IMAGE_INSTANCE: &str = "/api/v1/assistant/image";
 const ACTION_INSTANCE: &str = "/api/v1/assistant/actions";
 const IMAGE_PROJECT_HEADER: &str = "x-tco-project-id";
-const IMAGE_EXTRACTION_REQUEST: &str = "Extract supported project fields from the uploaded image. Read the current project, validate candidate changes, and call stage_project_patch with all visible omissions and uncertainties. Do not infer missing values.";
+const IMAGE_PATCH_EXTRACTION_REQUEST: &str = "Extract supported project fields from the uploaded image. Read the current project, validate candidate changes, and call stage_project_patch with all visible omissions and uncertainties. Do not infer missing values.";
+const IMAGE_DRAFT_EXTRACTION_REQUEST: &str = "Extract supported project fields from the uploaded image and call stage_new_project_draft with all visible omissions and uncertainties. Use host defaults for missing values and do not invent source values.";
 pub const ACTION_CONFIRMATION_HEADER: &str = "x-tco-action-confirmation";
 const ACTION_CONFIRMATION_VALUE: &str = "apply_project_patch";
 
@@ -56,13 +60,13 @@ pub struct TurnRequest {
 struct TurnResponse {
     answer: String,
     references: Vec<help_catalog::HelpReference>,
-    proposal: Option<BoundProjectPatchProposal>,
+    proposal: Option<BoundAssistantProposal>,
 }
 
 #[derive(Debug, Serialize)]
 struct ImageResponse {
     answer: String,
-    proposal: Option<BoundProjectPatchProposal>,
+    proposal: Option<BoundAssistantProposal>,
     omissions: Vec<String>,
     uncertainties: Vec<String>,
 }
@@ -81,6 +85,20 @@ struct BoundProjectPatchProposal {
     expected_etag: String,
     patch: ProjectPatch,
     changes: Vec<ProjectPatchChange>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum BoundAssistantProposal {
+    ProjectPatch(BoundProjectPatchProposal),
+    NewProjectDraft(BoundNewProjectDraftProposal),
+}
+
+#[derive(Debug, Serialize)]
+struct BoundNewProjectDraftProposal {
+    proposal_id: String,
+    action: &'static str,
+    project: EditableProject,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -157,7 +175,7 @@ pub async fn turn(
         &request.question,
     )
     .await
-    .map_err(|error| map_turn_error(error, TURN_INSTANCE))?;
+    .map_err(|error| map_logged_turn_error(error, TURN_INSTANCE, context.request_id()))?;
 
     tracing::info!(
         request_id = %context.request_id(),
@@ -167,20 +185,10 @@ pub async fn turn(
         tool_calls = outcome.tool_calls,
         "assistant turn completed"
     );
-    let proposal = match outcome.proposal {
-        Some(proposal) => {
-            let selected = context
-                .project()
-                .ok_or_else(|| Problem::internal(TURN_INSTANCE))?;
-            Some(bind_proposal(
-                &owner_id,
-                selected.id,
-                &selected.etag,
-                proposal,
-            )?)
-        }
-        None => None,
-    };
+    let proposal = outcome
+        .proposal
+        .map(|proposal| bind_proposal(&owner_id, context.project(), proposal, TURN_INSTANCE))
+        .transpose()?;
     let mut response = Json(TurnResponse {
         answer: outcome.answer,
         references: help_catalog::references_for_ids(&outcome.citations),
@@ -194,7 +202,7 @@ pub async fn turn(
     Ok(response)
 }
 
-/// Normalize one authenticated JPEG/PNG and return a request-scoped project patch proposal.
+/// Normalize one authenticated JPEG/PNG and return a request-scoped project proposal.
 pub async fn image(
     State(state): State<AppState>,
     request: Request<Body>,
@@ -209,20 +217,22 @@ pub async fn image(
         .and_then(ImageMediaType::parse)
         .ok_or_else(|| Problem::unsupported_media_type(IMAGE_INSTANCE))?;
     let owner_id = principal.owner_id();
-    let project = state
-        .projects
-        .get(&owner_id, project_id)
-        .await
-        .map_err(|error| map_project_error(error, IMAGE_INSTANCE))?;
     let request_id =
         Uuid::parse_str(&request_context::request_id()).unwrap_or_else(|_| Uuid::new_v4());
-    let context =
-        TurnContext::new(&owner_id, request_id, TurnPhase::Propose).with_project(SelectedProject {
+    let mut context = TurnContext::new(&owner_id, request_id, TurnPhase::Propose);
+    if let Some(project_id) = project_id {
+        let project = state
+            .projects
+            .get(&owner_id, project_id)
+            .await
+            .map_err(|error| map_project_error(error, IMAGE_INSTANCE))?;
+        context = context.with_project(SelectedProject {
             id: project.id,
             etag: project.etag,
             aws_price_snapshot_id: project.aws_price_snapshot_id,
             azure_price_snapshot_id: project.azure_price_snapshot_id,
         });
+    }
 
     if !state.assistant_enabled {
         return Err(Problem::assistant_unavailable(IMAGE_INSTANCE));
@@ -260,16 +270,20 @@ pub async fn image(
         &state,
         state.assistant_model.as_ref(),
         &context,
-        IMAGE_EXTRACTION_REQUEST,
+        if context.project().is_some() {
+            IMAGE_PATCH_EXTRACTION_REQUEST
+        } else {
+            IMAGE_DRAFT_EXTRACTION_REQUEST
+        },
         Some(model_image),
     )
     .await
-    .map_err(|error| map_turn_error(error, IMAGE_INSTANCE))?;
+    .map_err(|error| map_logged_turn_error(error, IMAGE_INSTANCE, context.request_id()))?;
     drop(permit);
 
     tracing::info!(
         request_id = %context.request_id(),
-        project_id = %project_id,
+        selected_project = context.project().is_some(),
         prompt_version = PROMPT_VERSION,
         routed_model = outcome.routed_model.as_deref().unwrap_or("unknown"),
         model_requests = outcome.model_requests,
@@ -278,20 +292,10 @@ pub async fn image(
         image_height = height,
         "assistant image turn completed"
     );
-    let proposal = match outcome.proposal {
-        Some(proposal) => {
-            let selected = context
-                .project()
-                .ok_or_else(|| Problem::internal(IMAGE_INSTANCE))?;
-            Some(bind_proposal(
-                &owner_id,
-                selected.id,
-                &selected.etag,
-                proposal,
-            )?)
-        }
-        None => None,
-    };
+    let proposal = outcome
+        .proposal
+        .map(|proposal| bind_proposal(&owner_id, context.project(), proposal, IMAGE_INSTANCE))
+        .transpose()?;
     let mut response = Json(ImageResponse {
         answer: outcome.answer,
         proposal,
@@ -396,6 +400,28 @@ fn require_action_confirmation(headers: &HeaderMap) -> Result<(), Problem> {
 
 fn bind_proposal(
     owner_id: &str,
+    selected: Option<&SelectedProject>,
+    proposal: AssistantProposal,
+    instance: &str,
+) -> Result<BoundAssistantProposal, Problem> {
+    match proposal {
+        AssistantProposal::ProjectPatch(proposal) => {
+            let selected = selected.ok_or_else(|| Problem::internal(instance))?;
+            bind_project_patch_proposal(owner_id, selected.id, &selected.etag, proposal)
+                .map(BoundAssistantProposal::ProjectPatch)
+        }
+        AssistantProposal::NewProjectDraft(proposal) => {
+            if selected.is_some() {
+                return Err(Problem::internal(instance));
+            }
+            bind_new_project_draft(owner_id, proposal, instance)
+                .map(BoundAssistantProposal::NewProjectDraft)
+        }
+    }
+}
+
+fn bind_project_patch_proposal(
+    owner_id: &str,
     project_id: Uuid,
     expected_etag: &str,
     proposal: ProjectPatchProposal,
@@ -409,6 +435,39 @@ fn bind_proposal(
         expected_etag: expected_etag.to_owned(),
         patch: proposal.patch,
         changes: proposal.changes,
+    })
+}
+
+fn bind_new_project_draft(
+    owner_id: &str,
+    proposal: NewProjectDraftProposal,
+    instance: &str,
+) -> Result<BoundNewProjectDraftProposal, Problem> {
+    #[derive(Serialize)]
+    struct Binding<'a> {
+        version: &'static str,
+        owner_id: &'a str,
+        action: &'static str,
+        project: &'a EditableProject,
+    }
+
+    let binding = serde_json::to_vec(&Binding {
+        version: "assistant-project-draft/1",
+        owner_id,
+        action: proposal.action,
+        project: &proposal.project,
+    })
+    .map_err(|_| Problem::internal(instance))?;
+    let digest = Sha256::digest(binding);
+    let mut proposal_id = String::with_capacity(71);
+    proposal_id.push_str("sha256:");
+    for byte in digest {
+        write!(&mut proposal_id, "{byte:02x}").expect("writing to a string cannot fail");
+    }
+    Ok(BoundNewProjectDraftProposal {
+        proposal_id,
+        action: proposal.action,
+        project: proposal.project,
     })
 }
 
@@ -458,18 +517,22 @@ fn editable_project(document: &ProjectDocument) -> EditableProject {
     }
 }
 
-fn image_project_id(headers: &HeaderMap) -> Result<Uuid, Problem> {
-    headers
-        .get(IMAGE_PROJECT_HEADER)
-        .and_then(|value| value.to_str().ok())
+fn image_project_id(headers: &HeaderMap) -> Result<Option<Uuid>, Problem> {
+    let Some(value) = headers.get(IMAGE_PROJECT_HEADER) else {
+        return Ok(None);
+    };
+    value
+        .to_str()
+        .ok()
         .and_then(|value| Uuid::parse_str(value).ok())
+        .map(Some)
         .ok_or_else(|| {
             Problem::validation(
                 IMAGE_INSTANCE,
                 vec![ValidationIssue {
                     pointer: format!("/headers/{IMAGE_PROJECT_HEADER}"),
-                    code: "required",
-                    message: "Select a saved project before analyzing an image.".to_owned(),
+                    code: "format",
+                    message: "The selected project identifier is not valid.".to_owned(),
                 }],
             )
         })
@@ -527,6 +590,31 @@ fn map_turn_error(error: TurnError, instance: &str) -> Problem {
         TurnError::Deadline | TurnError::Budget(_) | TurnError::Policy(_) | TurnError::Model(_) => {
             Problem::assistant_unavailable(instance)
         }
+    }
+}
+
+fn map_logged_turn_error(error: TurnError, instance: &str, request_id: Uuid) -> Problem {
+    tracing::warn!(
+        request_id = %request_id,
+        endpoint = instance,
+        category = turn_error_category(&error),
+        "assistant turn failed"
+    );
+    map_turn_error(error, instance)
+}
+
+fn turn_error_category(error: &TurnError) -> &'static str {
+    match error {
+        TurnError::Question(_) => "question_rejected",
+        TurnError::Deadline => "deadline_exceeded",
+        TurnError::Budget(_) => "budget_exhausted",
+        TurnError::Policy(_) => "policy_rejected",
+        TurnError::Model(ModelError::Unavailable) => "model_unavailable",
+        TurnError::Model(ModelError::Timeout) => "model_timeout",
+        TurnError::Model(ModelError::Transport) => "model_transport",
+        TurnError::Model(ModelError::MalformedResponse) => "model_malformed_response",
+        TurnError::Model(ModelError::ContentFiltered) => "model_content_filtered",
+        TurnError::Model(ModelError::QuotaExceeded) => "model_quota_exhausted",
     }
 }
 
@@ -717,6 +805,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn turn_without_a_project_returns_a_new_unsaved_browser_draft() {
+        let mut state = state(true);
+        let model = Arc::new(ScriptedModelClient::new(vec![
+            Ok(tool_calls(
+                "stage_new_project_draft",
+                r#"{"project_type":"on_prem","omissions":[],"uncertainties":[]}"#,
+            )),
+            Ok(message(
+                "I prepared a new on-premises project draft for review.",
+            )),
+        ]));
+        enable_scripted_assistant(&mut state, model);
+
+        let response = turn(
+            State(state.clone()),
+            HeaderMap::new(),
+            Ok(Json(TurnRequest {
+                question: "Create a new on prem project".to_owned(),
+                project_id: None,
+            })),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("a no-project proposal completes"));
+        let payload = response_json(response).await;
+
+        assert_eq!(payload["proposal"]["action"], "open_project_draft");
+        assert_eq!(
+            payload["proposal"]["project"]["settings"]["project_type"],
+            "on_prem"
+        );
+        assert!(
+            state
+                .projects
+                .list(&owner_id())
+                .await
+                .expect("the repository remains readable")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn image_authenticates_before_processing_the_body() {
         let response = image(
             State(state(false)),
@@ -730,6 +859,27 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn image_rejects_a_malformed_optional_project_identifier() {
+        let mut state = state(true);
+        let model = Arc::new(ScriptedModelClient::new(Vec::new()));
+        enable_scripted_assistant(&mut state, model.clone());
+        let request = Request::builder()
+            .uri(IMAGE_INSTANCE)
+            .header(IMAGE_PROJECT_HEADER, "not-a-uuid")
+            .header(header::CONTENT_TYPE, "image/jpeg")
+            .body(Body::from(jpeg_with_metadata(b"private")))
+            .expect("synthetic image request");
+
+        let response = image(State(state), request)
+            .await
+            .expect_err("a malformed host project identifier must fail closed")
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(model.requests().is_empty());
     }
 
     #[tokio::test]
@@ -878,6 +1028,56 @@ mod tests {
             .expect("project remains readable");
         assert_eq!(stored.name, project.name);
         assert_eq!(stored.etag, project.etag);
+    }
+
+    #[tokio::test]
+    async fn image_without_a_project_returns_a_new_unsaved_browser_draft() {
+        let mut state = state(true);
+        let model = Arc::new(ScriptedModelClient::new(vec![
+            Ok(tool_calls(
+                "stage_new_project_draft",
+                r#"{"project_type":"on_prem","name":"Imported inventory","omissions":[],"uncertainties":[]}"#,
+            )),
+            Ok(message("I prepared a new project draft from the image.")),
+        ]));
+        enable_scripted_assistant(&mut state, model.clone());
+
+        let response = image(
+            State(state.clone()),
+            image_request_without_project("image/jpeg", jpeg_with_metadata(b"private")),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("a no-project image proposal completes"));
+        let payload = response_json(response).await;
+
+        assert_eq!(payload["proposal"]["action"], "open_project_draft");
+        assert_eq!(payload["proposal"]["project"]["name"], "Imported inventory");
+        assert!(
+            state
+                .projects
+                .list(&owner_id())
+                .await
+                .expect("the repository remains readable")
+                .is_empty()
+        );
+        let requests = model.requests();
+        assert!(
+            requests[0]
+                .tools
+                .iter()
+                .any(|tool| tool.name == "stage_new_project_draft")
+        );
+        assert!(
+            !requests[0]
+                .tools
+                .iter()
+                .any(|tool| tool.name == "stage_project_patch")
+        );
+        assert!(
+            requests[0]
+                .system_instruction
+                .contains("through stage_new_project_draft")
+        );
     }
 
     #[tokio::test]
@@ -1155,6 +1355,14 @@ mod tests {
         Request::builder()
             .uri(IMAGE_INSTANCE)
             .header(IMAGE_PROJECT_HEADER, project_id.to_string())
+            .header(header::CONTENT_TYPE, content_type)
+            .body(Body::from(bytes))
+            .expect("synthetic image request")
+    }
+
+    fn image_request_without_project(content_type: &str, bytes: Vec<u8>) -> Request<Body> {
+        Request::builder()
+            .uri(IMAGE_INSTANCE)
             .header(header::CONTENT_TYPE, content_type)
             .body(Body::from(bytes))
             .expect("synthetic image request")

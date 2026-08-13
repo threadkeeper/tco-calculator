@@ -3,6 +3,7 @@
   import {
     Check,
     FileImage,
+    FolderOpen,
     ImagePlus,
     MessageCircle,
     Send,
@@ -19,7 +20,7 @@
     validateAssistantImage,
     validateAssistantQuestion,
     type AssistantHelpReference,
-    type AssistantProjectPatchProposal
+    type AssistantProposal
   } from '$lib/assistant';
 
   let {
@@ -27,13 +28,17 @@
     projectId = null,
     projectEtag = null,
     projectDirty = false,
-    onprojectupdated = () => {}
+    projectOpen = false,
+    onprojectupdated = () => {},
+    onprojectdrafted = () => {}
   }: {
     authenticated?: boolean;
     projectId?: string | null;
     projectEtag?: string | null;
     projectDirty?: boolean;
+    projectOpen?: boolean;
     onprojectupdated?: (document: unknown, etag: string) => void;
+    onprojectdrafted?: (project: unknown) => void;
   } = $props();
 
   type ChatMessage = {
@@ -41,8 +46,8 @@
     role: 'user' | 'assistant';
     text: string;
     references: AssistantHelpReference[];
-    proposal: AssistantProjectPatchProposal | null;
-    proposalStatus: 'pending' | 'applied' | 'dismissed' | null;
+    proposal: AssistantProposal | null;
+    proposalStatus: 'pending' | 'applied' | 'opened' | 'dismissed' | null;
     omissions: string[];
     uncertainties: string[];
   };
@@ -69,7 +74,10 @@
       !pending
   );
   const canAnalyzeImage = $derived(
-    authenticated && selectedImage !== null && projectId !== null && !projectDirty && !pending
+    authenticated &&
+      selectedImage !== null &&
+      !pending &&
+      (projectId === null ? !projectOpen : !projectDirty)
   );
 
   onMount(() => {
@@ -188,11 +196,11 @@
       problem = 'Please log in to use the TCO agent.';
       return;
     }
-    if (!projectId) {
-      problem = 'Open and save a project before analyzing an image.';
+    if (!projectId && projectOpen) {
+      problem = 'Save this draft before analyzing an image.';
       return;
     }
-    if (projectDirty) {
+    if (projectId && projectDirty) {
       problem = 'Save the current project changes before analyzing an image.';
       return;
     }
@@ -219,7 +227,13 @@
   }
 
   async function analyzeImage() {
-    if (!authenticated || !selectedImage || !projectId || projectDirty) return;
+    if (
+      !authenticated ||
+      !selectedImage ||
+      pending ||
+      (projectId === null ? projectOpen : projectDirty)
+    )
+      return;
     const image = selectedImage;
     const controller = new AbortController();
     activeRequest = controller;
@@ -272,8 +286,8 @@
     }
   }
 
-  async function applyProposal(messageId: number, proposal: AssistantProjectPatchProposal) {
-    if (!canApplyProposal(proposal)) return;
+  async function applyProposal(messageId: number, proposal: AssistantProposal) {
+    if (proposal.action !== 'apply_project_patch' || !canApplyProposal(proposal)) return;
     const controller = new AbortController();
     activeRequest = controller;
     pending = true;
@@ -306,8 +320,17 @@
     );
   }
 
-  function canApplyProposal(proposal: AssistantProjectPatchProposal): boolean {
+  function openProjectDraft(messageId: number, proposal: AssistantProposal) {
+    if (proposal.action !== 'open_project_draft' || !canOpenProjectDraft(proposal)) return;
+    onprojectdrafted(proposal.project);
+    messages = messages.map((message) =>
+      message.id === messageId ? { ...message, proposalStatus: 'opened' } : message
+    );
+  }
+
+  function canApplyProposal(proposal: AssistantProposal): boolean {
     return (
+      proposal.action === 'apply_project_patch' &&
       authenticated &&
       !pending &&
       !projectDirty &&
@@ -316,7 +339,14 @@
     );
   }
 
-  function proposalBlockedReason(proposal: AssistantProjectPatchProposal): string | null {
+  function canOpenProjectDraft(proposal: AssistantProposal): boolean {
+    return proposal.action === 'open_project_draft' && authenticated && !pending && !projectOpen;
+  }
+
+  function proposalBlockedReason(proposal: AssistantProposal): string | null {
+    if (proposal.action === 'open_project_draft') {
+      return projectOpen ? 'Close the open project before opening this draft.' : null;
+    }
     if (projectDirty) return 'Save current edits before applying this proposal.';
     if (projectId !== proposal.project_id || projectEtag !== proposal.expected_etag) {
       return 'The open project changed after this proposal was prepared.';
@@ -337,6 +367,17 @@
     if (typeof value === 'string') return value;
     const encoded = JSON.stringify(value);
     return encoded ?? String(value);
+  }
+
+  function performProposalAction(messageId: number, proposal: AssistantProposal) {
+    if (proposal.action === 'apply_project_patch') void applyProposal(messageId, proposal);
+    else openProjectDraft(messageId, proposal);
+  }
+
+  function canConfirmProposal(proposal: AssistantProposal): boolean {
+    return proposal.action === 'apply_project_patch'
+      ? canApplyProposal(proposal)
+      : canOpenProjectDraft(proposal);
   }
 
   function handleComposerKeydown(event: KeyboardEvent) {
@@ -445,33 +486,59 @@
             {/if}
           </article>
           {#if message.proposal}
-            <section class="proposal" aria-label="Proposed project update">
+            <section
+              class="proposal"
+              aria-label={message.proposal.action === 'apply_project_patch'
+                ? 'Proposed project update'
+                : 'Proposed new project draft'}
+            >
               <div class="proposal-heading">
                 <div>
-                  <strong>Proposed project update</strong>
-                  <span
-                    >{message.proposal.changes.length}
-                    {message.proposal.changes.length === 1 ? 'change' : 'changes'}</span
-                  >
+                  {#if message.proposal.action === 'apply_project_patch'}
+                    <strong>Proposed project update</strong>
+                    <span
+                      >{message.proposal.changes.length}
+                      {message.proposal.changes.length === 1 ? 'change' : 'changes'}</span
+                    >
+                  {:else}
+                    <strong>New project draft</strong>
+                    <span>Unsaved · review before saving</span>
+                  {/if}
                 </div>
                 {#if message.proposalStatus === 'applied'}
                   <span class="proposal-state applied"><Check size={14} /> Applied</span>
+                {:else if message.proposalStatus === 'opened'}
+                  <span class="proposal-state applied"><Check size={14} /> Opened</span>
                 {:else if message.proposalStatus === 'dismissed'}
                   <span class="proposal-state">Dismissed</span>
                 {/if}
               </div>
-              <dl class="change-list">
-                {#each message.proposal.changes as change (change.pointer)}
-                  <div>
-                    <dt>{formatPointer(change.pointer)}</dt>
-                    <dd>
-                      <span>{formatValue(change.before)}</span><b aria-hidden="true">→</b><span
-                        >{formatValue(change.after)}</span
-                      >
-                    </dd>
-                  </div>
-                {/each}
-              </dl>
+              {#if message.proposal.action === 'apply_project_patch'}
+                <dl class="change-list">
+                  {#each message.proposal.changes as change (change.pointer)}
+                    <div>
+                      <dt>{formatPointer(change.pointer)}</dt>
+                      <dd>
+                        <span>{formatValue(change.before)}</span><b aria-hidden="true">→</b><span
+                          >{formatValue(change.after)}</span
+                        >
+                      </dd>
+                    </div>
+                  {/each}
+                </dl>
+              {:else}
+                <div class="draft-summary">
+                  <strong>{message.proposal.project.name}</strong>
+                  <span
+                    >{message.proposal.project.settings.project_type
+                      .replace('_', ' ')
+                      .toUpperCase()} · {message.proposal.project.resources.length}
+                    {message.proposal.project.resources.length === 1
+                      ? 'workload'
+                      : 'workloads'}</span
+                  >
+                </div>
+              {/if}
               {#if message.proposalStatus === 'pending'}
                 {#if proposalBlockedReason(message.proposal)}
                   <p class="proposal-blocked">{proposalBlockedReason(message.proposal)}</p>
@@ -483,10 +550,15 @@
                   <button
                     type="button"
                     class="apply"
-                    disabled={!canApplyProposal(message.proposal)}
-                    onclick={() => void applyProposal(message.id, message.proposal!)}
-                    ><Check size={16} /> Apply changes</button
+                    disabled={!canConfirmProposal(message.proposal)}
+                    onclick={() => performProposalAction(message.id, message.proposal!)}
                   >
+                    {#if message.proposal.action === 'apply_project_patch'}
+                      <Check size={16} /> Apply changes
+                    {:else}
+                      <FolderOpen size={16} /> Open draft
+                    {/if}
+                  </button>
                 </div>
               {/if}
             </section>
@@ -560,11 +632,13 @@
               type="button"
               disabled={pending}
               aria-label="Add JPEG or PNG"
-              title={!projectId
-                ? 'Open and save a project first'
-                : projectDirty
+              title={projectId
+                ? projectDirty
                   ? 'Save project changes first'
-                  : 'Add JPEG or PNG'}
+                  : 'Add JPEG or PNG'
+                : projectOpen
+                  ? 'Save this draft first'
+                  : 'Create a project draft from JPEG or PNG'}
               onclick={chooseImage}><ImagePlus size={17} /></button
             >
             {#if pending}
@@ -842,6 +916,23 @@
   }
   .change-list {
     margin: 0;
+  }
+  .draft-summary {
+    padding: 11px;
+  }
+  .draft-summary strong,
+  .draft-summary span {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+  .draft-summary strong {
+    color: #20383d;
+    font-size: 0.78rem;
+  }
+  .draft-summary span {
+    margin-top: 3px;
+    color: #587075;
+    font-size: 0.7rem;
   }
   .change-list > div {
     padding: 8px 10px;

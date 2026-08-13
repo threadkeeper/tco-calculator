@@ -1,5 +1,6 @@
 import { asRecord, readString, requestJson, requestJsonResponse, type JsonRecord } from '$lib/api';
 import type { components } from '$lib/api/generated';
+import { editableProject } from '$lib/draft';
 
 export const MAX_ASSISTANT_QUESTION_CHARACTERS = 1_000;
 export const MAX_ASSISTANT_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -13,6 +14,9 @@ export type AssistantTurnResponse = components['schemas']['AssistantTurnResponse
 export type AssistantImageResponse = components['schemas']['AssistantImageResponse'];
 export type AssistantProjectPatch = components['schemas']['AssistantProjectPatch'];
 export type AssistantProjectPatchProposal = components['schemas']['AssistantProjectPatchProposal'];
+export type AssistantNewProjectDraftProposal =
+  components['schemas']['AssistantNewProjectDraftProposal'];
+export type AssistantProposal = components['schemas']['AssistantProposal'];
 export type AssistantActionRequest = components['schemas']['AssistantActionRequest'];
 export type AssistantActionResult = { document: JsonRecord; etag: string };
 
@@ -122,16 +126,15 @@ export async function requestAssistantTurn(
 
 export async function requestAssistantImage(
   image: File,
-  projectId: string,
+  projectId: string | null,
   signal?: AbortSignal
 ): Promise<AssistantImageResponse> {
   validateAssistantImage(image);
+  const headers = new Headers({ 'content-type': image.type });
+  if (projectId !== null) headers.set('x-tco-project-id', projectId);
   const response = await requestJson('/api/v1/assistant/image', {
     method: 'POST',
-    headers: {
-      'content-type': image.type,
-      'x-tco-project-id': projectId
-    },
+    headers,
     body: image,
     cache: 'no-store',
     signal
@@ -174,18 +177,27 @@ export async function executeAssistantAction(
   return { document, etag: response.etag };
 }
 
-function parseProposal(value: unknown): AssistantProjectPatchProposal | null {
+function parseProposal(value: unknown): AssistantProposal | null {
   if (value === null) return null;
   const proposal = asRecord(value);
   const proposalId = readString(proposal, 'proposal_id');
   const action = readString(proposal, 'action');
+  if (!proposalId?.match(/^sha256:[0-9a-f]{64}$/)) {
+    throw new Error('The assistant proposal was not recognized.');
+  }
+  if (action === 'open_project_draft') {
+    const project = editableProject(proposal?.project);
+    if (project === null) throw new Error('The assistant proposal was not recognized.');
+    return { proposal_id: proposalId, action, project };
+  }
+  if (action !== 'apply_project_patch') {
+    throw new Error('The assistant proposal was not recognized.');
+  }
   const projectId = readString(proposal, 'project_id');
   const expectedEtag = readString(proposal, 'expected_etag');
   const patch = parsePatch(proposal?.patch);
   const rawChanges = proposal?.changes;
   if (
-    !proposalId?.match(/^sha256:[0-9a-f]{64}$/) ||
-    action !== 'apply_project_patch' ||
     !projectId ||
     !expectedEtag ||
     patch === null ||

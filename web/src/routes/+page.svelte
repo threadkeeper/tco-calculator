@@ -273,6 +273,21 @@
     showSetup = false;
   }
 
+  function openAssistantDraft(payload: unknown) {
+    const project = editableProject(payload);
+    if (!project) {
+      problem = 'The assistant project draft was not recognized.';
+      return;
+    }
+    activeWorkspace = createGuestWorkspace(project);
+    activeProjectId = null;
+    activeEtag = null;
+    activeProjectDirty = false;
+    workspaceVersion += 1;
+    showSetup = false;
+    problem = null;
+  }
+
   async function deleteProject() {
     if (!deleteTarget) return;
     try {
@@ -533,10 +548,12 @@
     projectId={activeProjectId}
     projectEtag={activeEtag}
     projectDirty={activeProjectDirty}
+    projectOpen={activeWorkspace !== null}
     onprojectupdated={(document, etag) => {
       openDocument(document, etag);
       void loadProjects();
     }}
+    onprojectdrafted={openAssistantDraft}
   />
 {/if}
 
