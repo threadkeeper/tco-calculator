@@ -126,27 +126,42 @@ az role assignment list `
   --output table
 ```
 
-## Direct Development Deployment
+## Guarded Deployment Sequence
 
-After CI succeeds for the current `main` commit, any agent may dispatch or retry the development application workflow. A separate preview run is not required:
+Do not reuse a preview from another commit. After CI succeeds for the exact current `main` SHA, obtain explicit authorization for one build-preview. Preview authorization does not authorize a retry or deployment.
 
-1. Start the serialized build, validation, and deployment run:
+1. Start the authorized build-preview:
 
    ```powershell
-   gh workflow run deploy-app.yml --ref main `
-     -f confirmation='DEPLOY APP rg-tco'
+   gh workflow run deploy-app.yml --ref main -f operation=build-preview
    ```
 
 2. Find and monitor its run ID:
 
    ```powershell
    gh run list --workflow deploy-app.yml --limit 5
+   gh run watch <preview-run-id> --exit-status
+   ```
+
+3. Review the successful run and its Azure `what-if`. It must contain no deletions or unexpected foundation changes.
+
+4. Only with explicit deployment authorization, deploy using that exact preview run:
+
+   ```powershell
+   gh workflow run deploy-app.yml --ref main `
+     -f operation=deploy `
+     -f preview_run_id=<preview-run-id> `
+     -f confirmation='DEPLOY APP rg-tco'
+   ```
+
+5. Find and monitor the deployment run ID:
+
+   ```powershell
+   gh run list --workflow deploy-app.yml --limit 5
    gh run watch <deploy-run-id> --exit-status
    ```
 
-3. Review the run summary. The application `what-if` must contain no deletions or unexpected foundation changes, and the run must reject a commit superseded before Azure mutation.
-
-4. Verify `/healthz`, `/readyz`, `/version`, and that the deployed immutable image digest corresponds to the selected commit.
+6. Verify `/healthz`, `/readyz`, `/version`, and that the deployed immutable image digest corresponds to the reviewed commit.
 
 ## Configure the Refresh Workflow
 
