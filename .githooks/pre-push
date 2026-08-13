@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+version="$(sh "$repo_root/scripts/validate-version.sh")"
+echo "pre-push: version is $version"

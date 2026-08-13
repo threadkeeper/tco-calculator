@@ -34,6 +34,7 @@ JavaScript dependency operations are blocked on the current Microsoft-managed wo
 - `infra/`: modular Bicep for the development environment.
 - `docs/`: controlled build handoff and production-adapter readiness records.
 - `research/`: legacy workbook-generation tools and ignored frozen source data.
+- `scripts/`: repository automation and focused script tests.
 
 ## Prerequisites
 
@@ -44,6 +45,32 @@ JavaScript dependency operations are blocked on the current Microsoft-managed wo
 - Docker BuildKit for image validation.
 
 Do not use `npm` or `npx` in this repository. Follow [.github/copilot-instructions.md](.github/copilot-instructions.md) for workstation and package-source restrictions.
+
+## Versioning
+
+The root `VERSION` file is the single source of truth for the application version. Rust includes it in the `/version` response, and the frontend reads it at build time.
+
+Enable the repository hooks once in each clone:
+
+```powershell
+git config core.hooksPath .githooks
+```
+
+The pre-commit hook increments and stages `VERSION` in the commit being created:
+
+- Default or `TCO_BUMP=fix`: `X.Y.Z` becomes `X.Y.(Z+1)`.
+- `TCO_BUMP=feature` or `TCO_BUMP=minor`: `X.Y.Z` becomes `X.(Y+1).0`.
+- `TCO_BUMP=major`: `X.Y.Z` becomes `(X+1).0.0`.
+
+For a minor or major commit in PowerShell, set the selector only for that commit and then clear it:
+
+```powershell
+$env:TCO_BUMP = 'feature'
+git commit -m 'Add pricing scenario comparison'
+Remove-Item Env:TCO_BUMP
+```
+
+Use `major` instead of `feature` for a breaking release. Unknown selectors fail the commit rather than silently applying a patch bump. The pre-push hook rejects a missing or malformed version, and CI exercises the same validator and bump transitions.
 
 ## Local Backend
 

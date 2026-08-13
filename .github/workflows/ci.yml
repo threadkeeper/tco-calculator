@@ -46,6 +46,10 @@ jobs:
       - name: Test Azure pricing refresh workflow
         shell: pwsh
         run: ./.github/scripts/tests/Refresh-AzurePricing.Tests.ps1
+      - name: Validate versioning automation
+        run: |
+          sh scripts/validate-version.sh
+          sh scripts/tests/versioning-tests.sh
       - name: Compile foundation Bicep
         run: az bicep build --file infra/foundation.bicep --stdout > /dev/null
       - name: Compile application Bicep

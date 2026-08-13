@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+case "${TCO_BUMP:-fix}" in
+  major)
+    bump_kind="major"
+    ;;
+  feature | feat | minor)
+    bump_kind="feature"
+    ;;
+  fix | bug | patch)
+    bump_kind="fix"
+    ;;
+  *)
+    echo "pre-commit: unknown TCO_BUMP '${TCO_BUMP}' (expected major|feature|fix)" >&2
+    exit 2
+    ;;
+esac
+
+echo "pre-commit: bumping version ($bump_kind)..."
+sh "$repo_root/scripts/bump-version.sh" "$bump_kind"
+git add "$repo_root/VERSION"
