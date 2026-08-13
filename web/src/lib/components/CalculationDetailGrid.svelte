@@ -265,8 +265,8 @@
 <style>
   .detail-results {
     padding: 22px;
-    background: #f7f9f8;
-    border-top: 1px solid #b9cac7;
+    background: var(--surface-subtle);
+    border-top: 1px solid var(--border);
   }
   .detail-heading {
     display: flex;
@@ -278,7 +278,7 @@
   .eyebrow {
     display: block;
     margin-bottom: 4px;
-    color: #50716c;
+    color: var(--muted);
     font:
       700 0.7rem/1.2 Bahnschrift,
       sans-serif;
@@ -286,7 +286,7 @@
   }
   h2 {
     margin: 0;
-    color: #153236;
+    color: var(--ink-strong);
     font:
       700 1.25rem/1.2 Bahnschrift,
       sans-serif;
@@ -298,22 +298,22 @@
     gap: 7px;
     min-height: 38px;
     padding: 8px 12px;
-    color: #174f48;
-    background: #fff;
-    border: 1px solid #91b3ad;
+    color: var(--azure-text);
+    background: var(--surface-input);
+    border: 1px solid var(--border-input);
     border-radius: 4px;
     font-weight: 700;
     cursor: pointer;
   }
   .export-button:hover {
-    background: #e7f3f0;
+    background: var(--azure-soft);
   }
   .table-shell {
     overflow-x: auto;
     max-width: 100%;
-    border: 1px solid #aebebb;
-    background: #fff;
-    scrollbar-color: #6d8582 #e5ecea;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    scrollbar-color: var(--border-input) var(--surface-muted);
   }
   table {
     width: 100%;
@@ -321,7 +321,7 @@
     border-collapse: separate;
     border-spacing: 0;
     table-layout: fixed;
-    color: #23383c;
+    color: var(--ink);
     font-size: 0.75rem;
   }
   caption {
@@ -336,8 +336,8 @@
   td {
     min-width: 120px;
     padding: 9px 10px;
-    border-right: 1px solid #d5dedc;
-    border-bottom: 1px solid #d5dedc;
+    border-right: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
     text-align: right;
     vertical-align: middle;
   }
@@ -348,8 +348,8 @@
   }
   .group-row th {
     padding: 9px 12px;
-    border-bottom-color: #9fb1ae;
-    color: #20363a;
+    border-bottom-color: var(--border-input);
+    color: var(--ink-strong);
     font:
       700 0.75rem/1.2 Bahnschrift,
       sans-serif;
@@ -357,47 +357,47 @@
     text-transform: uppercase;
   }
   .column-row th {
-    color: #3d5054;
+    color: var(--ink-soft);
     font-size: 0.68rem;
     line-height: 1.25;
     text-transform: uppercase;
   }
   th.workload,
   td[data-tone='workload'] {
-    background: #f5f6f4;
+    background: var(--tone-workload);
   }
   th.target,
   td[data-tone='target'] {
-    background: #e1edf8;
+    background: var(--tone-target);
   }
   th.source,
   td[data-tone='source'] {
-    background: #faeadb;
+    background: var(--tone-source);
   }
   th.azure,
   td[data-tone='azure'] {
-    background: #dceff1;
+    background: var(--tone-azure);
   }
   th.savings,
   td[data-tone='savings'] {
-    background: #e2f1e6;
+    background: var(--tone-savings);
   }
   th.parity,
   td[data-tone='parity'] {
-    background: #eee4f1;
+    background: var(--tone-parity);
   }
   th.target,
   th.azure {
-    color: #0b4f78;
+    color: var(--azure-text);
   }
   th.source {
-    color: #8a451b;
+    color: var(--source);
   }
   th.savings {
-    color: #24623a;
+    color: var(--success);
   }
   th.parity {
-    color: #68406f;
+    color: var(--copilot-ink);
   }
   tbody tr:last-child td {
     border-bottom: 0;
@@ -409,12 +409,12 @@
     position: sticky;
     left: 0;
     z-index: 1;
-    box-shadow: 2px 0 0 #aebebb;
+    box-shadow: 2px 0 0 var(--border);
   }
   .sticky-cell strong {
     display: block;
     overflow: hidden;
-    color: #173136;
+    color: var(--ink-strong);
     font-size: 0.8rem;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -423,25 +423,25 @@
     display: inline-block;
     margin-top: 4px;
     padding: 2px 5px;
-    color: #7b3d19;
-    background: #fff0e7;
+    color: var(--issue-text);
+    background: var(--issue-surface);
     border-radius: 3px;
     font-size: 0.62rem;
     font-weight: 700;
     text-transform: uppercase;
   }
   .mapping-status.ok {
-    color: #176044;
-    background: #dcefe5;
+    color: var(--success);
+    background: var(--success-surface);
   }
   .difference-higher,
   .higher {
-    color: #9a2d21;
+    color: var(--danger);
     font-weight: 800;
   }
   .difference-lower,
   .lower {
-    color: #176044;
+    color: var(--success);
     font-weight: 800;
   }
   .mobile-rows {
@@ -467,8 +467,8 @@
     }
     .mobile-row {
       overflow: hidden;
-      background: #fff;
-      border: 1px solid #aebebb;
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 4px;
     }
     .mobile-row summary {
@@ -488,11 +488,11 @@
     }
     .mobile-row summary strong {
       overflow-wrap: anywhere;
-      color: #173136;
+      color: var(--ink-strong);
     }
     .mobile-row summary span {
       margin-top: 3px;
-      color: #64777a;
+      color: var(--muted);
       font-size: 0.72rem;
       text-transform: capitalize;
     }
@@ -512,35 +512,35 @@
       font-size: 0.85rem;
     }
     .mobile-groups {
-      border-top: 1px solid #d2dcda;
+      border-top: 1px solid var(--border-subtle);
     }
     .mobile-group {
       padding: 13px;
     }
     .mobile-group + .mobile-group {
-      border-top: 1px solid rgb(35 56 60 / 12%);
+      border-top: 1px solid var(--border-subtle);
     }
     .mobile-group.workload {
-      background: #f5f6f4;
+      background: var(--tone-workload);
     }
     .mobile-group.target {
-      background: #e1edf8;
+      background: var(--tone-target);
     }
     .mobile-group.source {
-      background: #faeadb;
+      background: var(--tone-source);
     }
     .mobile-group.azure {
-      background: #dceff1;
+      background: var(--tone-azure);
     }
     .mobile-group.savings {
-      background: #e2f1e6;
+      background: var(--tone-savings);
     }
     .mobile-group.parity {
-      background: #eee4f1;
+      background: var(--tone-parity);
     }
     .mobile-group h3 {
       margin: 0 0 8px;
-      color: #273f43;
+      color: var(--ink-strong);
       font:
         700 0.72rem/1.2 Bahnschrift,
         sans-serif;
@@ -556,7 +556,7 @@
       min-width: 0;
     }
     dt {
-      color: #637579;
+      color: var(--muted);
       font-size: 0.65rem;
       font-weight: 700;
       text-transform: uppercase;
@@ -564,7 +564,7 @@
     dd {
       overflow-wrap: anywhere;
       margin: 2px 0 0;
-      color: #1f383c;
+      color: var(--ink);
       font-size: 0.78rem;
       text-transform: capitalize;
     }

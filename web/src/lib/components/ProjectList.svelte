@@ -108,20 +108,20 @@
     gap: 14px;
     min-height: 58px;
     padding: 8px 14px;
-    color: #4b5f63;
-    border-bottom: 1px solid #e0e6e7;
+    color: var(--ink-soft);
+    border-bottom: 1px solid var(--border-subtle);
     font-size: 0.8rem;
   }
   .table-row:last-child {
     border-bottom: 0;
   }
   .table-row:hover {
-    background: #f6f9f8;
+    background: var(--surface-hover);
   }
   .project-name {
     overflow: hidden;
     padding: 4px 0;
-    color: #075e71;
+    color: var(--azure-text);
     background: transparent;
     border: 0;
     font:
@@ -134,7 +134,7 @@
   }
   .table-row strong {
     overflow-wrap: anywhere;
-    color: #263d42;
+    color: var(--ink-strong);
     font-weight: 650;
   }
   .row-actions {
@@ -147,13 +147,13 @@
     height: 31px;
     place-items: center;
     padding: 0;
-    color: #31535a;
-    background: #fff;
-    border: 1px solid #b9c7c9;
+    color: var(--ink-soft);
+    background: var(--surface-input);
+    border: 1px solid var(--border);
     border-radius: 4px;
     cursor: pointer;
   }
   .row-actions .delete {
-    color: #a62a20;
+    color: var(--danger);
   }
 </style>

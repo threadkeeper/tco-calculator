@@ -26,8 +26,9 @@
     z-index: 15;
     width: min(100%, 560px);
     overflow-y: auto;
-    background: white;
-    border-left: 1px solid #cad4d7;
+    color: var(--ink);
+    background: var(--surface);
+    border-left: 1px solid var(--border);
     box-shadow: -12px 0 35px rgb(15 30 35 / 16%);
   }
   header {
@@ -37,7 +38,7 @@
     justify-content: space-between;
     gap: 12px;
     padding: 12px 16px;
-    border-bottom: 1px solid #cad4d7;
+    border-bottom: 1px solid var(--border);
   }
   h2,
   h3 {
@@ -49,6 +50,7 @@
     place-items: center;
     padding: 6px;
     background: transparent;
+    color: var(--ink-soft);
     border: 0;
     cursor: pointer;
   }
@@ -56,6 +58,6 @@
     padding: 18px 16px;
   }
   p {
-    color: #5c6d72;
+    color: var(--muted);
   }
 </style>

@@ -21,9 +21,9 @@
     align-items: center;
     gap: 10px;
     padding: 10px 12px;
-    color: #7a271a;
-    background: #fef3f2;
-    border: 1px solid #fecdca;
+    color: var(--danger-text);
+    background: var(--danger-surface);
+    border: 1px solid var(--danger-border);
   }
   button {
     display: grid;

@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { Database, GitBranch, ShieldCheck } from 'lucide-svelte';
+  import { Database, ShieldCheck } from 'lucide-svelte';
   import { text } from '$lib/i18n/en';
   import AppUpdateControl from './AppUpdateControl.svelte';
+  import GitHubMark from './GitHubMark.svelte';
   import IdentityMenu from './IdentityMenu.svelte';
+  import ThemeToggle from './ThemeToggle.svelte';
 
   let {
     children,
@@ -28,6 +30,7 @@
     {#if currentProject}<span class="current-project">{currentProject}</span>{/if}
   </div>
   <div class="header-actions">
+    <ThemeToggle />
     <button
       class="header-icon"
       type="button"
@@ -45,7 +48,7 @@
       title="View repository on GitHub"
       aria-label="View Azure SQL TCO repository on GitHub"
     >
-      <GitBranch size={19} />
+      <GitHubMark size={19} />
     </a>
     <IdentityMenu {mode} {displayName} />
     <AppUpdateControl />

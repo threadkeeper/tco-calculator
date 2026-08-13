@@ -210,7 +210,7 @@
           >SQL data is required.</small
         >{/if}
     </label>
-    <label>
+    <label class="purchase-option">
       <span>Azure purchase option</span>
       <select bind:value={resource.mi_purchase_option} {onchange}>
         <option value="payg">PAYG, license included</option>
@@ -583,7 +583,7 @@
 <style>
   .resource-editor {
     overflow: hidden;
-    background: #fff;
+    background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 6px;
   }
@@ -593,7 +593,7 @@
     justify-content: space-between;
     gap: 16px;
     padding: 16px 18px;
-    background: #f5f8f7;
+    background: var(--surface-subtle);
     border-bottom: 1px solid var(--line);
   }
   .resource-title {
@@ -608,13 +608,13 @@
     width: 36px;
     height: 36px;
     place-items: center;
-    color: #075e54;
-    background: #dceee9;
+    color: var(--azure-text);
+    background: var(--azure-soft);
   }
   .eyebrow {
     display: block;
     margin-bottom: 3px;
-    color: #617276;
+    color: var(--muted);
     font:
       700 0.68rem/1.2 Bahnschrift,
       sans-serif;
@@ -624,7 +624,7 @@
   .name-input {
     width: min(440px, 60vw);
     padding: 0;
-    color: #162c31;
+    color: var(--ink-strong);
     background: transparent;
     border: 0;
     border-bottom: 1px solid transparent;
@@ -634,7 +634,7 @@
       sans-serif;
   }
   .name-input:focus {
-    border-color: #087f73;
+    border-color: var(--azure);
     outline: none;
   }
   .shared-fields {
@@ -653,7 +653,7 @@
     align-content: start;
     gap: 6px;
     min-width: 0;
-    color: #34494e;
+    color: var(--ink-soft);
     font-size: 0.79rem;
     font-weight: 700;
   }
@@ -664,9 +664,9 @@
     min-height: 38px;
     box-sizing: border-box;
     padding: 7px 9px;
-    color: #172d32;
-    background: #fff;
-    border: 1px solid #9caaad;
+    color: var(--ink);
+    background: var(--surface-input);
+    border: 1px solid var(--border-input);
     border-radius: 4px;
     font:
       400 0.9rem/1.3 Aptos,
@@ -675,20 +675,50 @@
   }
   input:focus,
   select:focus {
-    border-color: #087f73;
-    outline: 2px solid #b9e1d9;
+    border-color: var(--azure);
+    outline: 2px solid var(--azure-focus);
     outline-offset: 0;
   }
+  .purchase-option > span {
+    color: var(--copilot-ink);
+    text-shadow: 0 0 10px rgb(133 52 243 / 18%);
+  }
+  .purchase-option select {
+    color: var(--copilot-ink);
+    background: var(--copilot-surface);
+    border-color: color-mix(in srgb, var(--copilot-purple) 62%, var(--border-input));
+    box-shadow:
+      inset 3px 0 0 var(--copilot-purple),
+      0 0 0 1px rgb(133 52 243 / 10%),
+      0 0 14px rgb(133 52 243 / 18%);
+    font-weight: 650;
+  }
+  .purchase-option select:hover {
+    background: color-mix(in srgb, var(--copilot-purple-light) 12%, var(--surface-input));
+    border-color: var(--copilot-purple);
+    box-shadow:
+      inset 3px 0 0 var(--copilot-purple),
+      0 0 0 1px rgb(200 152 253 / 18%),
+      0 0 18px rgb(133 52 243 / 26%);
+  }
+  .purchase-option select:focus {
+    border-color: var(--copilot-purple);
+    outline: 3px solid rgb(200 152 253 / 32%);
+    box-shadow:
+      inset 3px 0 0 var(--copilot-purple),
+      0 0 0 1px rgb(200 152 253 / 24%),
+      0 0 20px rgb(133 52 243 / 30%);
+  }
   input:disabled {
-    color: #7d898b;
-    background: #edf1f1;
+    color: var(--muted);
+    background: var(--surface-muted);
   }
   input[aria-invalid='true'],
   select[aria-invalid='true'] {
-    border-color: #b42318;
+    border-color: var(--danger);
   }
   .field-error {
-    color: #b42318;
+    color: var(--danger);
     font-size: 0.75rem;
     font-weight: 650;
     line-height: 1.3;
@@ -706,7 +736,7 @@
   }
   h3 {
     margin: 0;
-    color: #1a3338;
+    color: var(--ink-strong);
     font:
       650 0.95rem/1.2 Bahnschrift,
       sans-serif;
@@ -721,17 +751,17 @@
     width: 34px;
     height: 34px;
     place-items: center;
-    color: #43565a;
+    color: var(--ink-soft);
     background: transparent;
     border: 1px solid transparent;
     border-radius: 4px;
   }
   .icon:hover {
-    background: #e9efee;
-    border-color: #bcc8ca;
+    background: var(--surface-muted);
+    border-color: var(--border);
   }
   .icon.danger {
-    color: #a72920;
+    color: var(--danger);
   }
   .compact-button {
     display: inline-flex;
@@ -739,9 +769,9 @@
     gap: 6px;
     min-height: 34px;
     padding: 6px 10px;
-    color: #075e54;
-    background: #fff;
-    border: 1px solid #6d9e96;
+    color: var(--azure-text);
+    background: var(--surface-input);
+    border: 1px solid color-mix(in srgb, var(--azure) 55%, var(--border-input));
     border-radius: 4px;
     font-size: 0.82rem;
     font-weight: 700;
@@ -756,12 +786,12 @@
     align-items: end;
     gap: 8px;
     padding: 11px;
-    background: #f8faf9;
-    border: 1px solid #d9e1e1;
+    background: var(--surface-subtle);
+    border: 1px solid var(--border-subtle);
   }
   .empty-note {
     margin: 0;
-    color: #637478;
+    color: var(--muted);
     font-size: 0.85rem;
   }
   @media (max-width: 900px) {

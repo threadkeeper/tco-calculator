@@ -602,15 +602,15 @@
     gap: 12px;
     margin-bottom: 14px;
     padding: 11px 14px;
-    color: #634800;
-    background: #fff5d5;
-    border: 1px solid #e2c15e;
+    color: var(--warning-text);
+    background: var(--warning-surface);
+    border: 1px solid var(--warning-border);
     font-size: 0.86rem;
   }
   .setup {
     max-width: 980px;
     margin: 0 auto;
-    background: #fff;
+    background: var(--surface);
     border: 1px solid var(--border);
     border-top: 4px solid var(--source);
     box-shadow: var(--shadow);
@@ -625,7 +625,7 @@
   }
   .text-button {
     padding: 6px 8px;
-    color: #496167;
+    color: var(--ink-soft);
     background: transparent;
     border: 0;
     font-weight: 700;
@@ -642,7 +642,7 @@
   }
   legend {
     margin-bottom: 10px;
-    color: #40565a;
+    color: var(--ink-soft);
     font-size: 0.8rem;
     font-weight: 720;
   }
@@ -658,28 +658,28 @@
     gap: 3px 9px;
     min-height: 90px;
     padding: 13px;
-    color: #456068;
-    background: #f8faf9;
-    border: 1px solid #bac7c9;
+    color: var(--ink-soft);
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
     border-radius: 5px;
     text-align: left;
     cursor: pointer;
   }
   .source-options button b {
-    color: #223b40;
+    color: var(--ink-strong);
     font:
       650 0.93rem/1.2 Bahnschrift,
       sans-serif;
   }
   .source-options button span {
     grid-column: 2;
-    color: #687a7e;
+    color: var(--muted);
     font-size: 0.76rem;
   }
   .source-options button.selected {
-    color: #087f73;
-    background: #e7f3f0;
-    border: 2px solid #087f73;
+    color: var(--copilot-ink);
+    background: var(--copilot-surface);
+    border: 2px solid var(--copilot-purple);
     padding: 12px;
   }
   .setup-fields {
@@ -694,7 +694,7 @@
   label {
     display: grid;
     gap: 6px;
-    color: #374e53;
+    color: var(--ink-soft);
     font-size: 0.78rem;
     font-weight: 700;
   }
@@ -702,9 +702,9 @@
     width: 100%;
     min-height: 40px;
     padding: 8px 10px;
-    color: #162e33;
-    background: #fff;
-    border: 1px solid #96a7aa;
+    color: var(--ink);
+    background: var(--surface-input);
+    border: 1px solid var(--border-input);
     border-radius: 4px;
     font:
       400 0.92rem/1.3 Aptos,
@@ -712,8 +712,8 @@
       sans-serif;
   }
   input:focus {
-    border-color: #087f73;
-    outline: 2px solid #bae0d9;
+    border-color: var(--focus);
+    outline: 2px solid color-mix(in srgb, var(--focus) 24%, transparent);
   }
   .setup-actions {
     display: flex;
@@ -722,10 +722,10 @@
     gap: 18px;
     margin-top: 22px;
     padding-top: 16px;
-    border-top: 1px solid #dbe2e2;
+    border-top: 1px solid var(--border-subtle);
   }
   .setup-actions span {
-    color: #627579;
+    color: var(--muted);
     font-size: 0.8rem;
   }
   .draft-row {
@@ -735,9 +735,9 @@
     gap: 14px;
     min-height: 82px;
     padding: 13px 15px;
-    background: #fff;
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-left: 4px solid #087f73;
+    border-left: 4px solid var(--azure);
     box-shadow: var(--shadow);
   }
   .draft-icon {
@@ -745,13 +745,13 @@
     width: 40px;
     height: 40px;
     place-items: center;
-    color: #087f73;
-    background: #e3f1ed;
+    color: var(--azure);
+    background: var(--azure-soft);
   }
   .draft-row h2,
   .new-draft h2 {
     margin: 0;
-    color: #20383d;
+    color: var(--ink-strong);
     font:
       650 1rem/1.2 Bahnschrift,
       sans-serif;
@@ -759,13 +759,13 @@
   .draft-row p,
   .new-draft p {
     margin: 4px 0 0;
-    color: #687b7f;
+    color: var(--muted);
     font-size: 0.8rem;
   }
   .button.open {
-    color: #075e54;
-    background: #fff;
-    border-color: #6d9d95;
+    color: var(--azure-text);
+    background: var(--surface-input);
+    border-color: color-mix(in srgb, var(--azure) 55%, var(--border-input));
   }
   .icon-delete {
     display: grid;
@@ -773,9 +773,9 @@
     height: 34px;
     place-items: center;
     padding: 0;
-    color: #a62a20;
-    background: #fff;
-    border: 1px solid #cda09b;
+    color: var(--danger);
+    background: var(--surface-input);
+    border: 1px solid var(--danger-border);
     border-radius: 4px;
     cursor: pointer;
   }
@@ -785,9 +785,9 @@
     place-content: center;
     justify-items: center;
     gap: 8px;
-    color: #6d817e;
-    background: #fff;
-    border: 1px dashed #a9b9b7;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px dashed var(--border-input);
   }
   @media (max-width: 700px) {
     .home {

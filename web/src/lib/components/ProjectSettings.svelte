@@ -35,8 +35,9 @@
 <style>
   .settings-band {
     padding: 14px 16px;
-    background: white;
-    border-block: 1px solid #cad4d7;
+    color: var(--ink);
+    background: var(--surface);
+    border-block: 1px solid var(--border);
   }
   h2 {
     margin: 0 0 10px;
@@ -49,7 +50,7 @@
     margin: 0;
   }
   dt {
-    color: #5c6d72;
+    color: var(--muted);
     font-size: 0.75rem;
   }
   dd {

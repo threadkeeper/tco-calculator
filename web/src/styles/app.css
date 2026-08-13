@@ -1,19 +1,107 @@
 :root {
   font-family: Aptos, 'Segoe UI Variable', 'Segoe UI', sans-serif;
-  color: #182428;
-  background: #eef2f3;
   font-synthesis: none;
+  color-scheme: light;
+  --page: #eef2f3;
+  --page-top: #f8fafb;
+  --page-grid: rgb(0 116 184 / 3%);
   --surface: #ffffff;
   --surface-subtle: #f7f9f9;
+  --surface-input: #ffffff;
+  --surface-muted: #edf1f1;
+  --surface-hover: #f6f9f8;
   --border: #cad4d7;
+  --border-input: #96a7aa;
+  --border-subtle: #e0e6e7;
   --muted: #5c6d72;
   --ink: #182428;
-  --azure: #006f86;
-  --azure-dark: #005366;
+  --ink-soft: #43565b;
+  --ink-strong: #20383d;
+  --azure: #0074b8;
+  --azure-dark: #005789;
+  --azure-deep: #003e62;
+  --azure-light: #86c8ed;
+  --azure-soft: color-mix(in srgb, var(--azure) 11%, #fff);
+  --azure-focus: color-mix(in srgb, var(--azure) 28%, transparent);
+  --azure-text: #075e71;
+  --azure-surface: #e1f1ed;
+  --comparison-surface: #dce8e5;
   --source: #b45f06;
-  --focus: #005fb8;
-  --shadow: 0 2px 8px rgb(26 50 58 / 9%);
+  --copilot-purple: #8534f3;
+  --copilot-purple-light: #c898fd;
+  --copilot-purple-dark: #43179e;
+  --copilot-surface: color-mix(in srgb, var(--copilot-purple) 7%, var(--surface-subtle));
+  --copilot-ink: var(--copilot-purple-dark);
+  --danger: #a62a20;
+  --danger-text: #7a271a;
+  --danger-surface: #fef3f2;
+  --danger-border: #fecdca;
+  --warning-text: #634800;
+  --warning-surface: #fff5d5;
+  --warning-border: #e2c15e;
+  --success: #25855a;
+  --success-surface: #e8f5ef;
+  --success-border: #a4d6c4;
+  --issue-text: #7b3d19;
+  --issue-surface: #fff5ed;
+  --issue-border: #f0cfba;
+  --tone-workload: #f5f6f4;
+  --tone-target: #e1edf8;
+  --tone-source: #faeadb;
+  --tone-azure: #dceff1;
+  --tone-savings: #e2f1e6;
+  --tone-parity: #eee4f1;
+  --focus: var(--copilot-purple);
+  --shadow: 0 2px 8px rgb(26 50 58 / 9%), 0 0 0 1px rgb(133 52 243 / 4%);
   --line: var(--border);
+  color: var(--ink);
+  background: var(--page);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --page: #0f171c;
+  --page-top: #151f26;
+  --page-grid: rgb(134 200 237 / 4%);
+  --surface: #172127;
+  --surface-subtle: #1d292f;
+  --surface-input: #10181d;
+  --surface-muted: #25333a;
+  --surface-hover: #233139;
+  --border: #3a4a53;
+  --border-input: #52646d;
+  --border-subtle: #2d3e47;
+  --muted: #a8b7bd;
+  --ink: #eef5f7;
+  --ink-soft: #c3d0d5;
+  --ink-strong: #f5f9fa;
+  --azure-soft: color-mix(in srgb, var(--azure-light) 12%, var(--surface));
+  --azure-text: var(--azure-light);
+  --azure-surface: #17303b;
+  --comparison-surface: #24343b;
+  --source: #efad52;
+  --copilot-surface: color-mix(in srgb, var(--copilot-purple) 16%, var(--surface-input));
+  --copilot-ink: var(--copilot-purple-light);
+  --danger: #ef8a80;
+  --danger-text: #f2aaa4;
+  --danger-surface: #3a2321;
+  --danger-border: #70413c;
+  --warning-text: #f0d27a;
+  --warning-surface: #372f1a;
+  --warning-border: #6d5a2b;
+  --success: #64c994;
+  --success-surface: #193629;
+  --success-border: #35654d;
+  --issue-text: #f0b082;
+  --issue-surface: #38281f;
+  --issue-border: #6f4b36;
+  --tone-workload: #202a2e;
+  --tone-target: #182d3d;
+  --tone-source: #38291f;
+  --tone-azure: #183239;
+  --tone-savings: #1b3425;
+  --tone-parity: #30243a;
+  --shadow: 0 2px 12px rgb(0 0 0 / 34%), 0 0 0 1px rgb(134 200 237 / 5%);
 }
 
 * {
@@ -25,8 +113,8 @@ body {
   min-height: 100vh;
   margin: 0;
   background:
-    linear-gradient(180deg, #f8fafb 0, #eef2f3 220px),
-    repeating-linear-gradient(90deg, transparent 0 47px, rgb(18 75 90 / 3%) 48px);
+    linear-gradient(180deg, var(--page-top) 0, var(--page) 220px),
+    repeating-linear-gradient(90deg, transparent 0 47px, var(--page-grid) 48px);
 }
 
 button,
@@ -36,7 +124,7 @@ a {
 
 button:focus-visible,
 a:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--focus) 35%, transparent);
+  outline: 3px solid color-mix(in srgb, var(--focus) 38%, transparent);
   outline-offset: 2px;
 }
 
@@ -51,8 +139,9 @@ a:focus-visible {
   gap: 20px;
   padding: 9px clamp(16px, 3vw, 44px);
   color: #f8fbfc;
-  background: #17353d;
+  background: var(--azure-deep);
   border-bottom: 3px solid var(--azure);
+  box-shadow: inset 0 -1px 0 rgb(200 152 253 / 28%);
 }
 
 .wordmark,
@@ -72,7 +161,7 @@ a:focus-visible {
 .brand-mark {
   display: grid;
   place-items: center;
-  color: #7ed8e7;
+  color: var(--azure-light);
 }
 
 .version {
@@ -132,10 +221,14 @@ h1 {
   color: #fff;
   background: var(--azure);
   border-color: var(--azure-dark);
+  box-shadow: inset 0 -2px 0 rgb(200 152 253 / 30%);
 }
 
 .button.primary:hover {
   background: var(--azure-dark);
+  box-shadow:
+    inset 0 -2px 0 rgb(200 152 253 / 42%),
+    0 0 0 3px rgb(133 52 243 / 12%);
 }
 
 .button.secondary {
@@ -147,6 +240,8 @@ h1 {
 
 .button.secondary:hover {
   background: rgb(255 255 255 / 8%);
+  border-color: color-mix(in srgb, var(--copilot-purple-light) 55%, #6e8c94);
+  box-shadow: 0 0 12px rgb(133 52 243 / 12%);
 }
 
 .guest-notice {
@@ -154,9 +249,9 @@ h1 {
   gap: 12px;
   padding: 11px 14px;
   margin-bottom: 14px;
-  color: #593b0c;
-  background: #fff7df;
-  border: 1px solid #e5c66b;
+  color: var(--warning-text);
+  background: var(--warning-surface);
+  border: 1px solid var(--warning-border);
   border-radius: 5px;
   font-size: 0.88rem;
 }
@@ -175,7 +270,7 @@ h1 {
   grid-template-columns: 1.8fr 0.75fr 1fr 1fr 1fr 0.65fr 1fr 1fr 0.7fr;
   gap: 14px;
   padding: 11px 14px;
-  color: #43565b;
+  color: var(--ink-soft);
   background: var(--surface-subtle);
   border-bottom: 1px solid var(--border);
   font-size: 0.72rem;
@@ -205,6 +300,17 @@ h1 {
 @media (max-width: 680px) {
   .app-bar {
     align-items: flex-start;
+    gap: 10px;
+  }
+
+  .wordmark {
+    min-width: 0;
+  }
+
+  /* The title band already shows the version and active project on small screens. */
+  .version,
+  .current-project {
+    display: none;
   }
 
   .identity-state,

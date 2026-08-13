@@ -39,20 +39,22 @@
     align-items: center;
     gap: 10px;
     padding: 8px 12px;
-    border-inline-start: 4px solid #7b8a8e;
+    color: var(--ink);
+    background: var(--surface-subtle);
+    border-inline-start: 4px solid var(--border-input);
   }
   .price-status[data-state='fresh'] {
-    border-inline-start-color: #25855a;
+    border-inline-start-color: var(--success);
   }
   .price-status[data-state='stale'],
   .price-status[data-state='cached'] {
-    border-inline-start-color: #b45f06;
+    border-inline-start-color: var(--warning);
   }
   .price-status[data-state='error'] {
-    border-inline-start-color: #b42318;
+    border-inline-start-color: var(--danger);
   }
   small {
-    color: #5c6d72;
+    color: var(--muted);
     overflow-wrap: anywhere;
   }
 </style>

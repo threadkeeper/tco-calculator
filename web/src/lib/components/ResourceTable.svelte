@@ -17,23 +17,23 @@
 <style>
   .resource-table {
     min-height: 260px;
-    background: white;
-    border-block: 1px solid #cad4d7;
+    background: var(--surface);
+    border-block: 1px solid var(--border);
   }
   .resource-heading {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 11px 14px;
-    background: #f7f9f9;
-    border-bottom: 1px solid #cad4d7;
+    background: var(--surface-subtle);
+    border-bottom: 1px solid var(--border);
   }
   h2 {
     margin: 0;
     font-size: 1rem;
   }
   .resource-heading span {
-    color: #5c6d72;
+    color: var(--muted);
     font-size: 0.8rem;
   }
   .empty {
@@ -42,10 +42,10 @@
     place-content: center;
     justify-items: center;
     gap: 4px;
-    color: #5c6d72;
+    color: var(--muted);
     text-align: center;
   }
   .empty strong {
-    color: #182428;
+    color: var(--ink);
   }
 </style>

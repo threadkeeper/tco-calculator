@@ -272,8 +272,8 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
     overflow: hidden;
-    background: #fff;
-    border: 1px solid #aebdc0;
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 6px;
     box-shadow: 0 22px 60px rgb(10 27 31 / 28%);
   }
@@ -284,8 +284,8 @@
     gap: 12px;
     padding: 16px 20px;
     color: #f7fbfc;
-    background: #17353d;
-    border-bottom: 3px solid #087f73;
+    background: var(--azure-dark);
+    border-bottom: 3px solid var(--azure);
   }
   header p,
   header h2 {
@@ -306,7 +306,7 @@
   .policy-icon {
     display: grid;
     place-items: center;
-    color: #8fe0d2;
+    color: var(--azure-light);
   }
   .icon-button {
     width: 36px;
@@ -326,14 +326,14 @@
   .notice-body {
     overflow-y: auto;
     padding: 20px;
-    color: #3e5358;
+    color: var(--ink-soft);
   }
   .summary {
     margin-top: 0;
     padding: 12px 14px;
-    color: #274249;
-    background: #edf6f4;
-    border-left: 4px solid #087f73;
+    color: var(--ink-soft);
+    background: var(--azure-soft);
+    border-left: 4px solid var(--azure);
   }
   section {
     margin-top: 18px;
@@ -343,7 +343,7 @@
     align-items: center;
     gap: 7px;
     margin: 0 0 7px;
-    color: #19353b;
+    color: var(--ink-strong);
     font:
       680 0.94rem/1.25 Bahnschrift,
       sans-serif;
@@ -364,7 +364,7 @@
     margin-top: 5px;
   }
   a {
-    color: #006f86;
+    color: var(--azure-text);
     font-weight: 650;
   }
   .summary a,
@@ -375,26 +375,26 @@
   }
   .safeguards {
     padding: 13px 14px;
-    background: #f7f9f9;
-    border: 1px solid #d3dddf;
+    background: var(--surface-subtle);
+    border: 1px solid var(--border-subtle);
   }
   .version {
     margin: 20px 0 0;
-    color: #66797d;
+    color: var(--muted);
     font-size: 0.72rem;
   }
   form,
   footer {
     padding: 15px 20px;
-    background: #f7f9f9;
-    border-top: 1px solid #cad4d7;
+    background: var(--surface-subtle);
+    border-top: 1px solid var(--border);
   }
   .choice {
     display: grid;
     grid-template-columns: 20px 1fr;
     align-items: start;
     gap: 8px;
-    color: #2d464c;
+    color: var(--ink-soft);
     font-size: 0.84rem;
     font-weight: 600;
   }
@@ -405,10 +405,10 @@
     width: 17px;
     height: 17px;
     margin: 1px 0 0;
-    accent-color: #087f73;
+    accent-color: var(--azure);
   }
   .required-choice {
-    color: #173b42;
+    color: var(--ink-strong);
     font-weight: 720;
   }
   .email-field {
@@ -416,7 +416,7 @@
     gap: 5px;
     max-width: 430px;
     margin: 12px 0 0 28px;
-    color: #3a5156;
+    color: var(--ink-soft);
     font-size: 0.76rem;
     font-weight: 700;
   }
@@ -424,14 +424,14 @@
     width: 100%;
     min-height: 38px;
     padding: 8px 10px;
-    color: #182f34;
-    background: #fff;
-    border: 1px solid #91a5a9;
+    color: var(--ink);
+    background: var(--surface-input);
+    border: 1px solid var(--border-input);
     border-radius: 4px;
   }
   .error {
     margin: 10px 0 0;
-    color: #a62a20;
+    color: var(--danger);
     font-weight: 650;
   }
   .actions,
@@ -457,14 +457,14 @@
     text-decoration: none;
   }
   .sign-out {
-    color: #40575c;
-    background: #fff;
-    border: 1px solid #9baaad;
+    color: var(--ink-soft);
+    background: var(--surface-input);
+    border: 1px solid var(--border-input);
   }
   .accept {
     color: #fff;
-    background: #087f73;
-    border: 1px solid #06685f;
+    background: var(--azure);
+    border: 1px solid var(--azure-dark);
     cursor: pointer;
   }
   .accept:disabled {

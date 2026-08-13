@@ -83,8 +83,9 @@
   .dialog {
     width: min(100%, 560px);
     padding: 20px;
-    background: #fff;
-    border: 1px solid #cad4d7;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 6px;
     box-shadow: 0 18px 48px rgb(15 30 35 / 22%);
   }
@@ -100,13 +101,13 @@
   }
   .heading span,
   label {
-    color: #5d7473;
+    color: var(--muted);
     font-size: 0.72rem;
     font-weight: 700;
   }
   h2 {
     margin: 3px 0 0;
-    color: #173338;
+    color: var(--ink-strong);
     font:
       680 1.2rem/1.25 Bahnschrift,
       sans-serif;
@@ -123,9 +124,9 @@
     flex: 1;
     min-height: 38px;
     padding: 8px 10px;
-    color: #26383d;
-    background: #f6f8f7;
-    border: 1px solid #9baaad;
+    color: var(--ink);
+    background: var(--surface-input);
+    border: 1px solid var(--border-input);
     border-radius: 4px;
     font:
       0.8rem/1.2 Consolas,
@@ -151,15 +152,15 @@
   .icon-button {
     width: 36px;
     padding: 0;
-    color: #43565b;
+    color: var(--ink-soft);
     background: transparent;
     border: 0;
   }
   .copy,
   .done {
     color: #fff;
-    background: #087f73;
-    border: 1px solid #087f73;
+    background: var(--azure);
+    border: 1px solid var(--azure);
   }
   .actions {
     justify-content: space-between;
@@ -167,9 +168,9 @@
     margin-top: 20px;
   }
   .revoke {
-    color: #a62a20;
-    background: #fff;
-    border: 1px solid #ce8f88;
+    color: var(--danger);
+    background: var(--surface-input);
+    border: 1px solid var(--danger-border);
   }
   @media (max-width: 480px) {
     .link-row {

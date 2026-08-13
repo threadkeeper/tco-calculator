@@ -48,8 +48,9 @@
   .dialog {
     width: min(100%, 440px);
     padding: 20px;
-    background: white;
-    border: 1px solid #cad4d7;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 6px;
     box-shadow: 0 18px 48px rgb(15 30 35 / 22%);
   }
@@ -58,7 +59,7 @@
     font-size: 1.2rem;
   }
   p {
-    color: #43565b;
+    color: var(--ink-soft);
   }
   .actions {
     display: flex;
@@ -74,13 +75,13 @@
     cursor: pointer;
   }
   .secondary {
-    color: #26383d;
-    background: white;
-    border: 1px solid #9baaad;
+    color: var(--ink-soft);
+    background: var(--surface-input);
+    border: 1px solid var(--border-input);
   }
   .danger {
     color: white;
-    background: #b42318;
-    border: 1px solid #912018;
+    background: var(--danger);
+    border: 1px solid var(--danger-border);
   }
 </style>

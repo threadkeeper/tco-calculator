@@ -60,7 +60,7 @@ describe('inline error messages', () => {
       'gp3 pricing is unavailable in the selected AWS region. This workload cannot be included in the comparison.'
     );
     expect(body).toContain('class="field-error');
-    expect(resourceEditorSource).toContain('color: #b42318;');
+    expect(resourceEditorSource).toContain('color: var(--danger);');
   });
 
   it('marks unavailable portfolio and workload price indicators instead of presenting zero', () => {
@@ -115,6 +115,6 @@ describe('inline error messages', () => {
     expect(body).toContain('Savings require complete source and Azure prices.');
     expect(body).toMatch(/class="price-status [^"]*unavailable/);
     expect(body.match(/PRICE UNAVAILABLE/g)).toHaveLength(6);
-    expect(calculationResultsSource).toContain('color: #b42318;');
+    expect(calculationResultsSource).toContain('color: var(--danger);');
   });
 });

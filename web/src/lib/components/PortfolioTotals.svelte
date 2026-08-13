@@ -23,24 +23,24 @@
   .totals {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    border-block: 1px solid #cad4d7;
-    background: white;
+    border-block: 1px solid var(--border);
+    background: var(--surface);
   }
   .totals div {
     display: grid;
     gap: 5px;
     min-height: 74px;
     padding: 13px 16px;
-    border-inline-start: 4px solid #b45f06;
+    border-inline-start: 4px solid var(--source);
   }
   .totals .azure {
-    border-inline-start-color: #006f86;
+    border-inline-start-color: var(--azure);
   }
   .totals .difference {
-    border-inline-start-color: #7b3f82;
+    border-inline-start-color: color-mix(in srgb, var(--copilot-purple) 62%, var(--border));
   }
   span {
-    color: #5c6d72;
+    color: var(--muted);
     font-size: 0.78rem;
   }
   strong {
