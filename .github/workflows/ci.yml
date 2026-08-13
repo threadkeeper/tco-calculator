@@ -46,6 +46,9 @@ jobs:
       - name: Test Azure pricing refresh workflow
         shell: pwsh
         run: ./.github/scripts/tests/Refresh-AzurePricing.Tests.ps1
+      - name: Test AWS pricing refresh workflow
+        shell: pwsh
+        run: ./.github/scripts/tests/Refresh-AwsPricing.Tests.ps1
       - name: Validate versioning automation
         run: |
           sh scripts/validate-version.sh

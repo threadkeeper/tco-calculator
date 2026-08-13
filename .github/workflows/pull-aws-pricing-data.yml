@@ -14,56 +14,15 @@ permissions:
 
 jobs:
   refresh:
-    name: Refresh ${{ matrix.region }}
+    name: Refresh supported regions
     runs-on: ubuntu-latest
     environment: dev
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        region:
-          - eu-central-1
-          - eu-central-2
-          - eu-north-1
-          - eu-south-1
-          - eu-south-2
-          - eu-west-1
-          - eu-west-2
-          - eu-west-3
+    timeout-minutes: 240
     env:
       TCO_CALCULATOR_URL: ${{ vars.TCO_CALCULATOR_URL }}
-      AWS_REGION: ${{ matrix.region }}
     steps:
-      - name: Refresh AWS price snapshot
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Refresh AWS price snapshots
         shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:TCO_CALCULATOR_URL)) {
-            throw 'GitHub environment dev is missing TCO_CALCULATOR_URL.'
-          }
-          $origin = $null
-          if (-not [Uri]::TryCreate($env:TCO_CALCULATOR_URL, [UriKind]::Absolute, [ref]$origin) -or
-              $origin.Scheme -ne 'https' -or
-              -not [string]::IsNullOrEmpty($origin.Query) -or
-              -not [string]::IsNullOrEmpty($origin.Fragment)) {
-            throw 'TCO_CALCULATOR_URL must be an absolute HTTPS URL without a query or fragment.'
-          }
-
-          $endpoint = [Uri]::new($origin, '/api/v1/pricing/aws/refresh')
-
-          $body = @{
-            aws_region = $env:AWS_REGION
-            azure_region = 'swedencentral'
-            currency = 'USD'
-            resources = @()
-          } | ConvertTo-Json -Compress
-          $response = Invoke-RestMethod `
-            -Uri $endpoint `
-            -Method Post `
-            -ContentType 'application/json' `
-            -Body $body `
-            -TimeoutSec 900
-          if ($response.status -ne 'fresh' -or [string]::IsNullOrWhiteSpace($response.snapshot_id)) {
-            throw "AWS pricing refresh for $env:AWS_REGION did not produce a fresh snapshot."
-          }
-          Write-Output "Refreshed $env:AWS_REGION at $($response.retrieved_at)."
+        run: ./.github/scripts/Refresh-AwsPricing.ps1 -MaxAttemptsPerRegion 3 -MaxRetainedSnapshots 2
