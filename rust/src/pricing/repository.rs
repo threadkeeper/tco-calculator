@@ -418,7 +418,12 @@ mod tests {
                 ResolutionStatus::Fresh,
                 Some(ResolutionStatus::Stale),
             ),
-            ("2026-08-02T12:00:00Z", ResolutionStatus::Fresh, None),
+            (
+                "2026-08-03T12:00:00Z",
+                ResolutionStatus::Fresh,
+                Some(ResolutionStatus::Stale),
+            ),
+            ("2026-08-03T11:59:59Z", ResolutionStatus::Fresh, None),
             ("2026-08-10T12:01:00Z", ResolutionStatus::Fresh, None),
         ] {
             let snapshot = Arc::new(snapshot(retrieved_at, original_status));

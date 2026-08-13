@@ -34,6 +34,7 @@
     saveGuestWorkspace,
     type GuestWorkspace
   } from '$lib/draft';
+  import { pricingResolutionLabel } from '$lib/pricing-resolution';
   import { projectShareUrl } from '$lib/project-share';
   import { readRegionOptions, type RegionOption } from '$lib/regions';
   import CalculationDetailGrid from './CalculationDetailGrid.svelte';
@@ -448,12 +449,6 @@
     }
   }
 
-  function resolutionState(value: unknown, required: boolean): string {
-    const status = readString(asRecord(value), 'status');
-    if (status) return status.replaceAll('_', ' ');
-    return required ? 'not resolved' : 'not required';
-  }
-
   function messageFromError(error: unknown, fallback: string): string {
     if (error instanceof ApiProblem && error.requestId)
       return `${error.message} Request ${error.requestId}`;
@@ -551,7 +546,7 @@
             >
           </div>
           <span class="resolution"
-            >{resolutionState(
+            >{pricingResolutionLabel(
               workspace.aws_resolution,
               workspace.project.settings.project_type !== 'on_prem'
             )}</span
@@ -563,7 +558,7 @@
           <div>
             <span>Azure region</span><strong>{workspace.project.settings.azure_region}</strong>
           </div>
-          <span class="resolution">{resolutionState(workspace.azure_resolution, true)}</span>
+          <span class="resolution">{pricingResolutionLabel(workspace.azure_resolution, true)}</span>
         </div>
       </div>
       {#if catalogWarning}<p class="catalog-warning">{catalogWarning}</p>{/if}
