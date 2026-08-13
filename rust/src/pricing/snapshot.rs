@@ -668,7 +668,7 @@ fn validate_azure_purchase_matrices(records: &[AzureMiRateRecord]) -> Result<(),
             || record.rate.compute_hourly.0 < Decimal::ZERO
             || record.rate.license_hourly.0 < Decimal::ZERO
             || record.rate.storage_monthly_per_gb.0 <= Decimal::ZERO
-            || record.rate.additional_memory_per_gb_hourly.0 <= Decimal::ZERO
+            || record.rate.additional_memory_per_gb_hourly.0 < Decimal::ZERO
         {
             return Err(SnapshotError::InvalidAzurePurchaseMatrix);
         }
@@ -829,6 +829,49 @@ mod tests {
             result,
             Err(SnapshotError::InvalidAzurePurchaseMatrix)
         ));
+    }
+
+    #[test]
+    fn azure_purchase_matrix_allows_zero_additional_memory_rate() {
+        let records = PurchaseOption::ALL
+            .into_iter()
+            .map(|purchase_option| AzureMiRateRecord {
+                stable_key: format!("configuration|{purchase_option:?}"),
+                configuration_key: "configuration".to_owned(),
+                purchase_option,
+                rate: AzureRate {
+                    compute_hourly: decimal("1"),
+                    license_hourly: if matches!(
+                        purchase_option,
+                        PurchaseOption::Ahb
+                            | PurchaseOption::AhbOneYear
+                            | PurchaseOption::AhbThreeYear
+                            | PurchaseOption::AhbSavingsOneYear
+                    ) {
+                        decimal("0")
+                    } else {
+                        decimal("0.5")
+                    },
+                    storage_monthly_per_gb: decimal("0.1"),
+                    additional_memory_per_gb_hourly: decimal("0"),
+                },
+                provenance: RateProvenance {
+                    source_url: "https://example.invalid/azure".to_owned(),
+                    effective_at: None,
+                    source_version: None,
+                    meter_ids: Vec::new(),
+                },
+            })
+            .collect();
+
+        let snapshot = AzurePriceSnapshot::create(
+            metadata(vec!["https://example.invalid/azure"]),
+            "australiaeast",
+            records,
+        )
+        .expect("Business Critical matrix without an additional-memory meter");
+
+        assert_eq!(snapshot.mi_rates.len(), PurchaseOption::ALL.len());
     }
 
     #[test]
