@@ -65,13 +65,39 @@ $schemaFailure = New-TestResponse 200 @{
     retrieved_at = '2026-08-01T00:00:00Z'
     warnings = @('Live Azure price refresh failed (provider_schema_changed); the most recent usable snapshot was returned.')
 }
-$harness = New-TestHarness @($catalog, $schemaFailure, $schemaFailure, $schemaFailure)
+$harness = New-TestHarness @(
+    $catalog,
+    $schemaFailure,
+    $schemaFailure,
+    $schemaFailure,
+    $schemaFailure,
+    $schemaFailure
+)
 $result = Invoke-AzurePricingRefresh -Origin $origin -AttemptBudget 40 -InterRegionDelaySeconds 0 `
     -RequestInvoker $harness.RequestInvoker -DelayInvoker $harness.DelayInvoker
-Assert-Equal 3 $result.AttemptsUsed 'Schema circuit attempt count.'
-Assert-Equal 3 $result.Failures.Count 'Schema circuit failure count.'
-Assert-Equal 2 $result.Skipped.Count 'Schema circuit skipped count.'
-Assert-Equal 'repeated_provider_schema_changed' $result.CircuitReason 'Schema circuit reason.'
+Assert-Equal 5 $result.AttemptsUsed 'Schema fallback attempt count.'
+Assert-Equal 0 $result.Refreshed.Count 'Schema fallback fresh count.'
+Assert-Equal 5 $result.Retained.Count 'Schema fallback retained count.'
+Assert-Equal 0 $result.Failures.Count 'Schema fallback failure count.'
+Assert-Equal 0 $result.Skipped.Count 'Schema fallback skipped count.'
+Assert-Equal $null $result.CircuitReason 'Schema fallback circuit reason.'
+Assert-Equal 'provider_schema_changed' $result.Retained[0].Category 'Schema fallback warning category.'
+Assert-Equal 'stale' $result.Retained[0].Status 'Schema fallback status.'
+
+$schemaUnavailable = New-TestResponse 200 @{
+    status = 'unavailable'
+    snapshot_id = $null
+    retrieved_at = $null
+    warnings = @('Live Azure price refresh failed (provider_schema_changed); no usable snapshot is available.')
+}
+$harness = New-TestHarness @($catalog, $schemaUnavailable, $schemaUnavailable, $schemaUnavailable)
+$result = Invoke-AzurePricingRefresh -Origin $origin -AttemptBudget 40 -InterRegionDelaySeconds 0 `
+    -RequestInvoker $harness.RequestInvoker -DelayInvoker $harness.DelayInvoker
+Assert-Equal 3 $result.AttemptsUsed 'Unavailable schema circuit attempt count.'
+Assert-Equal 0 $result.Retained.Count 'Unavailable schema retained count.'
+Assert-Equal 3 $result.Failures.Count 'Unavailable schema failure count.'
+Assert-Equal 2 $result.Skipped.Count 'Unavailable schema skipped count.'
+Assert-Equal 'repeated_provider_schema_changed' $result.CircuitReason 'Unavailable schema circuit reason.'
 
 $catalog = New-TestResponse 200 @{ items = @(@{ code = 'swedencentral' }) }
 $temporary = New-TestResponse 503 '' @{ 'Retry-After' = '9' }

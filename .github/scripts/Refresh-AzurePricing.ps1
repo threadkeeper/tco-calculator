@@ -88,6 +88,8 @@ function New-RefreshOutcome {
     param(
         [Parameter(Mandatory)][bool]$Succeeded,
         [Parameter(Mandatory)][string]$Category,
+        [AllowNull()][string]$Status = $null,
+        [bool]$UsedFallback = $false,
         [bool]$Retryable = $false,
         [bool]$OpenCircuit = $false,
         [AllowNull()][Nullable[int]]$RetryAfterSeconds = $null,
@@ -97,6 +99,8 @@ function New-RefreshOutcome {
     return [pscustomobject]@{
         Succeeded = $Succeeded
         Category = $Category
+        Status = $Status
+        UsedFallback = $UsedFallback
         Retryable = $Retryable
         OpenCircuit = $OpenCircuit
         RetryAfterSeconds = $RetryAfterSeconds
@@ -136,7 +140,7 @@ function ConvertTo-RefreshOutcome {
     $snapshotId = if ($null -eq $snapshotProperty) { $null } else { [string]$snapshotProperty.Value }
     $retrievedAt = if ($null -eq $retrievedProperty) { $null } else { [string]$retrievedProperty.Value }
     if ($status -eq 'fresh' -and -not [string]::IsNullOrWhiteSpace($snapshotId)) {
-        return New-RefreshOutcome -Succeeded $true -Category 'fresh' -RetrievedAt $retrievedAt
+        return New-RefreshOutcome -Succeeded $true -Category 'fresh' -Status $status -RetrievedAt $retrievedAt
     }
 
     $warningProperty = $payload.PSObject.Properties['warnings']
@@ -146,7 +150,11 @@ function ConvertTo-RefreshOutcome {
         '\b(?:provider_[a-z_]+|price_not_found|scope_unsupported)\b'
     ) | ForEach-Object { $_.Value } | Sort-Object -Unique)
     $category = if ($reasonCodes.Count -gt 0) { $reasonCodes[0] } else { "status_$status" }
-    return New-RefreshOutcome -Succeeded $false -Category $category `
+    if ($status -in @('cached', 'stale') -and -not [string]::IsNullOrWhiteSpace($snapshotId)) {
+        return New-RefreshOutcome -Succeeded $true -Category $category -Status $status `
+            -UsedFallback $true -RetrievedAt $retrievedAt
+    }
+    return New-RefreshOutcome -Succeeded $false -Category $category -Status $status `
         -Retryable ($category -eq 'provider_temporarily_unavailable')
 }
 
@@ -219,6 +227,7 @@ function Invoke-AzurePricingRefresh {
     }
 
     $refreshed = [System.Collections.Generic.List[object]]::new()
+    $retained = [System.Collections.Generic.List[object]]::new()
     $failures = [System.Collections.Generic.List[object]]::new()
     $skipped = [System.Collections.Generic.List[object]]::new()
     $attemptsUsed = 0
@@ -258,12 +267,24 @@ function Invoke-AzurePricingRefresh {
             }
             $finalOutcome = $outcome
             if ($outcome.Succeeded) {
-                $refreshed.Add([pscustomobject]@{
-                    Region = $region
-                    RetrievedAt = $outcome.RetrievedAt
-                    Attempts = $attempt
-                })
-                Write-Host "Refreshed $region at $($outcome.RetrievedAt) after $attempt attempt(s)."
+                if ($outcome.UsedFallback) {
+                    $retained.Add([pscustomobject]@{
+                        Region = $region
+                        Status = $outcome.Status
+                        Category = $outcome.Category
+                        RetrievedAt = $outcome.RetrievedAt
+                        Attempts = $attempt
+                    })
+                    Write-Host "::warning title=Azure pricing snapshot retained::$region used its existing $($outcome.Status) snapshot ($($outcome.Category))."
+                }
+                else {
+                    $refreshed.Add([pscustomobject]@{
+                        Region = $region
+                        RetrievedAt = $outcome.RetrievedAt
+                        Attempts = $attempt
+                    })
+                    Write-Host "Refreshed $region at $($outcome.RetrievedAt) after $attempt attempt(s)."
+                }
                 break
             }
             if ($outcome.OpenCircuit) {
@@ -317,6 +338,7 @@ function Invoke-AzurePricingRefresh {
         SupportedRegionCount = $regions.Count
         AttemptsUsed = $attemptsUsed
         Refreshed = @($refreshed)
+        Retained = @($retained)
         Failures = @($failures)
         Skipped = @($skipped)
         CircuitReason = $circuitReason
@@ -332,10 +354,19 @@ function Write-AzurePricingSummary {
     $lines.Add("- Supported regions: $($Result.SupportedRegionCount)")
     $lines.Add("- Refresh attempts: $($Result.AttemptsUsed) of $AttemptBudget maximum")
     $lines.Add("- Refreshed: $($Result.Refreshed.Count)")
+    $lines.Add("- Existing usable snapshots retained: $($Result.Retained.Count)")
     $lines.Add("- Failed: $($Result.Failures.Count)")
     $lines.Add("- Skipped by circuit breaker: $($Result.Skipped.Count)")
     if ($Result.Refreshed.Count -gt 0) {
         $lines.Add("- Successful regions: $($Result.Refreshed.Region -join ', ')")
+    }
+    if ($Result.Retained.Count -gt 0) {
+        $lines.Add('')
+        $lines.Add('### Retained snapshot warnings')
+        foreach ($group in @($Result.Retained | Group-Object Category | Sort-Object Name)) {
+            $lines.Add("- $($group.Name): $($group.Count) region(s)")
+        }
+        $lines.Add("- Regions using existing snapshots: $($Result.Retained.Region -join ', ')")
     }
     if ($Result.Failures.Count -gt 0) {
         $lines.Add('')
