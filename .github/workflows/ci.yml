@@ -43,6 +43,9 @@ jobs:
           $versions = @($manifest.dependencies.psobject.Properties.Value) + @($manifest.devDependencies.psobject.Properties.Value)
           if ($versions.Where({ $_ -match '[~^*]|latest|next' }).Count -ne 0) { throw 'Frontend dependencies must use exact stable versions.' }
           if (-not (Test-Path web/package-lock.json)) { throw 'The reviewed npm lockfile is required.' }
+      - name: Test Azure pricing refresh workflow
+        shell: pwsh
+        run: ./.github/scripts/tests/Refresh-AzurePricing.Tests.ps1
       - name: Compile foundation Bicep
         run: az bicep build --file infra/foundation.bicep --stdout > /dev/null
       - name: Compile application Bicep
