@@ -40,6 +40,7 @@
   import CalculationDetailGrid from './CalculationDetailGrid.svelte';
   import CalculationResults from './CalculationResults.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
+  import MiPurchasePlanSelector from './MiPurchasePlanSelector.svelte';
   import ProblemBanner from './ProblemBanner.svelte';
   import ProjectShareDialog from './ProjectShareDialog.svelte';
   import ResourceEditor from './ResourceEditor.svelte';
@@ -271,7 +272,8 @@
   }
 
   function addResource() {
-    const resource = createResource(workspace.project.settings.project_type);
+    const settings = workspace.project.settings;
+    const resource = createResource(settings.project_type, settings);
     workspace.project.resources = [...workspace.project.resources, resource];
     markDirty();
     if (resource.source_type === 'rds') void loadRdsOptions(resource);
@@ -605,6 +607,22 @@
             onchange={markDirty}
           />
         </div>
+        <label
+          ><span>Default annual hours / instance</span><input
+            type="number"
+            min="0"
+            max="8784"
+            step="1"
+            bind:value={workspace.project.settings.default_annual_hours}
+            oninput={markDirty}
+          /></label
+        >
+        <MiPurchasePlanSelector
+          id="settings-mi-purchase-plan"
+          legend="Default Azure SQL MI pricing for new workloads"
+          bind:value={workspace.project.settings.default_mi_purchase_option}
+          onchange={markDirty}
+        />
         {#if workspace.project.settings.project_type !== 'on_prem'}
           <label
             ><span>Source compute discount</span><input

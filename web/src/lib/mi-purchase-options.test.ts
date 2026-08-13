@@ -1,0 +1,88 @@
+import { describe, expect, it } from 'vitest';
+import {
+  hasMiCommitment,
+  miPurchaseOption,
+  miPurchaseOptionLabel,
+  miPurchaseOptionParts,
+  type MiCommitment
+} from './mi-purchase-options';
+import type { PurchaseOption } from './draft';
+import selectorSource from './components/MiPurchasePlanSelector.svelte?raw';
+
+const OPTIONS: ReadonlyArray<{
+  commitment: MiCommitment;
+  usesAzureHybridBenefit: boolean;
+  option: PurchaseOption;
+  label: string;
+}> = [
+  {
+    commitment: 'payg',
+    usesAzureHybridBenefit: false,
+    option: 'payg',
+    label: 'Pay as you go, license included'
+  },
+  {
+    commitment: 'payg',
+    usesAzureHybridBenefit: true,
+    option: 'ahb',
+    label: 'Pay as you go, Azure Hybrid Benefit'
+  },
+  {
+    commitment: 'one-year',
+    usesAzureHybridBenefit: false,
+    option: 'one-year',
+    label: '1-year reserved, license included'
+  },
+  {
+    commitment: 'one-year',
+    usesAzureHybridBenefit: true,
+    option: 'ahbone-year',
+    label: '1-year reserved, Azure Hybrid Benefit'
+  },
+  {
+    commitment: 'three-year',
+    usesAzureHybridBenefit: false,
+    option: 'three-year',
+    label: '3-year reserved, license included'
+  },
+  {
+    commitment: 'three-year',
+    usesAzureHybridBenefit: true,
+    option: 'ahbthree-year',
+    label: '3-year reserved, Azure Hybrid Benefit'
+  },
+  {
+    commitment: 'sv-one-year',
+    usesAzureHybridBenefit: false,
+    option: 'sv-one-year',
+    label: '1-year savings plan, license included'
+  },
+  {
+    commitment: 'sv-one-year',
+    usesAzureHybridBenefit: true,
+    option: 'ahbsv-one-year',
+    label: '1-year savings plan, Azure Hybrid Benefit'
+  }
+];
+
+describe('SQL MI purchase options', () => {
+  it.each(OPTIONS)('round-trips $option through its two pricing choices', (expected) => {
+    expect(miPurchaseOptionParts(expected.option)).toEqual({
+      commitment: expected.commitment,
+      usesAzureHybridBenefit: expected.usesAzureHybridBenefit
+    });
+    expect(miPurchaseOption(expected.commitment, expected.usesAzureHybridBenefit)).toBe(
+      expected.option
+    );
+    expect(miPurchaseOptionLabel(expected.option)).toBe(expected.label);
+    expect(hasMiCommitment(expected.option)).toBe(expected.commitment !== 'payg');
+  });
+
+  it('presents commitment and licensing as separate choices with eligibility guidance', () => {
+    expect(selectorSource).toContain('Compute commitment');
+    expect(selectorSource).toContain('Azure Hybrid Benefit');
+    expect(selectorSource).toContain('SQL license included');
+    expect(selectorSource).toContain('active Software Assurance or qualifying');
+    expect(selectorSource).toContain('Verify the customer licensing entitlement.');
+  });
+});

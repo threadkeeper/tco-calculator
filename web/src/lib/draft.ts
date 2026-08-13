@@ -31,6 +31,11 @@ export type ProjectSettingsDraft = {
   electricity_rate_usd_per_kwh: string | null;
 };
 
+export type ResourceDefaults = Pick<
+  ProjectSettingsDraft,
+  'default_annual_hours' | 'default_mi_purchase_option'
+>;
+
 export const ON_PREM_PUBLIC_BOOK_REFERENCE = {
   enterprise_license_sa_usd_per_two_core_pack: '20557',
   standard_license_sa_usd_per_two_core_pack: '5363',
@@ -154,7 +159,10 @@ export function createProjectDraft(
   };
 }
 
-export function createResource(projectType: ProjectType): ResourceDraft {
+export function createResource(
+  projectType: ProjectType,
+  defaults: ResourceDefaults
+): ResourceDraft {
   const shared: SharedResourceDraft = {
     id: crypto.randomUUID(),
     workload_name: 'SQL workload',
@@ -163,8 +171,8 @@ export function createResource(projectType: ProjectType): ResourceDraft {
     license_basis: 'byol',
     sql_data_gb_per_instance: '1024',
     source_ram_gb_per_instance: projectType === 'rds' ? '128' : '256',
-    annual_hours_per_instance: '8760',
-    mi_purchase_option: 'ahb'
+    annual_hours_per_instance: defaults.default_annual_hours,
+    mi_purchase_option: defaults.default_mi_purchase_option
   };
 
   if (projectType === 'ec2') {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AlertTriangle, CheckCircle2, CircleHelp, DatabaseZap } from 'lucide-svelte';
+  import { AlertTriangle, CheckCircle2, CircleHelp, DatabaseZap, Info } from 'lucide-svelte';
   import {
     asRecord,
     formatMoney,
@@ -12,6 +12,7 @@
   import { calculationTargetOutcome } from '$lib/calculation-outcome';
   import { relevantCalculationWarnings } from '$lib/calculation-warnings';
   import type { ResourceDraft } from '$lib/draft';
+  import { hasMiCommitment, miPurchaseOptionLabel } from '$lib/mi-purchase-options';
 
   let { calculation, resources }: { calculation: unknown; resources: ResourceDraft[] } = $props();
 
@@ -34,10 +35,17 @@
     )
   );
   const warnings = $derived(relevantCalculationWarnings(revision?.warnings));
+  const hasCommittedPlans = $derived(
+    resources.some((resource) => hasMiCommitment(resource.mi_purchase_option))
+  );
+
+  function sourceResource(result: JsonRecord): ResourceDraft | undefined {
+    const id = readString(result, 'resource_id');
+    return resources.find((resource) => resource.id === id);
+  }
 
   function resourceName(result: JsonRecord): string {
-    const id = readString(result, 'resource_id');
-    return resources.find((resource) => resource.id === id)?.workload_name ?? 'Workload';
+    return sourceResource(result)?.workload_name ?? 'Workload';
   }
 
   function label(value: string | null): string {
@@ -117,6 +125,17 @@
     >
   </div>
 
+  {#if hasCommittedPlans}
+    <div class="pricing-assumption" role="note">
+      <Info size={18} aria-hidden="true" />
+      <p>
+        <strong>Commitment assumption.</strong> These estimates apply effective hourly rates only to the
+        workload hours entered. Reservations and savings plans are commitments, so actual charges can
+        be higher when committed capacity is unused.
+      </p>
+    </div>
+  {/if}
+
   {#if warnings.length > 0}
     <div class="warnings" role="status">
       <AlertTriangle size={18} aria-hidden="true" />
@@ -129,6 +148,7 @@
   <div class="resource-results">
     {#each resourceResults as result (readString(result, 'resource_id'))}
       {@const sourceCosts = readRecord(result, 'source_costs')}
+      {@const resource = sourceResource(result)}
       {@const azureCosts = readRecord(result, 'azure_costs')}
       {@const savings = readRecord(result, 'savings')}
       {@const targetSelection = readRecord(result, 'target_selection')}
@@ -180,6 +200,9 @@
             <span>Azure annual</span><strong class:unavailable={azureUnavailable}
               >{noMapping ? 'NO MAPPING' : formatMoney(azureAnnual)}</strong
             >
+            {#if resource}<small class="pricing-plan"
+                >{miPurchaseOptionLabel(resource.mi_purchase_option)}</small
+              >{/if}
             {#if azureUnavailable}<small class="metric-error">Azure price is unavailable.</small
               >{/if}
           </div>
@@ -359,6 +382,21 @@
     background: var(--warning-surface);
     border: 1px solid var(--warning-border);
   }
+  .pricing-assumption {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 9px;
+    margin-top: 14px;
+    padding: 11px 13px;
+    color: #44595d;
+    background: #f8faf9;
+    border: 1px solid #c8d5d3;
+  }
+  .pricing-assumption p {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
   .warnings p {
     margin: 0 0 3px;
   }
@@ -462,6 +500,11 @@
     font:
       650 1.05rem/1.25 Bahnschrift,
       sans-serif;
+  }
+  .result-costs .pricing-plan {
+    color: #3f6661;
+    font-size: 0.74rem;
+    font-weight: 650;
   }
   .target-strip {
     display: grid;

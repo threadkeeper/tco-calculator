@@ -101,7 +101,7 @@ describe('project drafts', () => {
 
   it('accepts editable projects as detached copies and rejects malformed values', () => {
     const original = createProjectDraft('ec2', 'Editable', null);
-    original.resources.push(createResource('ec2'));
+    original.resources.push(createResource('ec2', original.settings));
 
     const editable = editableProject(original);
 
@@ -119,7 +119,7 @@ describe('project drafts', () => {
     'normalizes browser-coerced %s values to API contract types',
     (projectType) => {
       const project = createProjectDraft(projectType, 'Contract test', null);
-      const resource = createResource(projectType);
+      const resource = createResource(projectType, project.settings);
       project.resources.push(resource);
       const settingDecimals = {
         source_compute_discount: 0.1,
@@ -212,7 +212,8 @@ describe('resource drafts', () => {
   ] as const)(
     'creates %s resources with source-specific defaults',
     (projectType, instanceType, ram) => {
-      const resource = createResource(projectType);
+      const project = createProjectDraft(projectType, 'Resource defaults', null);
+      const resource = createResource(projectType, project.settings);
 
       expect(resource.source_type).toBe(projectType);
       expect(resource.id).toMatch(/^[0-9a-f-]{36}$/);
@@ -234,4 +235,17 @@ describe('resource drafts', () => {
       }
     }
   );
+
+  it('copies the project pricing defaults into each new resource', () => {
+    const project = createProjectDraft('ec2', 'Custom defaults', null);
+    project.settings.default_annual_hours = '7300';
+    project.settings.default_mi_purchase_option = 'ahbthree-year';
+
+    const resource = createResource('ec2', project.settings);
+
+    expect(resource).toMatchObject({
+      annual_hours_per_instance: '7300',
+      mi_purchase_option: 'ahbthree-year'
+    });
+  });
 });

@@ -214,7 +214,7 @@
         setupAwsRegion.trim(),
         setupAzureRegion.trim()
       );
-      project.resources = [createResource(setupType)];
+      project.resources = [createResource(setupType, project.settings)];
       const workspace = createGuestWorkspace(project);
 
       if (mode === 'authenticated' && setupType !== 'on_prem') {

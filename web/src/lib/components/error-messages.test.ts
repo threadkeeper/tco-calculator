@@ -7,7 +7,10 @@ import ResourceEditor from './ResourceEditor.svelte';
 import resourceEditorSource from './ResourceEditor.svelte?raw';
 
 function ec2Resource(): Ec2ResourceDraft {
-  const resource = createResource('ec2');
+  const resource = createResource('ec2', {
+    default_annual_hours: '8760',
+    default_mi_purchase_option: 'ahb'
+  });
   if (resource.source_type !== 'ec2') throw new Error('Expected an EC2 resource.');
   return resource;
 }

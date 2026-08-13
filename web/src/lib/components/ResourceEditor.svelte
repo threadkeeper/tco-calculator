@@ -2,6 +2,7 @@
   import { Database, Plus, Trash2 } from 'lucide-svelte';
   import { readBoolean, readString, type JsonRecord } from '$lib/api';
   import type { EbsVolumeDraft, ResourceDraft } from '$lib/draft';
+  import MiPurchasePlanSelector from './MiPurchasePlanSelector.svelte';
 
   let {
     resource,
@@ -210,19 +211,12 @@
           >SQL data is required.</small
         >{/if}
     </label>
-    <label class="purchase-option">
-      <span>Azure purchase option</span>
-      <select bind:value={resource.mi_purchase_option} {onchange}>
-        <option value="payg">PAYG, license included</option>
-        <option value="ahb">PAYG, Azure Hybrid Benefit</option>
-        <option value="one-year">1-year reserved, license included</option>
-        <option value="ahbone-year">1-year reserved, AHB</option>
-        <option value="three-year">3-year reserved, license included</option>
-        <option value="ahbthree-year">3-year reserved, AHB</option>
-        <option value="sv-one-year">1-year savings plan, license included</option>
-        <option value="ahbsv-one-year">1-year savings plan, AHB</option>
-      </select>
-    </label>
+    <MiPurchasePlanSelector
+      id={`${resource.id}-mi-purchase-plan`}
+      legend="Azure SQL MI pricing override"
+      bind:value={resource.mi_purchase_option}
+      {onchange}
+    />
   </div>
 
   {#if resource.source_type === 'ec2'}
@@ -678,36 +672,6 @@
     border-color: var(--azure);
     outline: 2px solid var(--azure-focus);
     outline-offset: 0;
-  }
-  .purchase-option > span {
-    color: var(--copilot-ink);
-    text-shadow: 0 0 10px rgb(133 52 243 / 18%);
-  }
-  .purchase-option select {
-    color: var(--copilot-ink);
-    background: var(--copilot-surface);
-    border-color: color-mix(in srgb, var(--copilot-purple) 62%, var(--border-input));
-    box-shadow:
-      inset 3px 0 0 var(--copilot-purple),
-      0 0 0 1px rgb(133 52 243 / 10%),
-      0 0 14px rgb(133 52 243 / 18%);
-    font-weight: 650;
-  }
-  .purchase-option select:hover {
-    background: color-mix(in srgb, var(--copilot-purple-light) 12%, var(--surface-input));
-    border-color: var(--copilot-purple);
-    box-shadow:
-      inset 3px 0 0 var(--copilot-purple),
-      0 0 0 1px rgb(200 152 253 / 18%),
-      0 0 18px rgb(133 52 243 / 26%);
-  }
-  .purchase-option select:focus {
-    border-color: var(--copilot-purple);
-    outline: 3px solid rgb(200 152 253 / 32%);
-    box-shadow:
-      inset 3px 0 0 var(--copilot-purple),
-      0 0 0 1px rgb(200 152 253 / 24%),
-      0 0 20px rgb(133 52 243 / 30%);
   }
   input:disabled {
     color: var(--muted);
