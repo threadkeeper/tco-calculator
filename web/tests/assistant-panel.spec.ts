@@ -94,3 +94,87 @@ test('cancels a pending response and stays within the viewport', async ({ page }
   );
   releaseResponse();
 });
+
+test('opens a reviewed assistant draft with extracted values populated', async ({ page }) => {
+  await page.unroute('**/api/v1/session');
+  await page.route('**/api/v1/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        mode: 'authenticated',
+        display_name: 'Test user',
+        privacy_consent: {
+          notice_version: 'test',
+          required: false,
+          accepted_at: '2026-08-13T12:00:00Z',
+          allow_contact: false,
+          email_address: null
+        }
+      })
+    })
+  );
+  await page.route('**/api/v1/projects', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+  );
+  await page.route('**/api/v1/assistant/turn', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        answer: 'I staged the extracted values for review.',
+        references: [],
+        proposal: newProjectDraftProposal()
+      })
+    })
+  );
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Open TCO assistant' }).click();
+  const composer = page.getByLabel('Ask the TCO assistant');
+  await composer.fill('Create a new estimate from the screenshot');
+  await composer.press('Enter');
+  await page.getByRole('button', { name: 'Open draft' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Imported inventory' })).toBeVisible();
+  await page.getByText('Project settings').click();
+  await expect(page.getByLabel('Project name')).toHaveValue('Imported inventory');
+  await expect(page.getByLabel('Azure region', { exact: true })).toHaveValue('southafricanorth');
+  await expect(page.getByLabel('Enterprise License + SA quote (USD / 2-core pack)')).toHaveValue(
+    '20557'
+  );
+  await expect(page.getByText('Opened', { exact: true })).toBeVisible();
+});
+
+function newProjectDraftProposal() {
+  return {
+    proposal_id: `sha256:${'b'.repeat(64)}`,
+    action: 'open_project_draft',
+    project: {
+      name: 'Imported inventory',
+      description: 'Extracted from a synthetic screenshot',
+      settings: {
+        project_type: 'on_prem',
+        aws_region: null,
+        azure_region: 'southafricanorth',
+        currency: 'USD',
+        source_compute_discount: '0',
+        source_license_discount: '0',
+        source_storage_discount: '0',
+        azure_compute_discount: '0',
+        azure_license_discount: '0',
+        azure_storage_discount: '0',
+        selected_parity_adjustment: '0',
+        default_annual_hours: '8760',
+        default_mi_purchase_option: 'ahb',
+        enterprise_license_sa_usd_per_two_core_pack: '20557',
+        standard_license_sa_usd_per_two_core_pack: '5363',
+        remaining_coverage_months: 12,
+        electricity_rate_usd_per_kwh: '0.09'
+      },
+      resources: [],
+      aws_price_snapshot_id: null,
+      azure_price_snapshot_id: null
+    }
+  };
+}

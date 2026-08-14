@@ -313,7 +313,7 @@
 
   function openProjectDraft(messageId: number, proposal: AssistantProposal) {
     if (proposal.action !== 'open_project_draft' || !canOpenProjectDraft(proposal)) return;
-    onprojectdrafted(proposal.project);
+    onprojectdrafted($state.snapshot(proposal.project));
     messages = messages.map((message) =>
       message.id === messageId ? { ...message, proposalStatus: 'opened' } : message
     );
