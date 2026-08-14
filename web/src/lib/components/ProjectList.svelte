@@ -29,6 +29,21 @@
     if (value === 'on_prem') return 'On-prem';
     return value?.toUpperCase() ?? 'Unknown';
   }
+
+  function signedMoney(value: string | null): string {
+    if (value === null) return formatMoney(null);
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return value;
+    const formatted = formatMoney(value);
+    return amount > 0 ? `+${formatted}` : formatted;
+  }
+
+  function savingsTone(value: string | null): 'positive' | 'negative' | 'neutral' | 'unavailable' {
+    if (value === null) return 'unavailable';
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount === 0) return 'neutral';
+    return amount > 0 ? 'positive' : 'negative';
+  }
 </script>
 
 <section class="title-band" aria-labelledby="projects-heading">
@@ -52,6 +67,7 @@
     <span>Resources</span>
     <span>Source annual</span>
     <span>Azure annual</span>
+    <span>Azure Savings</span>
     <span>Actions</span>
   </div>
   {#if loading}
@@ -67,6 +83,7 @@
       {#each projects as project (readString(project, 'id'))}
         {@const id = readString(project, 'id') ?? ''}
         {@const name = readString(project, 'name') ?? 'Untitled project'}
+        {@const azureSavings = readString(project, 'azure_savings')}
         <div class="table-row">
           <button class="project-name" type="button" onclick={() => onopen(id)}>{name}</button>
           <span>{typeLabel(readString(project, 'project_type'))}</span>
@@ -76,6 +93,9 @@
           <span>{readNumber(project, 'resource_count') ?? 0}</span>
           <strong>{formatMoney(readString(project, 'source_annual_total'))}</strong>
           <strong>{formatMoney(readString(project, 'azure_annual_total'))}</strong>
+          <strong class="azure-savings" data-tone={savingsTone(azureSavings)}
+            >{signedMoney(azureSavings)}</strong
+          >
           <span class="row-actions">
             <button
               type="button"
@@ -99,11 +119,11 @@
 
 <style>
   .table-body {
-    min-width: 1160px;
+    min-width: 1280px;
   }
   .table-row {
     display: grid;
-    grid-template-columns: 1.8fr 0.75fr 1fr 1fr 1fr 0.65fr 1fr 1fr 0.7fr;
+    grid-template-columns: 1.8fr 0.75fr 1fr 1fr 1fr 0.65fr 1fr 1fr 1fr 0.7fr;
     align-items: center;
     gap: 14px;
     min-height: 58px;
@@ -136,6 +156,26 @@
     overflow-wrap: anywhere;
     color: var(--ink-strong);
     font-weight: 650;
+  }
+  .azure-savings {
+    width: max-content;
+    max-width: 100%;
+    padding: 4px 7px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+  }
+  .azure-savings[data-tone='positive'] {
+    color: var(--warning-text);
+    background: var(--warning-surface);
+    border-color: var(--warning-border);
+  }
+  .azure-savings[data-tone='negative'] {
+    color: var(--danger-text);
+    background: var(--danger-surface);
+    border-color: var(--danger-border);
+  }
+  .azure-savings[data-tone='unavailable'] {
+    color: var(--muted);
   }
   .row-actions {
     display: flex;

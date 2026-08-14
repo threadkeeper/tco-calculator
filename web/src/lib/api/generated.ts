@@ -852,6 +852,7 @@ export interface components {
             resource_count: number;
             source_annual_total: components["schemas"]["Decimal"] | null;
             azure_annual_total: components["schemas"]["Decimal"] | null;
+            azure_savings: components["schemas"]["Decimal"] | null;
         };
         Problem: {
             /** Format: uri */

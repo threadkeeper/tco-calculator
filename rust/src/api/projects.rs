@@ -51,6 +51,7 @@ pub(crate) struct ProjectSummary {
     resource_count: usize,
     source_annual_total: Option<DecimalValue>,
     azure_annual_total: Option<DecimalValue>,
+    azure_savings: Option<DecimalValue>,
 }
 
 pub(crate) async fn list(
@@ -286,6 +287,7 @@ impl From<ProjectDocument> for ProjectSummary {
                     (revision.portfolio_totals.comparable_resource_count > 0)
                         .then_some(revision.portfolio_totals.azure_mapped_rows_total)
                 });
+        let azure_savings = calculate_azure_savings(source_annual_total, azure_annual_total);
 
         Self {
             id: document.id,
@@ -297,6 +299,47 @@ impl From<ProjectDocument> for ProjectSummary {
             resource_count: document.resources.len(),
             source_annual_total,
             azure_annual_total,
+            azure_savings,
         }
+    }
+}
+
+fn calculate_azure_savings(
+    source_annual_total: Option<DecimalValue>,
+    azure_annual_total: Option<DecimalValue>,
+) -> Option<DecimalValue> {
+    source_annual_total
+        .zip(azure_annual_total)
+        .map(|(source, azure)| DecimalValue(source.0 - azure.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::calculate_azure_savings;
+    use crate::domain::decimal::DecimalValue;
+
+    fn decimal(value: &str) -> DecimalValue {
+        value.parse().expect("test decimal should be valid")
+    }
+
+    #[test]
+    fn azure_savings_is_positive_when_azure_is_cheaper() {
+        assert_eq!(
+            calculate_azure_savings(Some(decimal("1200.00")), Some(decimal("950.00"))),
+            Some(decimal("250.00"))
+        );
+    }
+
+    #[test]
+    fn azure_savings_is_negative_when_azure_is_more_expensive() {
+        assert_eq!(
+            calculate_azure_savings(Some(decimal("950.00")), Some(decimal("1200.00"))),
+            Some(decimal("-250.00"))
+        );
+    }
+
+    #[test]
+    fn azure_savings_is_unavailable_without_both_totals() {
+        assert_eq!(calculate_azure_savings(Some(decimal("950.00")), None), None);
     }
 }

@@ -1608,7 +1608,7 @@ components:
       unevaluatedProperties: false
     ProjectSummary:
       type: object
-      required: [id, name, project_type, modified_at, source_region, azure_region, resource_count, source_annual_total, azure_annual_total]
+      required: [id, name, project_type, modified_at, source_region, azure_region, resource_count, source_annual_total, azure_annual_total, azure_savings]
       properties:
         id:
           type: string
@@ -1632,6 +1632,10 @@ components:
             - $ref: '#/components/schemas/Decimal'
             - type: 'null'
         azure_annual_total:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+        azure_savings:
           oneOf:
             - $ref: '#/components/schemas/Decimal'
             - type: 'null'
