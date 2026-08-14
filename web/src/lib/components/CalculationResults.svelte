@@ -377,7 +377,7 @@
     min-height: 112px;
     align-content: center;
     padding: 17px 19px;
-    background: color-mix(in srgb, var(--azure) 4%, var(--surface));
+    background: var(--surface);
   }
   .total-block + .total-block {
     border-left: 1px solid var(--border);
@@ -462,7 +462,7 @@
   }
   .result-row {
     overflow: hidden;
-    background: var(--surface);
+    background: color-mix(in srgb, var(--azure) 4%, var(--surface));
     border: 1px solid var(--border);
   }
   .result-row > header {

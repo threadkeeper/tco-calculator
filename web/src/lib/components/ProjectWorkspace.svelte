@@ -575,328 +575,331 @@
       {:else}
         <ProblemBanner message="SQL Pay As You Go settings are unavailable." />
       {/if}
-    {/if}
-
-    <section class="scope-band" class:hidden={isSqlPayg} aria-label="Project pricing scope">
-      <div class="scope-heading">
-        <div>
-          <span class="eyebrow">Comparison scope</span>
-          <h2>
-            {workspace.project.settings.project_type === 'on_prem' ? 'Datacenter' : 'AWS'} to Azure SQL
-            Managed Instance
-          </h2>
-        </div>
-        <button
-          class="secondary compact"
-          type="button"
-          onclick={refreshPrices}
-          disabled={resolving}
-        >
-          <span class:spin={resolving} aria-hidden="true"><RotateCw size={16} /></span>
-          {resolving ? 'Refreshing…' : 'Refresh prices'}
-        </button>
-      </div>
-      <div class="scope-grid">
-        <div class="scope-cell source-scope">
-          <CloudCog size={19} />
+    {:else}
+      <section class="scope-band" aria-label="Project pricing scope">
+        <div class="scope-heading">
           <div>
-            <span>Source region</span><strong
-              >{workspace.project.settings.aws_region ?? 'On premises'}</strong
+            <span class="eyebrow">Comparison scope</span>
+            <h2>
+              {workspace.project.settings.project_type === 'on_prem' ? 'Datacenter' : 'AWS'} to Azure
+              SQL Managed Instance
+            </h2>
+          </div>
+          <button
+            class="secondary compact"
+            type="button"
+            onclick={refreshPrices}
+            disabled={resolving}
+          >
+            <span class:spin={resolving} aria-hidden="true"><RotateCw size={16} /></span>
+            {resolving ? 'Refreshing…' : 'Refresh prices'}
+          </button>
+        </div>
+        <div class="scope-grid">
+          <div class="scope-cell source-scope">
+            <CloudCog size={19} />
+            <div>
+              <span>Source region</span><strong
+                >{workspace.project.settings.aws_region ?? 'On premises'}</strong
+              >
+            </div>
+            <span class="resolution"
+              >{pricingResolutionLabel(
+                workspace.aws_resolution,
+                workspace.project.settings.project_type !== 'on_prem'
+              )}</span
             >
           </div>
-          <span class="resolution"
-            >{pricingResolutionLabel(
-              workspace.aws_resolution,
-              workspace.project.settings.project_type !== 'on_prem'
-            )}</span
-          >
-        </div>
-        <div class="scope-arrow" aria-hidden="true">→</div>
-        <div class="scope-cell target-scope">
-          <ShieldCheck size={19} />
-          <div>
-            <span>Azure region</span><strong>{workspace.project.settings.azure_region}</strong>
+          <div class="scope-arrow" aria-hidden="true">→</div>
+          <div class="scope-cell target-scope">
+            <ShieldCheck size={19} />
+            <div>
+              <span>Azure region</span><strong>{workspace.project.settings.azure_region}</strong>
+            </div>
+            <span class="resolution"
+              >{pricingResolutionLabel(workspace.azure_resolution, true)}</span
+            >
           </div>
-          <span class="resolution">{pricingResolutionLabel(workspace.azure_resolution, true)}</span>
         </div>
-      </div>
-      {#if catalogWarning}<p class="catalog-warning">{catalogWarning}</p>{/if}
-    </section>
+        {#if catalogWarning}<p class="catalog-warning">{catalogWarning}</p>{/if}
+      </section>
 
-    <details class="settings-panel" class:hidden={isSqlPayg} bind:open={settingsOpen}>
-      <summary>Project settings</summary>
-      <div class="settings-grid">
-        <label
-          ><span>Project name</span><input
-            bind:value={workspace.project.name}
-            oninput={markDirty}
-          /></label
-        >
-        <label
-          ><span>Description</span><input
-            bind:value={workspace.project.description}
-            oninput={markDirty}
-            placeholder="Optional"
-          /></label
-        >
-        {#if workspace.project.settings.project_type !== 'on_prem'}
+      <details class="settings-panel" bind:open={settingsOpen}>
+        <summary>Project settings</summary>
+        <div class="settings-grid">
+          <label
+            ><span>Project name</span><input
+              bind:value={workspace.project.name}
+              oninput={markDirty}
+            /></label
+          >
+          <label
+            ><span>Description</span><input
+              bind:value={workspace.project.description}
+              oninput={markDirty}
+              placeholder="Optional"
+            /></label
+          >
+          {#if workspace.project.settings.project_type !== 'on_prem'}
+            <div class="region-field">
+              <SearchSelect
+                id="settings-aws-region"
+                label="AWS region"
+                options={awsRegions}
+                bind:value={workspace.project.settings.aws_region}
+                required
+                onchange={() => {
+                  markDirty();
+                  void loadSourceCatalogs();
+                }}
+              />
+            </div>
+          {/if}
           <div class="region-field">
             <SearchSelect
-              id="settings-aws-region"
-              label="AWS region"
-              options={awsRegions}
-              bind:value={workspace.project.settings.aws_region}
+              id="settings-azure-region"
+              label="Azure region"
+              options={azureRegions}
+              bind:value={workspace.project.settings.azure_region}
               required
-              onchange={() => {
-                markDirty();
-                void loadSourceCatalogs();
-              }}
+              onchange={markDirty}
             />
           </div>
-        {/if}
-        <div class="region-field">
-          <SearchSelect
-            id="settings-azure-region"
-            label="Azure region"
-            options={azureRegions}
-            bind:value={workspace.project.settings.azure_region}
-            required
+          <label
+            ><span>Default annual hours / instance</span><input
+              type="number"
+              min="0"
+              max="8784"
+              step="1"
+              bind:value={workspace.project.settings.default_annual_hours}
+              oninput={markDirty}
+            /></label
+          >
+          <MiPurchasePlanSelector
+            id="settings-mi-purchase-plan"
+            legend="Default Azure SQL MI pricing for new workloads"
+            bind:value={workspace.project.settings.default_mi_purchase_option}
             onchange={markDirty}
           />
-        </div>
-        <label
-          ><span>Default annual hours / instance</span><input
-            type="number"
-            min="0"
-            max="8784"
-            step="1"
-            bind:value={workspace.project.settings.default_annual_hours}
-            oninput={markDirty}
-          /></label
-        >
-        <MiPurchasePlanSelector
-          id="settings-mi-purchase-plan"
-          legend="Default Azure SQL MI pricing for new workloads"
-          bind:value={workspace.project.settings.default_mi_purchase_option}
-          onchange={markDirty}
-        />
-        {#if workspace.project.settings.project_type !== 'on_prem'}
+          {#if workspace.project.settings.project_type !== 'on_prem'}
+            <label
+              ><span>Source compute discount</span><input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                bind:value={workspace.project.settings.source_compute_discount}
+                oninput={markDirty}
+              /></label
+            >
+          {/if}
           <label
-            ><span>Source compute discount</span><input
+            ><span>Source license discount</span><input
               type="number"
               min="0"
               max="1"
               step="0.01"
-              bind:value={workspace.project.settings.source_compute_discount}
+              bind:value={workspace.project.settings.source_license_discount}
               oninput={markDirty}
             /></label
           >
-        {/if}
-        <label
-          ><span>Source license discount</span><input
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            bind:value={workspace.project.settings.source_license_discount}
-            oninput={markDirty}
-          /></label
-        >
-        {#if workspace.project.settings.project_type !== 'on_prem'}
+          {#if workspace.project.settings.project_type !== 'on_prem'}
+            <label
+              ><span>Source storage discount</span><input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                bind:value={workspace.project.settings.source_storage_discount}
+                oninput={markDirty}
+              /></label
+            >
+          {/if}
           <label
-            ><span>Source storage discount</span><input
+            ><span>Azure compute discount</span><input
               type="number"
               min="0"
               max="1"
               step="0.01"
-              bind:value={workspace.project.settings.source_storage_discount}
+              bind:value={workspace.project.settings.azure_compute_discount}
               oninput={markDirty}
             /></label
           >
-        {/if}
-        <label
-          ><span>Azure compute discount</span><input
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            bind:value={workspace.project.settings.azure_compute_discount}
-            oninput={markDirty}
-          /></label
-        >
-        <label
-          ><span>Azure license discount</span><input
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            bind:value={workspace.project.settings.azure_license_discount}
-            oninput={markDirty}
-          /></label
-        >
-        <label
-          ><span>Azure storage discount</span><input
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            bind:value={workspace.project.settings.azure_storage_discount}
-            oninput={markDirty}
-          /></label
-        >
-        <label
-          ><span>Selected parity adjustment</span><input
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            bind:value={workspace.project.settings.selected_parity_adjustment}
-            oninput={markDirty}
-          /></label
-        >
-        {#if workspace.project.settings.project_type === 'on_prem'}
-          <fieldset class="on-prem-pricing">
-            <legend>On-premises SQL licensing</legend>
-            <div class="pricing-reference">
-              <div class="reference-copy">
-                <strong>Public first-year USD reference</strong>
-                <span
-                  >Enterprise {formatMoney(
-                    ON_PREM_PUBLIC_BOOK_REFERENCE.enterprise_license_sa_usd_per_two_core_pack
-                  )} · Standard {formatMoney(
-                    ON_PREM_PUBLIC_BOOK_REFERENCE.standard_license_sa_usd_per_two_core_pack
-                  )} · 12 months · verified 7 Aug 2026</span
-                >
-                <span>Taxes excluded. Replace with the applicable EA or customer quote.</span>
+          <label
+            ><span>Azure license discount</span><input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              bind:value={workspace.project.settings.azure_license_discount}
+              oninput={markDirty}
+            /></label
+          >
+          <label
+            ><span>Azure storage discount</span><input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              bind:value={workspace.project.settings.azure_storage_discount}
+              oninput={markDirty}
+            /></label
+          >
+          <label
+            ><span>Selected parity adjustment</span><input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              bind:value={workspace.project.settings.selected_parity_adjustment}
+              oninput={markDirty}
+            /></label
+          >
+          {#if workspace.project.settings.project_type === 'on_prem'}
+            <fieldset class="on-prem-pricing">
+              <legend>On-premises SQL licensing</legend>
+              <div class="pricing-reference">
+                <div class="reference-copy">
+                  <strong>Public first-year USD reference</strong>
+                  <span
+                    >Enterprise {formatMoney(
+                      ON_PREM_PUBLIC_BOOK_REFERENCE.enterprise_license_sa_usd_per_two_core_pack
+                    )} · Standard {formatMoney(
+                      ON_PREM_PUBLIC_BOOK_REFERENCE.standard_license_sa_usd_per_two_core_pack
+                    )} · 12 months · verified 7 Aug 2026</span
+                  >
+                  <span>Taxes excluded. Replace with the applicable EA or customer quote.</span>
+                </div>
+                <div class="reference-actions">
+                  <a
+                    href={ON_PREM_PUBLIC_BOOK_REFERENCE.source_url}
+                    target="_blank"
+                    rel="external noreferrer">Microsoft source</a
+                  >
+                  <button class="secondary compact" type="button" onclick={usePublicBookReference}
+                    ><DollarSign size={16} /> Use public reference</button
+                  >
+                </div>
               </div>
-              <div class="reference-actions">
-                <a
-                  href={ON_PREM_PUBLIC_BOOK_REFERENCE.source_url}
-                  target="_blank"
-                  rel="external noreferrer">Microsoft source</a
-                >
-                <button class="secondary compact" type="button" onclick={usePublicBookReference}
-                  ><DollarSign size={16} /> Use public reference</button
-                >
-              </div>
-            </div>
-            <div class="on-prem-fields">
-              <label
-                ><span>Enterprise License + SA quote (USD / 2-core pack)</span><input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  required
-                  aria-invalid={onPremPriceError(
-                    workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack,
-                    'Enterprise'
-                  ) !== null}
-                  aria-describedby="enterprise-license-sa-error"
-                  bind:value={
-                    workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack
-                  }
-                  oninput={markDirty}
-                />
-                {#if onPremPriceError(workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack, 'Enterprise')}
-                  <small class="field-error" id="enterprise-license-sa-error"
-                    >{onPremPriceError(
+              <div class="on-prem-fields">
+                <label
+                  ><span>Enterprise License + SA quote (USD / 2-core pack)</span><input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                    aria-invalid={onPremPriceError(
                       workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack,
                       'Enterprise'
-                    )}</small
-                  >
-                {/if}</label
-              >
-              <label
-                ><span>Standard License + SA quote (USD / 2-core pack)</span><input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  required
-                  aria-invalid={onPremPriceError(
-                    workspace.project.settings.standard_license_sa_usd_per_two_core_pack,
-                    'Standard'
-                  ) !== null}
-                  aria-describedby="standard-license-sa-error"
-                  bind:value={workspace.project.settings.standard_license_sa_usd_per_two_core_pack}
-                  oninput={markDirty}
-                />
-                {#if onPremPriceError(workspace.project.settings.standard_license_sa_usd_per_two_core_pack, 'Standard')}
-                  <small class="field-error" id="standard-license-sa-error"
-                    >{onPremPriceError(
+                    ) !== null}
+                    aria-describedby="enterprise-license-sa-error"
+                    bind:value={
+                      workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack
+                    }
+                    oninput={markDirty}
+                  />
+                  {#if onPremPriceError(workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack, 'Enterprise')}
+                    <small class="field-error" id="enterprise-license-sa-error"
+                      >{onPremPriceError(
+                        workspace.project.settings.enterprise_license_sa_usd_per_two_core_pack,
+                        'Enterprise'
+                      )}</small
+                    >
+                  {/if}</label
+                >
+                <label
+                  ><span>Standard License + SA quote (USD / 2-core pack)</span><input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                    aria-invalid={onPremPriceError(
                       workspace.project.settings.standard_license_sa_usd_per_two_core_pack,
                       'Standard'
-                    )}</small
-                  >
-                {/if}</label
-              >
-              <label
-                ><span>Remaining EA/SA coverage</span><select
-                  bind:value={workspace.project.settings.remaining_coverage_months}
-                  onchange={markDirty}
-                  ><option value={12}>12 months</option><option value={24}>24 months</option><option
-                    value={36}>36 months</option
-                  ></select
-                ></label
-              >
-              <label
-                ><span>Electricity rate (USD/kWh)</span><input
-                  type="number"
-                  min="0"
-                  step="0.0001"
-                  bind:value={workspace.project.settings.electricity_rate_usd_per_kwh}
-                  oninput={markDirty}
-                /></label
-              >
-            </div>
-          </fieldset>
-        {/if}
-      </div>
-    </details>
-
-    <section class="resources" class:hidden={isSqlPayg} aria-labelledby="resources-heading">
-      <div class="section-header">
-        <div>
-          <span class="eyebrow">Inventory</span>
-          <h2 id="resources-heading">{resourceLabel} workloads</h2>
+                    ) !== null}
+                    aria-describedby="standard-license-sa-error"
+                    bind:value={
+                      workspace.project.settings.standard_license_sa_usd_per_two_core_pack
+                    }
+                    oninput={markDirty}
+                  />
+                  {#if onPremPriceError(workspace.project.settings.standard_license_sa_usd_per_two_core_pack, 'Standard')}
+                    <small class="field-error" id="standard-license-sa-error"
+                      >{onPremPriceError(
+                        workspace.project.settings.standard_license_sa_usd_per_two_core_pack,
+                        'Standard'
+                      )}</small
+                    >
+                  {/if}</label
+                >
+                <label
+                  ><span>Remaining EA/SA coverage</span><select
+                    bind:value={workspace.project.settings.remaining_coverage_months}
+                    onchange={markDirty}
+                    ><option value={12}>12 months</option><option value={24}>24 months</option
+                    ><option value={36}>36 months</option></select
+                  ></label
+                >
+                <label
+                  ><span>Electricity rate (USD/kWh)</span><input
+                    type="number"
+                    min="0"
+                    step="0.0001"
+                    bind:value={workspace.project.settings.electricity_rate_usd_per_kwh}
+                    oninput={markDirty}
+                  /></label
+                >
+              </div>
+            </fieldset>
+          {/if}
         </div>
-        <button class="secondary" type="button" onclick={addResource}
-          ><Plus size={17} /> Add {resourceLabel}</button
-        >
-      </div>
+      </details>
 
-      {#if workspace.project.resources.length === 0}
-        <div class="empty-resources">
-          <Database size={28} aria-hidden="true" />
-          <h3>No workloads yet</h3>
-          <button class="primary" type="button" onclick={addResource}
-            ><Plus size={17} /> Add first {resourceLabel}</button
+      <section class="resources" aria-labelledby="resources-heading">
+        <div class="section-header">
+          <div>
+            <span class="eyebrow">Inventory</span>
+            <h2 id="resources-heading">{resourceLabel} workloads</h2>
+          </div>
+          <button class="secondary" type="button" onclick={addResource}
+            ><Plus size={17} /> Add {resourceLabel}</button
           >
         </div>
-      {:else}
-        <div class="resource-list">
-          {#each workspace.project.resources as resource (resource.id)}
-            <ResourceEditor
-              {resource}
-              {sourceInstances}
-              {ebsTypes}
-              rdsOptions={rdsOptions[resource.id] ?? []}
-              purchaseOptionDiscounts={purchaseOptionDiscounts(resource.id)}
-              onchange={markDirty}
-              oncatalogchange={() =>
-                resource.source_type === 'rds' && void loadRdsOptions(resource)}
-              onremove={() => removeResource(resource.id)}
-            />
-          {/each}
-        </div>
-      {/if}
-    </section>
 
-    {#if !isSqlPayg && workspace.calculation}
-      <CalculationResults
-        calculation={workspace.calculation}
-        resources={workspace.project.resources}
-      />
-      <CalculationDetailGrid calculation={workspace.calculation} project={workspace.project} />
+        {#if workspace.project.resources.length === 0}
+          <div class="empty-resources">
+            <Database size={28} aria-hidden="true" />
+            <h3>No workloads yet</h3>
+            <button class="primary" type="button" onclick={addResource}
+              ><Plus size={17} /> Add first {resourceLabel}</button
+            >
+          </div>
+        {:else}
+          <div class="resource-list">
+            {#each workspace.project.resources as resource (resource.id)}
+              <ResourceEditor
+                {resource}
+                {sourceInstances}
+                {ebsTypes}
+                rdsOptions={rdsOptions[resource.id] ?? []}
+                purchaseOptionDiscounts={purchaseOptionDiscounts(resource.id)}
+                onchange={markDirty}
+                oncatalogchange={() =>
+                  resource.source_type === 'rds' && void loadRdsOptions(resource)}
+                onremove={() => removeResource(resource.id)}
+              />
+            {/each}
+          </div>
+        {/if}
+      </section>
+
+      {#if workspace.calculation}
+        <CalculationResults
+          calculation={workspace.calculation}
+          resources={workspace.project.resources}
+        />
+        <CalculationDetailGrid calculation={workspace.calculation} project={workspace.project} />
+      {/if}
     {/if}
 
     {#if mode === 'guest'}

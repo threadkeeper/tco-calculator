@@ -24,7 +24,7 @@ describe('project drafts', () => {
       "untrack(() => workspace.project.settings.project_type === 'on_prem')"
     );
     expect(projectWorkspaceSource).toContain(
-      '<details class="settings-panel" class:hidden={isSqlPayg} bind:open={settingsOpen}>'
+      '<details class="settings-panel" bind:open={settingsOpen}>'
     );
     expect(projectWorkspaceSource).toContain('On-premises SQL licensing');
     expect(projectWorkspaceSource).toContain('ON_PREM_PUBLIC_BOOK_REFERENCE');
