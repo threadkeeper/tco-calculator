@@ -165,9 +165,9 @@
     border-radius: 4px;
   }
   .azure-savings[data-tone='positive'] {
-    color: var(--warning-text);
-    background: var(--warning-surface);
-    border-color: var(--warning-border);
+    color: var(--success);
+    background: var(--success-surface);
+    border-color: var(--success-border);
   }
   .azure-savings[data-tone='negative'] {
     color: var(--danger-text);

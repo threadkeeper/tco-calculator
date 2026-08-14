@@ -61,8 +61,8 @@ test('shows signed Azure savings with positive and negative tints', async ({ pag
   const positive = page.locator('.azure-savings[data-tone="positive"]');
   const negative = page.locator('.azure-savings[data-tone="negative"]');
   await expect(positive).toHaveText('+$25,000.00');
-  await expect(positive).toHaveCSS('color', 'rgb(240, 210, 122)');
-  await expect(positive).toHaveCSS('background-color', 'rgb(55, 47, 26)');
+  await expect(positive).toHaveCSS('color', 'rgb(100, 201, 148)');
+  await expect(positive).toHaveCSS('background-color', 'rgb(25, 54, 41)');
   await expect(negative).toHaveText('-$12,500.00');
   await expect(negative).toHaveCSS('color', 'rgb(242, 170, 164)');
   await expect(negative).toHaveCSS('background-color', 'rgb(58, 35, 33)');
