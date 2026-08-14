@@ -1116,6 +1116,7 @@ components:
         - target_selection
         - source_costs
         - azure_costs
+        - purchase_option_discounts
         - savings
         - explanation_steps
         - unresolved_components
@@ -1141,6 +1142,10 @@ components:
         azure_costs:
           oneOf:
             - $ref: '#/components/schemas/AzureCostBreakdown'
+            - type: 'null'
+        purchase_option_discounts:
+          oneOf:
+            - $ref: '#/components/schemas/PurchaseOptionDiscounts'
             - type: 'null'
         savings:
           oneOf:
@@ -1239,6 +1244,20 @@ components:
         storage_net:
           $ref: '#/components/schemas/Decimal'
         total_before_parity:
+          $ref: '#/components/schemas/Decimal'
+    PurchaseOptionDiscounts:
+      type: object
+      required: [payg, one_year_reserved, three_year_reserved, one_year_savings_plan, azure_hybrid_benefit]
+      properties:
+        payg:
+          $ref: '#/components/schemas/Decimal'
+        one_year_reserved:
+          $ref: '#/components/schemas/Decimal'
+        three_year_reserved:
+          $ref: '#/components/schemas/Decimal'
+        one_year_savings_plan:
+          $ref: '#/components/schemas/Decimal'
+        azure_hybrid_benefit:
           $ref: '#/components/schemas/Decimal'
     SavingsBreakdown:
       type: object
@@ -1525,6 +1544,7 @@ components:
       required:
         - id
         - workload_name
+        - server_name
         - quantity
         - sql_edition
         - license_basis
@@ -1539,6 +1559,9 @@ components:
         workload_name:
           type: string
           minLength: 1
+          maxLength: 160
+        server_name:
+          type: [string, 'null']
           maxLength: 160
         quantity:
           type: integer

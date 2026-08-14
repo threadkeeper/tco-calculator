@@ -1062,6 +1062,7 @@ fn new_resource(input: &NewResourceInput) -> Resource {
             .workload_name
             .clone()
             .unwrap_or_else(|| "SQL workload".to_owned()),
+        server_name: None,
         quantity: input.quantity.unwrap_or(1),
         sql_edition: input.sql_edition.unwrap_or(SqlEdition::Enterprise),
         license_basis: input.license_basis.unwrap_or(LicenseBasis::Byol),

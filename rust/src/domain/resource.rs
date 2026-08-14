@@ -63,6 +63,8 @@ impl PurchaseOption {
 pub struct SharedResource {
     pub id: Uuid,
     pub workload_name: String,
+    #[serde(default)]
+    pub server_name: Option<String>,
     pub quantity: u32,
     pub sql_edition: SqlEdition,
     pub license_basis: LicenseBasis,

@@ -486,6 +486,7 @@ mod tests {
                 shared: SharedResource {
                     id: Uuid::nil(),
                     workload_name: "CONTOSO-SQLPROD-01".to_owned(),
+                    server_name: None,
                     quantity: 1,
                     sql_edition: SqlEdition::Standard,
                     license_basis: LicenseBasis::Byol,

@@ -9,7 +9,9 @@ use crate::{
     domain::{
         decimal::DecimalValue,
         project::{EditableProject, ProjectSettings, ValidationIssue},
-        resource::{Ec2Resource, OnPremResource, ProjectType, RdsResource, Resource},
+        resource::{
+            Ec2Resource, OnPremResource, ProjectType, PurchaseOption, RdsResource, Resource,
+        },
     },
     pricing::{
         provider::{Provider, ResolutionStatus},
@@ -66,9 +68,19 @@ pub struct ResourceCalculation {
     pub target_selection: Option<TargetSelection>,
     pub source_costs: Option<SourceCostBreakdown>,
     pub azure_costs: Option<AzureCostBreakdown>,
+    pub purchase_option_discounts: Option<PurchaseOptionDiscounts>,
     pub savings: Option<SavingsBreakdown>,
     pub explanation_steps: Vec<ExplanationStep>,
     pub unresolved_components: Vec<UnresolvedComponent>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PurchaseOptionDiscounts {
+    pub payg: DecimalValue,
+    pub one_year_reserved: DecimalValue,
+    pub three_year_reserved: DecimalValue,
+    pub one_year_savings_plan: DecimalValue,
+    pub azure_hybrid_benefit: DecimalValue,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -330,6 +342,7 @@ impl CalculationEngine {
                 target_selection: None,
                 source_costs: source.costs,
                 azure_costs: None,
+                purchase_option_discounts: None,
                 savings: None,
                 explanation_steps: source.explanation_steps,
                 unresolved_components: source.unresolved_components,
@@ -366,6 +379,7 @@ impl CalculationEngine {
                 target_selection: Some(target_selection),
                 source_costs: source.costs,
                 azure_costs: None,
+                purchase_option_discounts: None,
                 savings: None,
                 explanation_steps: source.explanation_steps,
                 unresolved_components: source.unresolved_components,
@@ -376,8 +390,13 @@ impl CalculationEngine {
             .selected
             .as_ref()
             .ok_or(CalculationError::InvalidTargetSelection)?;
-        let (azure_costs, azure_pricing_status, azure_unresolved, azure_steps) =
-            resolve_azure_costs(selected, resource, input);
+        let (
+            azure_costs,
+            purchase_option_discounts,
+            azure_pricing_status,
+            azure_unresolved,
+            azure_steps,
+        ) = resolve_azure_costs(selected, resource, input);
         source.unresolved_components.extend(azure_unresolved);
         source.explanation_steps.extend(azure_steps);
         let savings =
@@ -412,6 +431,7 @@ impl CalculationEngine {
             target_selection: Some(target_selection),
             source_costs: source.costs,
             azure_costs,
+            purchase_option_discounts,
             savings,
             explanation_steps: source.explanation_steps,
             unresolved_components: source.unresolved_components,
@@ -536,12 +556,14 @@ fn resolve_azure_costs(
     input: &CalculationInput<'_>,
 ) -> (
     Option<AzureCostBreakdown>,
+    Option<PurchaseOptionDiscounts>,
     PricingStatus,
     Vec<UnresolvedComponent>,
     Vec<ExplanationStep>,
 ) {
     let Some(snapshot) = input.azure_snapshot else {
         return (
+            None,
             None,
             PricingStatus::Unavailable,
             vec![UnresolvedComponent {
@@ -554,6 +576,7 @@ fn resolve_azure_costs(
     };
     if !snapshot.has_complete_mi_rate_set(&selected.configuration_key) {
         return (
+            None,
             None,
             PricingStatus::Unavailable,
             vec![UnresolvedComponent {
@@ -570,6 +593,7 @@ fn resolve_azure_costs(
         resource.shared().mi_purchase_option,
     ) else {
         return (
+            None,
             None,
             PricingStatus::Unavailable,
             vec![UnresolvedComponent {
@@ -591,6 +615,8 @@ fn resolve_azure_costs(
         input.settings,
     ) {
         Ok(costs) => {
+            let purchase_option_discounts =
+                purchase_option_discounts(snapshot, &selected.configuration_key);
             let explanation_steps = vec![
                 target_provenance_step(
                     &record.provenance.source_url,
@@ -600,6 +626,7 @@ fn resolve_azure_costs(
             ];
             (
                 Some(costs),
+                purchase_option_discounts,
                 pricing_status(snapshot.metadata.status),
                 Vec::new(),
                 explanation_steps,
@@ -607,11 +634,47 @@ fn resolve_azure_costs(
         }
         Err(error) => (
             None,
+            None,
             PricingStatus::Unavailable,
             vec![cost_unresolved(Provider::Azure, error)],
             Vec::new(),
         ),
     }
+}
+
+fn purchase_option_discounts(
+    snapshot: &AzurePriceSnapshot,
+    configuration_key: &str,
+) -> Option<PurchaseOptionDiscounts> {
+    let rate = |purchase_option| {
+        snapshot
+            .mi_rate(configuration_key, purchase_option)
+            .map(|record| record.rate)
+    };
+    let payg = rate(PurchaseOption::Payg)?;
+    let ahb = rate(PurchaseOption::Ahb)?;
+    let one_year = rate(PurchaseOption::OneYear)?;
+    let three_year = rate(PurchaseOption::ThreeYear)?;
+    let savings_one_year = rate(PurchaseOption::SavingsOneYear)?;
+
+    Some(PurchaseOptionDiscounts {
+        payg: DecimalValue::ZERO,
+        one_year_reserved: rate_discount(payg.compute_hourly, one_year.compute_hourly),
+        three_year_reserved: rate_discount(payg.compute_hourly, three_year.compute_hourly),
+        one_year_savings_plan: rate_discount(payg.compute_hourly, savings_one_year.compute_hourly),
+        azure_hybrid_benefit: rate_discount(payg.license_hourly, ahb.license_hourly),
+    })
+}
+
+fn rate_discount(baseline: DecimalValue, applied: DecimalValue) -> DecimalValue {
+    if baseline.0 == Decimal::ZERO {
+        return DecimalValue::ZERO;
+    }
+    DecimalValue(
+        (Decimal::ONE - applied.0 / baseline.0)
+            .max(Decimal::ZERO)
+            .min(Decimal::ONE),
+    )
 }
 
 fn calculate_portfolio(
@@ -1326,6 +1389,7 @@ mod tests {
             shared: SharedResource {
                 id: Uuid::new_v4(),
                 workload_name: "Synthetic large-memory EC2 workload".to_owned(),
+                server_name: None,
                 quantity: 1,
                 sql_edition: SqlEdition::Enterprise,
                 license_basis: LicenseBasis::Byol,
@@ -1399,6 +1463,7 @@ mod tests {
             shared: SharedResource {
                 id: Uuid::new_v4(),
                 workload_name: "Synthetic 1 TiB on-prem workload".to_owned(),
+                server_name: None,
                 quantity: 1,
                 sql_edition: SqlEdition::Enterprise,
                 license_basis: LicenseBasis::LicenseIncluded,
@@ -1530,6 +1595,10 @@ mod tests {
         let row = &revision.resource_results[0];
         let source_costs = row.source_costs.as_ref().expect("source costs");
         let azure_costs = row.azure_costs.as_ref().expect("Azure costs");
+        let discounts = row
+            .purchase_option_discounts
+            .as_ref()
+            .expect("purchase option discounts");
         let savings = row.savings.as_ref().expect("savings");
         let step = |code: &str| {
             row.explanation_steps
@@ -1570,6 +1639,11 @@ mod tests {
             azure.values.get("azure_total_before_parity"),
             Some(&azure_costs.total_before_parity.to_string())
         );
+        assert_eq!(discounts.payg, DecimalValue::ZERO);
+        assert_eq!(discounts.one_year_reserved, decimal("0.25"));
+        assert_eq!(discounts.three_year_reserved, decimal("0.375"));
+        assert_eq!(discounts.one_year_savings_plan, decimal("0.125"));
+        assert_eq!(discounts.azure_hybrid_benefit, decimal("1"));
 
         let savings_step = step("savings_formula");
         assert_eq!(
@@ -1619,6 +1693,7 @@ mod tests {
             shared: SharedResource {
                 id: Uuid::new_v4(),
                 workload_name: "Synthetic on-prem workload".to_owned(),
+                server_name: None,
                 quantity: 2,
                 sql_edition: SqlEdition::Enterprise,
                 license_basis: LicenseBasis::LicenseIncluded,
@@ -1776,6 +1851,7 @@ mod tests {
             shared: SharedResource {
                 id: Uuid::new_v4(),
                 workload_name: "Synthetic workload".to_owned(),
+                server_name: None,
                 quantity: 1,
                 sql_edition: SqlEdition::Standard,
                 license_basis: LicenseBasis::Byol,
@@ -1843,7 +1919,16 @@ mod tests {
                     configuration_key: configuration_key.to_owned(),
                     purchase_option: *purchase_option,
                     rate: AzureRate {
-                        compute_hourly: decimal("0.8"),
+                        compute_hourly: match purchase_option {
+                            PurchaseOption::Payg | PurchaseOption::Ahb => decimal("0.8"),
+                            PurchaseOption::OneYear | PurchaseOption::AhbOneYear => decimal("0.6"),
+                            PurchaseOption::ThreeYear | PurchaseOption::AhbThreeYear => {
+                                decimal("0.5")
+                            }
+                            PurchaseOption::SavingsOneYear | PurchaseOption::AhbSavingsOneYear => {
+                                decimal("0.7")
+                            }
+                        },
                         license_hourly: if matches!(
                             purchase_option,
                             PurchaseOption::Ahb

@@ -31,6 +31,7 @@ function requestPayload(pageRequest: { postDataJSON(): unknown }): ProjectReques
 
 function expectEc2ResourceContract(payload: ProjectRequest): void {
   const resource = payload.resources[0];
+  expect(resource.server_name).toBe('sql-prod-01');
   expect(resource.quantity).toBe(2);
   expect(resource.annual_hours_per_instance).toBe('8000.5');
   expect(resource.source_ram_gb_per_instance).toBe('384.5');
@@ -91,6 +92,7 @@ test('normalizes edited number inputs for pricing and calculation requests', asy
 
   await page.getByText('Project settings', { exact: true }).click();
   await page.getByLabel('Source compute discount').fill('0.125');
+  await page.getByLabel('Server name').fill('  sql-prod-01  ');
   await page.getByLabel('Quantity').fill('2');
   await page.getByLabel('Annual hours / instance').fill('8000.5');
   await page.getByLabel('Source RAM / instance (GiB)').fill('384.5');

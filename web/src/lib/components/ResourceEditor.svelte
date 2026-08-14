@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { Database, Plus, Trash2 } from 'lucide-svelte';
+  import { ChevronDown, Database, Plus, Trash2 } from 'lucide-svelte';
   import { readBoolean, readString, type JsonRecord } from '$lib/api';
   import type { EbsVolumeDraft, ResourceDraft } from '$lib/draft';
+  import type { PurchaseOptionDiscounts } from '$lib/mi-purchase-options';
   import MiPurchasePlanSelector from './MiPurchasePlanSelector.svelte';
 
   let {
@@ -9,6 +10,7 @@
     sourceInstances = [],
     ebsTypes = [],
     rdsOptions = [],
+    purchaseOptionDiscounts = null,
     onremove,
     onchange,
     oncatalogchange = () => {}
@@ -17,6 +19,7 @@
     sourceInstances?: JsonRecord[];
     ebsTypes?: JsonRecord[];
     rdsOptions?: JsonRecord[];
+    purchaseOptionDiscounts?: PurchaseOptionDiscounts | null;
     onremove: () => void;
     onchange: () => void;
     oncatalogchange?: () => void;
@@ -106,41 +109,55 @@
   }
 </script>
 
-<article class="resource-editor">
-  <header>
+<details class="resource-editor" open>
+  <summary>
     <div class="resource-title">
       <span class="resource-icon"><Database size={18} aria-hidden="true" /></span>
       <div>
         <span class="eyebrow">{resource.source_type.replace('_', ' ')}</span>
-        <input
-          class="name-input"
-          aria-label="Workload name"
-          aria-invalid={isMissing(resource.workload_name)}
-          aria-describedby={isMissing(resource.workload_name)
-            ? `${resource.id}-workload-name-error`
-            : undefined}
-          bind:value={resource.workload_name}
-          oninput={onchange}
-        />
-        {#if isMissing(resource.workload_name)}
-          <small class="field-error" id={`${resource.id}-workload-name-error`}
-            >Workload name is required.</small
-          >
-        {/if}
+        <strong>{resource.workload_name || 'Unnamed workload'}</strong>
+        {#if resource.server_name}<span class="server-summary">{resource.server_name}</span>{/if}
       </div>
     </div>
-    <button
-      class="icon danger"
-      type="button"
-      onclick={onremove}
-      aria-label="Remove workload"
-      title="Remove workload"
-    >
-      <Trash2 size={18} />
-    </button>
-  </header>
+    <span class="collapse-indicator" aria-hidden="true"><ChevronDown size={19} /></span>
+  </summary>
+  <button
+    class="icon danger remove-workload"
+    type="button"
+    onclick={onremove}
+    aria-label="Remove workload"
+    title="Remove workload"
+  >
+    <Trash2 size={18} />
+  </button>
 
   <div class="field-grid shared-fields">
+    <label>
+      <span>Workload name</span>
+      <input
+        maxlength="160"
+        aria-invalid={isMissing(resource.workload_name)}
+        aria-describedby={isMissing(resource.workload_name)
+          ? `${resource.id}-workload-name-error`
+          : undefined}
+        bind:value={resource.workload_name}
+        oninput={onchange}
+      />
+      {#if isMissing(resource.workload_name)}
+        <small class="field-error" id={`${resource.id}-workload-name-error`}
+          >Workload name is required.</small
+        >
+      {/if}
+    </label>
+    <label>
+      <span>Server name</span>
+      <input
+        maxlength="160"
+        bind:value={resource.server_name}
+        oninput={onchange}
+        placeholder="Optional server identifier"
+      />
+    </label>
     <label>
       <span>Quantity</span>
       <input
@@ -215,6 +232,7 @@
       id={`${resource.id}-mi-purchase-plan`}
       legend="Azure SQL MI pricing override"
       bind:value={resource.mi_purchase_option}
+      discounts={purchaseOptionDiscounts}
       {onchange}
     />
   </div>
@@ -572,23 +590,41 @@
       </div>
     </section>
   {/if}
-</article>
+</details>
 
 <style>
   .resource-editor {
+    position: relative;
     overflow: hidden;
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 6px;
   }
-  header {
+  summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 16px 18px;
+    padding: 16px 62px 16px 18px;
     background: var(--surface-subtle);
     border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  .collapse-indicator {
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    transition: transform 160ms ease;
+  }
+  .resource-editor:not([open]) .collapse-indicator {
+    transform: rotate(-90deg);
+  }
+  .resource-editor:not([open]) summary {
+    border-bottom-color: transparent;
   }
   .resource-title {
     display: flex;
@@ -615,21 +651,19 @@
     letter-spacing: 0;
     text-transform: uppercase;
   }
-  .name-input {
-    width: min(440px, 60vw);
-    padding: 0;
+  .resource-title strong {
+    display: block;
+    overflow-wrap: anywhere;
     color: var(--ink-strong);
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid transparent;
-    border-radius: 0;
     font:
       650 1rem/1.3 Bahnschrift,
       sans-serif;
   }
-  .name-input:focus {
-    border-color: var(--azure);
-    outline: none;
+  .server-summary {
+    display: block;
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 0.72rem;
   }
   .shared-fields {
     padding: 18px;
@@ -659,7 +693,7 @@
     box-sizing: border-box;
     padding: 7px 9px;
     color: var(--ink);
-    background: var(--surface-input);
+    background: color-mix(in srgb, #e98b22 11%, var(--surface-input));
     border: 1px solid var(--border-input);
     border-radius: 4px;
     font:
@@ -727,6 +761,12 @@
   .icon.danger {
     color: var(--danger);
   }
+  .remove-workload {
+    position: absolute;
+    z-index: 2;
+    top: 17px;
+    right: 16px;
+  }
   .compact-button {
     display: inline-flex;
     align-items: center;
@@ -778,9 +818,6 @@
     .shared-fields,
     .source-section {
       padding-inline: 14px;
-    }
-    .name-input {
-      width: min(300px, 60vw);
     }
   }
 </style>

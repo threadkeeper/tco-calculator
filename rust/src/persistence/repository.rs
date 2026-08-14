@@ -578,6 +578,7 @@ mod tests {
                 shared: SharedResource {
                     id: Uuid::new_v4(),
                     workload_name: "Synthetic workload".to_owned(),
+                    server_name: None,
                     quantity: 1,
                     sql_edition: SqlEdition::Enterprise,
                     license_basis: LicenseBasis::Byol,

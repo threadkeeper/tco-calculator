@@ -17,6 +17,7 @@
     ApiProblem,
     asRecord,
     formatMoney,
+    readRecord,
     readRecords,
     readString,
     requestJson,
@@ -34,6 +35,7 @@
     saveGuestWorkspace,
     type GuestWorkspace
   } from '$lib/draft';
+  import type { PurchaseOptionDiscounts } from '$lib/mi-purchase-options';
   import { pricingResolutionLabel } from '$lib/pricing-resolution';
   import { projectShareUrl } from '$lib/project-share';
   import { readRegionOptions, type RegionOption } from '$lib/regions';
@@ -128,6 +130,35 @@
     autosaveStatus = 'saving';
     if (autosaveTimer) clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => void persistGuest(), 450);
+  }
+
+  function purchaseOptionDiscounts(resourceId: string): PurchaseOptionDiscounts | null {
+    const calculation = asRecord(workspace.calculation);
+    const result = readRecords(calculation, 'resource_results').find(
+      (candidate) => readString(candidate, 'resource_id') === resourceId
+    );
+    const discounts = readRecord(result ?? null, 'purchase_option_discounts');
+    const payg = readString(discounts, 'payg');
+    const oneYearReserved = readString(discounts, 'one_year_reserved');
+    const threeYearReserved = readString(discounts, 'three_year_reserved');
+    const oneYearSavingsPlan = readString(discounts, 'one_year_savings_plan');
+    const azureHybridBenefit = readString(discounts, 'azure_hybrid_benefit');
+    if (
+      payg === null ||
+      oneYearReserved === null ||
+      threeYearReserved === null ||
+      oneYearSavingsPlan === null ||
+      azureHybridBenefit === null
+    ) {
+      return null;
+    }
+    return {
+      payg,
+      one_year_reserved: oneYearReserved,
+      three_year_reserved: threeYearReserved,
+      one_year_savings_plan: oneYearSavingsPlan,
+      azure_hybrid_benefit: azureHybridBenefit
+    };
   }
 
   function isPositivePrice(value: string | null): boolean {
@@ -849,6 +880,7 @@
               {sourceInstances}
               {ebsTypes}
               rdsOptions={rdsOptions[resource.id] ?? []}
+              purchaseOptionDiscounts={purchaseOptionDiscounts(resource.id)}
               onchange={markDirty}
               oncatalogchange={() =>
                 resource.source_type === 'rds' && void loadRdsOptions(resource)}

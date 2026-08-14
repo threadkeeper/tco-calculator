@@ -158,6 +158,15 @@ describe('project drafts', () => {
     ).toBeNull();
   });
 
+  it('hydrates legacy resources without a server name as null', () => {
+    const original = createProjectDraft('ec2', 'Legacy', null);
+    const resource = createResource('ec2', original.settings);
+    Reflect.deleteProperty(resource, 'server_name');
+    original.resources.push(resource);
+
+    expect(editableProject(original)?.resources[0].server_name).toBeNull();
+  });
+
   it.each(['ec2', 'rds', 'on_prem'] as const)(
     'normalizes browser-coerced %s values to API contract types',
     (projectType) => {
@@ -185,6 +194,7 @@ describe('project drafts', () => {
       for (const [field, value] of Object.entries(sharedDecimals)) {
         Reflect.set(resource, field, value);
       }
+      resource.server_name = '  sql-prod-01  ';
       Reflect.set(resource, 'quantity', '2');
 
       if (resource.source_type === 'ec2') {
@@ -217,6 +227,7 @@ describe('project drafts', () => {
       for (const [field, value] of Object.entries(sharedDecimals)) {
         expect(Reflect.get(payloadResource, field)).toBe(String(value));
       }
+      expect(payloadResource.server_name).toBe('sql-prod-01');
       expect(payloadResource.quantity).toBe(2);
 
       if (payloadResource.source_type === 'ec2') {

@@ -389,6 +389,7 @@ All IDs MUST be UUIDs. All money and rates MUST use decimal strings at API bound
 | `id` | UUID | Server generated |
 | `source_type` | `ec2`, `rds`, or `on_prem` | Must equal the immutable project type |
 | `workload_name` | string | 1-160 chars |
+| `server_name` | string or null | Optional free text, maximum 160 chars |
 | `quantity` | integer | 1-10,000 |
 | `sql_edition` | `standard` or `enterprise` | Required |
 | `license_basis` | `license_included` or `byol` | Required |

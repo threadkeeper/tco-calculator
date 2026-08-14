@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  commitmentDiscount,
+  formatAppliedDiscount,
   hasMiCommitment,
   MI_COMMITMENT_OPTIONS,
   miPurchaseOption,
@@ -101,5 +103,21 @@ describe('SQL MI purchase options', () => {
     expect(selectorSource).toContain('total savings can reach up to 82%');
     expect(selectorSource).toContain('role="dialog"');
     expect(selectorSource).toContain('aria-modal="true"');
+  });
+
+  it('formats the applied server-calculated discount for every purchase choice', () => {
+    const discounts = {
+      payg: '0',
+      one_year_reserved: '0.25',
+      three_year_reserved: '0.375',
+      one_year_savings_plan: '0.125',
+      azure_hybrid_benefit: '1'
+    };
+
+    expect(formatAppliedDiscount(commitmentDiscount('payg', discounts))).toBe('0%');
+    expect(formatAppliedDiscount(commitmentDiscount('one-year', discounts))).toBe('25%');
+    expect(formatAppliedDiscount(commitmentDiscount('three-year', discounts))).toBe('37.5%');
+    expect(formatAppliedDiscount(commitmentDiscount('sv-one-year', discounts))).toBe('12.5%');
+    expect(formatAppliedDiscount(discounts.azure_hybrid_benefit)).toBe('100%');
   });
 });

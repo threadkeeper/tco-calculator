@@ -2,6 +2,14 @@ import type { PurchaseOption } from './draft';
 
 export type MiCommitment = 'payg' | 'one-year' | 'three-year' | 'sv-one-year';
 
+export type PurchaseOptionDiscounts = {
+  payg: string;
+  one_year_reserved: string;
+  three_year_reserved: string;
+  one_year_savings_plan: string;
+  azure_hybrid_benefit: string;
+};
+
 export const MI_COMMITMENT_OPTIONS: ReadonlyArray<{
   value: MiCommitment;
   label: string;
@@ -99,4 +107,30 @@ export function miPurchaseOptionLabel(option: PurchaseOption): string {
 
 export function hasMiCommitment(option: PurchaseOption): boolean {
   return miPurchaseOptionParts(option).commitment !== 'payg';
+}
+
+export function commitmentDiscount(
+  commitment: MiCommitment,
+  discounts: PurchaseOptionDiscounts
+): string {
+  switch (commitment) {
+    case 'payg':
+      return discounts.payg;
+    case 'one-year':
+      return discounts.one_year_reserved;
+    case 'three-year':
+      return discounts.three_year_reserved;
+    case 'sv-one-year':
+      return discounts.one_year_savings_plan;
+  }
+}
+
+export function formatAppliedDiscount(value: string): string {
+  const rate = Number(value);
+  if (!Number.isFinite(rate)) return 'Unavailable';
+  return new Intl.NumberFormat('en-US', {
+    style: 'percent',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1
+  }).format(rate);
 }

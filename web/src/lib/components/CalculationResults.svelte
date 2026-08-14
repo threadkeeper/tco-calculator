@@ -12,7 +12,14 @@
   import { calculationTargetOutcome } from '$lib/calculation-outcome';
   import { relevantCalculationWarnings } from '$lib/calculation-warnings';
   import type { ResourceDraft } from '$lib/draft';
-  import { hasMiCommitment, miPurchaseOptionLabel } from '$lib/mi-purchase-options';
+  import {
+    commitmentDiscount,
+    formatAppliedDiscount,
+    hasMiCommitment,
+    miPurchaseOptionLabel,
+    miPurchaseOptionParts,
+    type PurchaseOptionDiscounts
+  } from '$lib/mi-purchase-options';
 
   let { calculation, resources }: { calculation: unknown; resources: ResourceDraft[] } = $props();
 
@@ -46,6 +53,50 @@
 
   function resourceName(result: JsonRecord): string {
     return sourceResource(result)?.workload_name ?? 'Workload';
+  }
+
+  function resourceIdentifier(result: JsonRecord): string | null {
+    const serverName = sourceResource(result)?.server_name?.trim();
+    return serverName || readString(result, 'resource_id');
+  }
+
+  function purchaseOptionDiscounts(result: JsonRecord): PurchaseOptionDiscounts | null {
+    const discounts = readRecord(result, 'purchase_option_discounts');
+    const payg = readString(discounts, 'payg');
+    const oneYearReserved = readString(discounts, 'one_year_reserved');
+    const threeYearReserved = readString(discounts, 'three_year_reserved');
+    const oneYearSavingsPlan = readString(discounts, 'one_year_savings_plan');
+    const azureHybridBenefit = readString(discounts, 'azure_hybrid_benefit');
+    if (
+      payg === null ||
+      oneYearReserved === null ||
+      threeYearReserved === null ||
+      oneYearSavingsPlan === null ||
+      azureHybridBenefit === null
+    ) {
+      return null;
+    }
+    return {
+      payg,
+      one_year_reserved: oneYearReserved,
+      three_year_reserved: threeYearReserved,
+      one_year_savings_plan: oneYearSavingsPlan,
+      azure_hybrid_benefit: azureHybridBenefit
+    };
+  }
+
+  function appliedDiscountLabel(
+    resource: ResourceDraft,
+    discounts: PurchaseOptionDiscounts
+  ): string {
+    const option = miPurchaseOptionParts(resource.mi_purchase_option);
+    const labels = [
+      `${formatAppliedDiscount(commitmentDiscount(option.commitment, discounts))} compute discount`
+    ];
+    if (option.usesAzureHybridBenefit) {
+      labels.push(`${formatAppliedDiscount(discounts.azure_hybrid_benefit)} AHB license discount`);
+    }
+    return labels.join(' · ');
   }
 
   function label(value: string | null): string {
@@ -149,6 +200,7 @@
     {#each resourceResults as result (readString(result, 'resource_id'))}
       {@const sourceCosts = readRecord(result, 'source_costs')}
       {@const resource = sourceResource(result)}
+      {@const discounts = purchaseOptionDiscounts(result)}
       {@const azureCosts = readRecord(result, 'azure_costs')}
       {@const savings = readRecord(result, 'savings')}
       {@const targetSelection = readRecord(result, 'target_selection')}
@@ -169,7 +221,7 @@
             <DatabaseZap size={19} aria-hidden="true" />
             <div>
               <h3>{resourceName(result)}</h3>
-              <span>{readString(result, 'resource_id')}</span>
+              <span>{resourceIdentifier(result)}</span>
             </div>
           </div>
           <div class="status-line">
@@ -202,6 +254,9 @@
             >
             {#if resource}<small class="pricing-plan"
                 >{miPurchaseOptionLabel(resource.mi_purchase_option)}</small
+              >{/if}
+            {#if resource && discounts}<small class="applied-discount"
+                >{appliedDiscountLabel(resource, discounts)}</small
               >{/if}
             {#if azureUnavailable}<small class="metric-error">Azure price is unavailable.</small
               >{/if}
@@ -281,7 +336,7 @@
 <style>
   .results {
     padding: 22px;
-    background: var(--surface-subtle);
+    background: color-mix(in srgb, var(--azure) 9%, var(--surface));
     border-top: 3px solid var(--azure);
   }
   .results-heading {
@@ -322,7 +377,7 @@
     min-height: 112px;
     align-content: center;
     padding: 17px 19px;
-    background: var(--surface);
+    background: color-mix(in srgb, var(--azure) 4%, var(--surface));
   }
   .total-block + .total-block {
     border-left: 1px solid var(--border);
@@ -505,6 +560,11 @@
     color: #3f6661;
     font-size: 0.74rem;
     font-weight: 650;
+  }
+  .result-costs .applied-discount {
+    color: var(--azure-text);
+    font-size: 0.72rem;
+    font-weight: 700;
   }
   .target-strip {
     display: grid;

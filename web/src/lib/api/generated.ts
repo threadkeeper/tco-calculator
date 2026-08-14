@@ -629,6 +629,7 @@ export interface components {
             target_selection: components["schemas"]["TargetSelection"] | null;
             source_costs: components["schemas"]["SourceCostBreakdown"] | null;
             azure_costs: components["schemas"]["AzureCostBreakdown"] | null;
+            purchase_option_discounts: components["schemas"]["PurchaseOptionDiscounts"] | null;
             savings: components["schemas"]["SavingsBreakdown"] | null;
             explanation_steps: components["schemas"]["ExplanationStep"][];
             unresolved_components: components["schemas"]["UnresolvedComponent"][];
@@ -668,6 +669,13 @@ export interface components {
             storage_gross: components["schemas"]["Decimal"];
             storage_net: components["schemas"]["Decimal"];
             total_before_parity: components["schemas"]["Decimal"];
+        };
+        PurchaseOptionDiscounts: {
+            payg: components["schemas"]["Decimal"];
+            one_year_reserved: components["schemas"]["Decimal"];
+            three_year_reserved: components["schemas"]["Decimal"];
+            one_year_savings_plan: components["schemas"]["Decimal"];
+            azure_hybrid_benefit: components["schemas"]["Decimal"];
         };
         SavingsBreakdown: {
             compute_savings: components["schemas"]["Decimal"];
@@ -788,6 +796,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             workload_name: string;
+            server_name: string | null;
             quantity: number;
             /** @enum {string} */
             sql_edition: "standard" | "enterprise";

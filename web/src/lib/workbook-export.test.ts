@@ -21,6 +21,7 @@ describe('project result export', () => {
         id: '11111111-1111-4111-8111-111111111111',
         source_type: 'ec2',
         workload_name: '@Quarterly "SQL"',
+        server_name: 'sql-prod-01',
         quantity: 1,
         sql_edition: 'enterprise',
         license_basis: 'byol',
@@ -95,6 +96,7 @@ describe('project result export', () => {
     expect(csv).toContain('"Project | Description"');
     expect(csv).toContain('"Settings | Source compute discount"');
     expect(csv).toContain('"Calculation | Formula version"');
+    expect(csv).toContain('"Workload | Server name"');
     expect(csv).toContain('"Source details | EC2 EBS volumes"');
     expect(csv).not.toContain('"Derived MI | Source vCPU"');
     expect(csv).toContain('"Derived MI | vCores"');
@@ -104,6 +106,7 @@ describe('project result export', () => {
     expect(csv).toContain('"\'=Finance, estate"');
     expect(csv).toContain('"\'+Confidential model"');
     expect(csv).toContain('"\'@Quarterly ""SQL"""');
+    expect(csv).toContain('"sql-prod-01"');
     expect(csv).toContain('"0.123456789"');
     expect(csv).toContain('"1.0.0"');
     expect(csv).toContain('"aws-aabbcc"');

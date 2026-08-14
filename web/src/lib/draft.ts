@@ -62,6 +62,7 @@ export function applyOnPremPublicBookReference(settings: ProjectSettingsDraft): 
 type SharedResourceDraft = {
   id: string;
   workload_name: string;
+  server_name: string | null;
   quantity: number;
   sql_edition: SqlEdition;
   license_basis: LicenseBasis;
@@ -181,6 +182,7 @@ export function createResource(
   const shared: SharedResourceDraft = {
     id: crypto.randomUUID(),
     workload_name: 'SQL workload',
+    server_name: null,
     quantity: 1,
     sql_edition: 'enterprise',
     license_basis: 'byol',
@@ -305,6 +307,7 @@ export function projectRequestPayload(project: ProjectDraft): ProjectDraft {
     const shared = {
       id: resource.id,
       workload_name: resource.workload_name,
+      server_name: optionalText(resource.server_name),
       quantity: requiredInteger(resource.quantity, `Workload ${index + 1} quantity`),
       sql_edition: resource.sql_edition,
       license_basis: resource.license_basis,
@@ -393,6 +396,12 @@ function optionalDecimal(value: unknown): string | null {
   return null;
 }
 
+function optionalText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized === '' ? null : normalized;
+}
+
 function requiredInteger(value: unknown, label: string): number {
   if (typeof value === 'number' && Number.isSafeInteger(value)) return value;
   if (typeof value === 'string' && value.trim() !== '') {
@@ -427,11 +436,16 @@ export function editableProject(value: unknown): ProjectDraft | null {
   )
     return null;
 
+  const resources = structuredClone(value.resources) as ResourceDraft[];
+  for (const resource of resources) {
+    resource.server_name = typeof resource.server_name === 'string' ? resource.server_name : null;
+  }
+
   return {
     name: value.name,
     description: typeof value.description === 'string' ? value.description : null,
     settings: structuredClone(value.settings) as ProjectSettingsDraft,
-    resources: structuredClone(value.resources) as ResourceDraft[],
+    resources,
     aws_price_snapshot_id:
       typeof value.aws_price_snapshot_id === 'string' ? value.aws_price_snapshot_id : null,
     azure_price_snapshot_id:

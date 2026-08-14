@@ -16,6 +16,32 @@ function ec2Resource(): Ec2ResourceDraft {
 }
 
 describe('inline error messages', () => {
+  it('groups workload inputs with an optional server name and source input tint', () => {
+    const resource = ec2Resource();
+    resource.server_name = 'sql-prod-01';
+
+    const { body } = render(ResourceEditor, {
+      props: {
+        resource,
+        purchaseOptionDiscounts: {
+          payg: '0',
+          one_year_reserved: '0.25',
+          three_year_reserved: '0.375',
+          one_year_savings_plan: '0.125',
+          azure_hybrid_benefit: '1'
+        },
+        onremove: () => undefined,
+        onchange: () => undefined
+      }
+    });
+
+    expect(resourceEditorSource).toContain('<details class="resource-editor" open>');
+    expect(body).toContain('Server name');
+    expect(body).toContain('sql-prod-01');
+    expect(body).toContain('Azure Hybrid Benefit · 100% discount');
+    expect(resourceEditorSource).toContain('color-mix(in srgb, #e98b22 11%');
+  });
+
   it('identifies missing required fields and unavailable EBS pricing beside the inputs', () => {
     const resource = ec2Resource();
     resource.workload_name = '';
@@ -119,5 +145,49 @@ describe('inline error messages', () => {
     expect(body).toMatch(/class="price-status [^"]*unavailable/);
     expect(body.match(/PRICE UNAVAILABLE/g)).toHaveLength(6);
     expect(calculationResultsSource).toContain('color: var(--danger);');
+  });
+
+  it('shows applied purchase discounts in the blue-tinted calculated output', () => {
+    const resource = ec2Resource();
+    resource.mi_purchase_option = 'ahbone-year';
+    const calculation = {
+      portfolio_totals: {
+        aws_all_rows_total: '100',
+        portfolio_after_selected_parity: '75',
+        portfolio_difference: '25',
+        comparable_resource_count: 1,
+        no_mapping_resource_count: 0,
+        price_unavailable_resource_count: 0
+      },
+      resource_results: [
+        {
+          resource_id: resource.id,
+          mapping_status: 'mapped',
+          aws_pricing_status: 'fresh',
+          azure_pricing_status: 'fresh',
+          purchase_option_discounts: {
+            payg: '0',
+            one_year_reserved: '0.25',
+            three_year_reserved: '0.375',
+            one_year_savings_plan: '0.125',
+            azure_hybrid_benefit: '1'
+          },
+          source_costs: { total: '100' },
+          azure_costs: { total_before_parity: '75' },
+          savings: { total_savings: '25' },
+          target_selection: null,
+          unresolved_components: [],
+          explanation_steps: []
+        }
+      ],
+      warnings: []
+    };
+
+    const { body } = render(CalculationResults, {
+      props: { calculation, resources: [resource] }
+    });
+
+    expect(body).toContain('25% compute discount · 100% AHB license discount');
+    expect(calculationResultsSource).toContain('color-mix(in srgb, var(--azure) 9%');
   });
 });

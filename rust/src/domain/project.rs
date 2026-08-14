@@ -171,6 +171,17 @@ impl EditableProject {
                     "Workload name must contain 1 to 160 characters.",
                 ));
             }
+            if shared
+                .server_name
+                .as_ref()
+                .is_some_and(|server_name| server_name.chars().count() > 160)
+            {
+                issues.push(issue(
+                    &format!("/resources/{index}/server_name"),
+                    "length",
+                    "Server name must not exceed 160 characters.",
+                ));
+            }
             if !(1..=10_000).contains(&shared.quantity) {
                 issues.push(issue(
                     &format!("/resources/{index}/quantity"),
@@ -566,7 +577,10 @@ fn issue(pointer: &str, code: &'static str, message: &str) -> ValidationIssue {
 
 #[cfg(test)]
 mod tests {
-    use super::is_snapshot_id;
+    use serde_json::json;
+
+    use super::{EditableProject, is_snapshot_id};
+    use crate::domain::resource::Resource;
 
     #[test]
     fn snapshot_ids_are_provider_scoped_lowercase_sha256_values() {
@@ -575,5 +589,65 @@ mod tests {
         assert!(!is_snapshot_id(&format!("azure-{digest}"), "aws-"));
         assert!(!is_snapshot_id(&format!("aws-{}", "A".repeat(64)), "aws-"));
         assert!(!is_snapshot_id("aws-short", "aws-"));
+    }
+
+    #[test]
+    fn server_names_must_not_exceed_160_characters() {
+        let mut project: EditableProject = serde_json::from_value(json!({
+            "name": "Server name validation",
+            "description": null,
+            "settings": {
+                "project_type": "ec2",
+                "aws_region": "eu-west-1",
+                "azure_region": "swedencentral",
+                "currency": "USD",
+                "source_compute_discount": "0",
+                "source_license_discount": "0",
+                "source_storage_discount": "0",
+                "azure_compute_discount": "0",
+                "azure_license_discount": "0",
+                "azure_storage_discount": "0",
+                "selected_parity_adjustment": "0",
+                "default_annual_hours": "8760",
+                "default_mi_purchase_option": "ahb",
+                "enterprise_license_sa_usd_per_two_core_pack": null,
+                "standard_license_sa_usd_per_two_core_pack": null,
+                "remaining_coverage_months": null,
+                "electricity_rate_usd_per_kwh": null
+            },
+            "resources": [{
+                "source_type": "ec2",
+                "id": "11111111-1111-4111-8111-111111111111",
+                "workload_name": "SQL workload",
+                "server_name": "a".repeat(161),
+                "quantity": 1,
+                "sql_edition": "enterprise",
+                "license_basis": "byol",
+                "sql_data_gb_per_instance": "1024",
+                "source_ram_gb_per_instance": "256",
+                "annual_hours_per_instance": "8760",
+                "mi_purchase_option": "ahb",
+                "instance_type": "r6id.8xlarge",
+                "volumes": []
+            }],
+            "aws_price_snapshot_id": null,
+            "azure_price_snapshot_id": null
+        }))
+        .expect("test project should deserialize");
+
+        assert!(project.validate().iter().any(|issue| {
+            issue.pointer == "/resources/0/server_name" && issue.code == "length"
+        }));
+
+        let Resource::Ec2(resource) = &mut project.resources[0] else {
+            panic!("test resource should be EC2");
+        };
+        resource.shared.server_name = Some("a".repeat(160));
+        assert!(
+            !project
+                .validate()
+                .iter()
+                .any(|issue| issue.pointer == "/resources/0/server_name")
+        );
     }
 }

@@ -8,6 +8,7 @@ describe('calculation result rows', () => {
       id: '11111111-1111-4111-8111-111111111111',
       source_type: 'ec2',
       workload_name: 'SQL, finance',
+      server_name: null,
       quantity: 2,
       sql_edition: 'enterprise',
       license_basis: 'byol',
@@ -77,6 +78,7 @@ describe('calculation result rows', () => {
       {
         resourceId: resource.id,
         workloadName: 'SQL, finance',
+        serverName: null,
         sourceType: 'ec2',
         sourceSku: 'r6id.8xlarge',
         quantity: 2,

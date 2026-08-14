@@ -377,6 +377,7 @@ mod tests {
                 shared: SharedResource {
                     id: Uuid::new_v4(),
                     workload_name: "SQL Server".to_owned(),
+                    server_name: None,
                     quantity: 1,
                     sql_data_gb_per_instance: DecimalValue(Decimal::from(500_u32)),
                     source_ram_gb_per_instance: DecimalValue(Decimal::from(64_u32)),

@@ -4,6 +4,7 @@ import type { ResourceDraft } from './draft';
 export type CalculationResultRow = {
   resourceId: string;
   workloadName: string;
+  serverName: string | null;
   sourceType: ResourceDraft['source_type'] | null;
   sourceSku: string | null;
   quantity: number | null;
@@ -68,6 +69,7 @@ export function buildCalculationResultRows(
     return {
       resourceId,
       workloadName: resource?.workload_name ?? 'Workload',
+      serverName: resource?.server_name ?? null,
       sourceType: resource?.source_type ?? null,
       sourceSku: resource ? resourceSku(resource) : null,
       quantity: resource?.quantity ?? null,

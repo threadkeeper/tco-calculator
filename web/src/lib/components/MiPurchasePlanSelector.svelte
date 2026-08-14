@@ -3,21 +3,26 @@
   import { AlertTriangle, Check, ChevronDown, Info, X } from 'lucide-svelte';
   import type { PurchaseOption } from '$lib/draft';
   import {
+    commitmentDiscount,
+    formatAppliedDiscount,
     MI_COMMITMENT_OPTIONS,
     miPurchaseOption,
     miPurchaseOptionParts,
-    type MiCommitment
+    type MiCommitment,
+    type PurchaseOptionDiscounts
   } from '$lib/mi-purchase-options';
 
   let {
     id,
     legend,
     value = $bindable(),
+    discounts = null,
     onchange = () => {}
   }: {
     id: string;
     legend: string;
     value: PurchaseOption;
+    discounts?: PurchaseOptionDiscounts | null;
     onchange?: () => void;
   } = $props();
 
@@ -113,7 +118,11 @@
         aria-expanded={menuOpen}
         onclick={() => (menuOpen = !menuOpen)}
       >
-        <span id={`${id}-commitment-value`}>{selectedOption.label}</span>
+        <span id={`${id}-commitment-value`}
+          >{selectedOption.label}{discounts
+            ? ` · ${formatAppliedDiscount(commitmentDiscount(selected.commitment, discounts))}`
+            : ''}</span
+        >
         <ChevronDown size={17} aria-hidden="true" />
       </button>
       {#if menuOpen}
@@ -126,7 +135,11 @@
                 aria-pressed={option.value === selected.commitment}
                 onclick={() => selectCommitment(option.value)}
               >
-                <span>{option.label}</span>
+                <span
+                  >{option.label}{discounts
+                    ? ` · ${formatAppliedDiscount(commitmentDiscount(option.value, discounts))} discount`
+                    : ''}</span
+                >
                 {#if option.value === selected.commitment}<Check
                     size={17}
                     aria-hidden="true"
@@ -163,7 +176,11 @@
         onchange={selectLicense}
       />
       <span class="license-copy">
-        <strong>Azure Hybrid Benefit</strong>
+        <strong
+          >Azure Hybrid Benefit{discounts
+            ? ` · ${formatAppliedDiscount(discounts.azure_hybrid_benefit)} discount`
+            : ''}</strong
+        >
         <span
           >{selected.usesAzureHybridBenefit
             ? 'Eligible licenses applied'
@@ -378,11 +395,19 @@
     min-height: 38px;
     box-sizing: border-box;
     padding: 7px 10px;
-    color: var(--ink-soft);
-    background: var(--surface-input);
-    border: 1px solid var(--border-input);
+    color: var(--copilot-ink);
+    background: var(--copilot-surface);
+    border: 1px solid color-mix(in srgb, var(--copilot-purple) 62%, var(--border-input));
     border-radius: 4px;
+    box-shadow:
+      inset 3px 0 0 var(--copilot-purple),
+      0 0 0 1px rgb(133 52 243 / 10%),
+      0 0 14px rgb(133 52 243 / 18%);
     cursor: pointer;
+  }
+  .license-choice:hover {
+    background: color-mix(in srgb, var(--copilot-purple-light) 12%, var(--surface-input));
+    border-color: var(--copilot-purple);
   }
   .ahb-info {
     width: 38px;
@@ -395,15 +420,15 @@
     border-radius: 4px 0 0 4px;
   }
   .license-choice:focus-within {
-    border-color: var(--azure);
-    outline: 2px solid var(--azure-focus);
+    border-color: var(--copilot-purple);
+    outline: 3px solid rgb(200 152 253 / 32%);
   }
   .license-choice input {
     flex: 0 0 auto;
     width: 17px;
     height: 17px;
     margin: 0;
-    accent-color: var(--azure);
+    accent-color: var(--copilot-purple);
   }
   .license-copy {
     display: grid;
@@ -411,7 +436,7 @@
     min-width: 0;
   }
   .license-copy strong {
-    color: var(--ink);
+    color: var(--copilot-ink);
     font-size: 0.78rem;
   }
   .license-copy span {

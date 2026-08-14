@@ -86,6 +86,7 @@ const COLUMNS: ExportColumn[] = [
     readString(calculation, 'azure_snapshot_id')
   ),
   textColumn('Workload | Name', ({ row }) => row.workloadName),
+  textColumn('Workload | Server name', ({ row }) => row.serverName),
   textColumn('Workload | Resource ID', ({ row }) => row.resourceId),
   textColumn('Workload | Source SKU', ({ row }) => row.sourceSku),
   decimalColumn('Workload | Quantity', ({ row }) => row.quantity),

@@ -34,6 +34,7 @@
       tone: 'workload',
       columns: [
         column('Name', 'text', (row) => row.workloadName),
+        column('Server name', 'text', (row) => row.serverName),
         column('Source SKU', 'text', (row) => row.sourceSku),
         column('Qty', 'number', (row) => row.quantity),
         column('SQL edition', 'text', (row) => row.sqlEdition),

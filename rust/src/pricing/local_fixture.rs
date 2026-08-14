@@ -153,6 +153,7 @@ mod tests {
                 id: uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111")
                     .expect("resource UUID"),
                 workload_name: "Synthetic parity anchor".to_owned(),
+                server_name: None,
                 quantity: 1,
                 sql_edition: SqlEdition::Enterprise,
                 license_basis: LicenseBasis::Byol,
@@ -261,6 +262,7 @@ mod tests {
                 id: uuid::Uuid::parse_str("33333333-3333-3333-3333-333333333333")
                     .expect("resource UUID"),
                 workload_name: "Synthetic RDS anchor".to_owned(),
+                server_name: None,
                 quantity: 1,
                 sql_edition: SqlEdition::Enterprise,
                 license_basis: LicenseBasis::Byol,
