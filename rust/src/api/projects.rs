@@ -218,9 +218,11 @@ async fn calculate_revision_if_priced(
     project: &EditableProject,
     instance: &str,
 ) -> Result<Option<CalculationRevision>, Problem> {
+    let is_sql_payg = project.settings.project_type == ProjectType::SqlPayg;
     let source_snapshot_available = project.settings.project_type == ProjectType::OnPrem
+        || is_sql_payg
         || project.aws_price_snapshot_id.is_some();
-    if source_snapshot_available && project.azure_price_snapshot_id.is_some() {
+    if is_sql_payg || (source_snapshot_available && project.azure_price_snapshot_id.is_some()) {
         let _permit = state
             .calculation_slots
             .clone()

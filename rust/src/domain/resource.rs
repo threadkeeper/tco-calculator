@@ -9,6 +9,7 @@ pub enum ProjectType {
     Ec2,
     Rds,
     OnPrem,
+    SqlPayg,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

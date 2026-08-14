@@ -191,6 +191,7 @@ mod tests {
             standard_license_sa_usd_per_two_core_pack: None,
             remaining_coverage_months: None,
             electricity_rate_usd_per_kwh: None,
+            sql_payg: None,
         };
 
         let revision = engine
@@ -292,6 +293,7 @@ mod tests {
             standard_license_sa_usd_per_two_core_pack: None,
             remaining_coverage_months: None,
             electricity_rate_usd_per_kwh: None,
+            sql_payg: None,
         };
 
         let revision = engine

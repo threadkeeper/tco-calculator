@@ -371,6 +371,7 @@ mod tests {
                 electricity_rate_usd_per_kwh: Some(DecimalValue(
                     Decimal::from_str_exact("0.12").expect("decimal"),
                 )),
+                sql_payg: None,
             },
             resources: vec![Resource::OnPrem(OnPremResource {
                 shared: SharedResource {

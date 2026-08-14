@@ -9,7 +9,7 @@ use crate::{
     domain::{
         decimal::DecimalValue,
         project::{EditableProject, ProjectSettings, ValidationIssue},
-        resource::{Ec2Resource, OnPremResource, RdsResource, Resource},
+        resource::{Ec2Resource, OnPremResource, ProjectType, RdsResource, Resource},
     },
     pricing::{
         provider::{Provider, ResolutionStatus},
@@ -24,6 +24,7 @@ use super::{
         SourceCostBreakdown, calculate_azure, calculate_ec2_source, calculate_on_prem_source,
         calculate_rds_source, calculate_savings, source_max_iops,
     },
+    sql_payg::{self, SqlPaygAnalysis, SqlPaygInput},
     target_selector::{
         CapabilityCatalog, MappingStatus, TargetSelection, TargetSelectionError,
         TargetSelectionRequest, select_target,
@@ -52,6 +53,8 @@ pub struct CalculationRevision {
     pub resource_results: Vec<ResourceCalculation>,
     pub portfolio_totals: PortfolioTotals,
     pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql_payg_analysis: Option<SqlPaygAnalysis>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -122,6 +125,8 @@ pub enum CalculationError {
     TargetSelection(#[from] TargetSelectionError),
     #[error(transparent)]
     Cost(#[from] CostError),
+    #[error(transparent)]
+    SqlPayg(#[from] sql_payg::SqlPaygError),
 }
 
 struct ResolvedSource {
@@ -153,6 +158,9 @@ impl CalculationEngine {
         input: CalculationInput<'_>,
     ) -> Result<CalculationRevision, CalculationError> {
         self.validate_input(&input)?;
+        if input.settings.project_type == ProjectType::SqlPayg {
+            return self.calculate_sql_payg(&input);
+        }
         let mut resource_results = Vec::with_capacity(input.resources.len());
         for resource in input.resources {
             resource_results.push(self.calculate_resource(resource, &input)?);
@@ -202,6 +210,51 @@ impl CalculationEngine {
             resource_results,
             portfolio_totals,
             warnings,
+            sql_payg_analysis: None,
+        })
+    }
+
+    fn calculate_sql_payg(
+        &self,
+        input: &CalculationInput<'_>,
+    ) -> Result<CalculationRevision, CalculationError> {
+        let settings = input.settings.sql_payg.as_ref().ok_or_else(|| {
+            CalculationError::Validation(vec![ValidationIssue {
+                pointer: "/settings/sql_payg".to_owned(),
+                code: "required",
+                message: "SQL Pay As You Go licensing inputs are required.".to_owned(),
+            }])
+        })?;
+        let analysis = sql_payg::calculate(SqlPaygInput {
+            enterprise_licensed_cores: settings.enterprise_licensed_cores,
+            standard_licensed_cores: settings.standard_licensed_cores,
+            software_assurance_annual_usd: settings.software_assurance_annual_usd,
+        })?;
+        let source_total = analysis.software_assurance_annual_usd;
+        let payg_total = analysis.payg_gross_annual_usd;
+
+        Ok(CalculationRevision {
+            formula_version: self.formula_version.clone(),
+            aws_snapshot_id: None,
+            azure_snapshot_id: None,
+            resource_results: Vec::new(),
+            portfolio_totals: PortfolioTotals {
+                aws_all_rows_total: Some(source_total),
+                aws_mapped_rows_total: source_total,
+                azure_mapped_rows_total: payg_total,
+                required_portfolio_adjustment: analysis.required_payg_discount,
+                selected_parity_adjustment: DecimalValue::ZERO,
+                portfolio_after_selected_parity: payg_total,
+                portfolio_difference: DecimalValue(payg_total.0 - source_total.0),
+                comparable_resource_count: 1,
+                no_mapping_resource_count: 0,
+                price_unavailable_resource_count: 0,
+            },
+            warnings: vec![
+                "The estimate compares annual Software Assurance or renewal spend with always-on Azure Arc SQL Server PAYG licensing; perpetual acquisition cost is excluded as a sunk cost.".to_owned(),
+                "Agreement, entitlement, true-up, buyout, passive replica, outsourcing, and edition-specific terms must be confirmed against the customer's current contract and Microsoft Product Terms.".to_owned(),
+            ],
+            sql_payg_analysis: Some(analysis),
         })
     }
 
@@ -1714,6 +1767,7 @@ mod tests {
             standard_license_sa_usd_per_two_core_pack: None,
             remaining_coverage_months: None,
             electricity_rate_usd_per_kwh: None,
+            sql_payg: None,
         }
     }
 

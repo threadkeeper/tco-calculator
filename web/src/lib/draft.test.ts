@@ -24,7 +24,7 @@ describe('project drafts', () => {
       "untrack(() => workspace.project.settings.project_type === 'on_prem')"
     );
     expect(projectWorkspaceSource).toContain(
-      '<details class="settings-panel" bind:open={settingsOpen}>'
+      '<details class="settings-panel" class:hidden={isSqlPayg} bind:open={settingsOpen}>'
     );
     expect(projectWorkspaceSource).toContain('On-premises SQL licensing');
     expect(projectWorkspaceSource).toContain('ON_PREM_PUBLIC_BOOK_REFERENCE');
@@ -73,6 +73,49 @@ describe('project drafts', () => {
       remaining_coverage_months: 36,
       electricity_rate_usd_per_kwh: '0'
     });
+  });
+
+  it('creates a licensing-only SQL PAYG project with exactly three baseline inputs', () => {
+    const project = createProjectDraft('sql_payg', 'PAYG comparison', null);
+
+    expect(project).toMatchObject({
+      settings: {
+        project_type: 'sql_payg',
+        aws_region: null,
+        azure_region: 'global',
+        sql_payg: {
+          enterprise_licensed_cores: 0,
+          standard_licensed_cores: 0,
+          software_assurance_annual_usd: '0'
+        }
+      },
+      resources: [],
+      aws_price_snapshot_id: null,
+      azure_price_snapshot_id: null
+    });
+    expect(Object.keys(project.settings.sql_payg ?? {})).toEqual([
+      'enterprise_licensed_cores',
+      'standard_licensed_cores',
+      'software_assurance_annual_usd'
+    ]);
+  });
+
+  it('normalizes SQL PAYG browser values without adding workload resources', () => {
+    const project = createProjectDraft('sql_payg', 'PAYG comparison', null);
+    const settings = project.settings.sql_payg;
+    if (!settings) throw new Error('SQL PAYG settings should exist.');
+    Reflect.set(settings, 'enterprise_licensed_cores', '8');
+    Reflect.set(settings, 'standard_licensed_cores', '16');
+    Reflect.set(settings, 'software_assurance_annual_usd', 20000.25);
+
+    const payload = projectRequestPayload(project);
+
+    expect(payload.settings.sql_payg).toEqual({
+      enterprise_licensed_cores: 8,
+      standard_licensed_cores: 16,
+      software_assurance_annual_usd: '20000.25'
+    });
+    expect(payload.resources).toEqual([]);
   });
 
   it('applies the sourced first-year public book reference only when requested', () => {

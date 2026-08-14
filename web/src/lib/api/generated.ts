@@ -599,7 +599,26 @@ export interface components {
             resource_results: components["schemas"]["ResourceCalculation"][];
             portfolio_totals: components["schemas"]["PortfolioTotals"];
             warnings: string[];
+            sql_payg_analysis?: components["schemas"]["SqlPaygAnalysis"];
         };
+        SqlPaygAnalysis: {
+            enterprise_licensed_cores: number;
+            standard_licensed_cores: number;
+            software_assurance_annual_usd: components["schemas"]["Decimal"];
+            /** @constant */
+            annual_hours: 8760;
+            enterprise_payg_usd_per_core_hour: components["schemas"]["Decimal"];
+            standard_payg_usd_per_core_hour: components["schemas"]["Decimal"];
+            payg_gross_annual_usd: components["schemas"]["Decimal"];
+            required_payg_discount: components["schemas"]["Decimal"];
+            payg_at_breakeven_usd: components["schemas"]["Decimal"];
+            /** @enum {string} */
+            outcome: "no_discount_needed" | "discount_required" | "full_discount_required";
+            /** Format: uri */
+            rate_source_url: string;
+            /** Format: date */
+            rate_verified_on: string;
+        } | null;
         ResourceCalculation: {
             /** Format: uuid */
             resource_id: string;
@@ -738,7 +757,7 @@ export interface components {
         };
         ProjectSettings: {
             /** @enum {string} */
-            project_type: "ec2" | "rds" | "on_prem";
+            project_type: "ec2" | "rds" | "on_prem" | "sql_payg";
             aws_region: string | null;
             azure_region: string;
             /** @constant */
@@ -757,6 +776,12 @@ export interface components {
             /** @enum {integer|null} */
             remaining_coverage_months?: 12 | 24 | 36 | null;
             electricity_rate_usd_per_kwh?: components["schemas"]["Decimal"] | null;
+            sql_payg?: components["schemas"]["SqlPaygSettings"] | null;
+        };
+        SqlPaygSettings: {
+            enterprise_licensed_cores: number;
+            standard_licensed_cores: number;
+            software_assurance_annual_usd: components["schemas"]["Decimal"];
         };
         Resource: components["schemas"]["Ec2Resource"] | components["schemas"]["RdsResource"] | components["schemas"]["OnPremResource"];
         SharedResourceProperties: {
@@ -844,7 +869,7 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            project_type: "ec2" | "rds" | "on_prem";
+            project_type: "ec2" | "rds" | "on_prem" | "sql_payg";
             /** Format: date-time */
             modified_at: string;
             source_region: string | null;

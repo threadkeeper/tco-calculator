@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Building2, Cloud, Database, FileClock, Plus, Trash2 } from 'lucide-svelte';
+  import {
+    BadgeDollarSign,
+    Building2,
+    Cloud,
+    Database,
+    FileClock,
+    Plus,
+    Trash2
+  } from 'lucide-svelte';
   import {
     ApiProblem,
     asRecord,
@@ -214,10 +222,12 @@
         setupAwsRegion.trim(),
         setupAzureRegion.trim()
       );
-      project.resources = [createResource(setupType, project.settings)];
+      if (setupType !== 'sql_payg') {
+        project.resources = [createResource(setupType, project.settings)];
+      }
       const workspace = createGuestWorkspace(project);
 
-      if (mode === 'authenticated' && setupType !== 'on_prem') {
+      if (mode === 'authenticated' && setupType !== 'on_prem' && setupType !== 'sql_payg') {
         const response = await requestJsonResponse('/api/v1/projects', {
           method: 'POST',
           body: JSON.stringify(projectRequestPayload(project))
@@ -430,6 +440,14 @@
                     >Hardware, licensing, and electricity</span
                   ></button
                 >
+                <button
+                  type="button"
+                  class:selected={setupType === 'sql_payg'}
+                  onclick={() => (setupType = 'sql_payg')}
+                  ><BadgeDollarSign size={22} /><b>SQL Pay As You Go</b><span
+                    >SA renewal versus Azure Arc PAYG</span
+                  ></button
+                >
               </div>
             </fieldset>
             <div class="setup-fields">
@@ -447,7 +465,7 @@
                   placeholder="Optional context"
                 /></label
               >
-              {#if setupType !== 'on_prem'}
+              {#if setupType !== 'on_prem' && setupType !== 'sql_payg'}
                 <div class="region-field">
                   <SearchSelect
                     id="setup-aws-region"
@@ -458,15 +476,17 @@
                   />
                 </div>
               {/if}
-              <div class="region-field">
-                <SearchSelect
-                  id="setup-azure-region"
-                  label="Azure region"
-                  options={azureRegions}
-                  bind:value={setupAzureRegion}
-                  required
-                />
-              </div>
+              {#if setupType !== 'sql_payg'}
+                <div class="region-field">
+                  <SearchSelect
+                    id="setup-azure-region"
+                    label="Azure region"
+                    options={azureRegions}
+                    bind:value={setupAzureRegion}
+                    required
+                  />
+                </div>
+              {/if}
             </div>
             <div class="setup-actions">
               <span
@@ -648,7 +668,7 @@
   }
   .source-options {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 9px;
   }
   .source-options button {

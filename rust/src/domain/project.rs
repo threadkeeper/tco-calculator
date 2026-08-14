@@ -13,6 +13,14 @@ pub const MAX_PROJECT_RESOURCES: usize = 100;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct SqlPaygSettings {
+    pub enterprise_licensed_cores: u32,
+    pub standard_licensed_cores: u32,
+    pub software_assurance_annual_usd: DecimalValue,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectSettings {
     pub project_type: ProjectType,
     pub aws_region: Option<String>,
@@ -31,6 +39,8 @@ pub struct ProjectSettings {
     pub standard_license_sa_usd_per_two_core_pack: Option<DecimalValue>,
     pub remaining_coverage_months: Option<u8>,
     pub electricity_rate_usd_per_kwh: Option<DecimalValue>,
+    #[serde(default)]
+    pub sql_payg: Option<SqlPaygSettings>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -101,6 +111,13 @@ impl EditableProject {
                 "/resources",
                 "limit",
                 "A project may contain at most 100 resources.",
+            ));
+        }
+        if self.settings.project_type == ProjectType::SqlPayg && !self.resources.is_empty() {
+            issues.push(issue(
+                "/resources",
+                "not_allowed",
+                "SQL Pay As You Go projects do not contain workload resources.",
             ));
         }
 
@@ -370,11 +387,11 @@ fn validate_settings(settings: &ProjectSettings, issues: &mut Vec<ValidationIssu
                 "AWS region is required for AWS projects.",
             ));
         }
-        ProjectType::OnPrem if settings.aws_region.is_some() => {
+        ProjectType::OnPrem | ProjectType::SqlPayg if settings.aws_region.is_some() => {
             issues.push(issue(
                 "/settings/aws_region",
                 "not_allowed",
-                "AWS region must be absent for on-premises projects.",
+                "AWS region must be absent for on-premises and SQL Pay As You Go projects.",
             ));
         }
         _ => {}
@@ -474,6 +491,48 @@ fn validate_settings(settings: &ProjectSettings, issues: &mut Vec<ValidationIssu
                 "On-premises electricity rate must be zero or greater.",
             ));
         }
+    }
+
+    if settings.project_type == ProjectType::SqlPayg {
+        match settings.sql_payg.as_ref() {
+            Some(sql_payg) => {
+                if sql_payg.enterprise_licensed_cores > 100_000
+                    || sql_payg.standard_licensed_cores > 100_000
+                {
+                    issues.push(issue(
+                        "/settings/sql_payg",
+                        "range",
+                        "Enterprise and Standard licensed cores must not exceed 100,000.",
+                    ));
+                }
+                if sql_payg.enterprise_licensed_cores == 0 && sql_payg.standard_licensed_cores == 0
+                {
+                    issues.push(issue(
+                        "/settings/sql_payg",
+                        "required",
+                        "Enter at least one Enterprise or Standard licensed core.",
+                    ));
+                }
+                if sql_payg.software_assurance_annual_usd.0 < Decimal::ZERO {
+                    issues.push(issue(
+                        "/settings/sql_payg/software_assurance_annual_usd",
+                        "range",
+                        "Annual Software Assurance spend must not be negative.",
+                    ));
+                }
+            }
+            None => issues.push(issue(
+                "/settings/sql_payg",
+                "required",
+                "SQL Pay As You Go licensing inputs are required.",
+            )),
+        }
+    } else if settings.sql_payg.is_some() {
+        issues.push(issue(
+            "/settings/sql_payg",
+            "not_allowed",
+            "SQL Pay As You Go licensing inputs are allowed only for that project type.",
+        ));
     }
 }
 

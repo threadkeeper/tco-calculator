@@ -1,4 +1,4 @@
-export type ProjectType = 'ec2' | 'rds' | 'on_prem';
+export type ProjectType = 'ec2' | 'rds' | 'on_prem' | 'sql_payg';
 export type SqlEdition = 'standard' | 'enterprise';
 export type LicenseBasis = 'license_included' | 'byol';
 export type PurchaseOption =
@@ -29,6 +29,13 @@ export type ProjectSettingsDraft = {
   standard_license_sa_usd_per_two_core_pack: string | null;
   remaining_coverage_months: 12 | 24 | 36 | null;
   electricity_rate_usd_per_kwh: string | null;
+  sql_payg: SqlPaygSettingsDraft | null;
+};
+
+export type SqlPaygSettingsDraft = {
+  enterprise_licensed_cores: number;
+  standard_licensed_cores: number;
+  software_assurance_annual_usd: string;
 };
 
 export type ResourceDefaults = Pick<
@@ -131,13 +138,14 @@ export function createProjectDraft(
   azureRegion = 'swedencentral'
 ): ProjectDraft {
   const onPrem = projectType === 'on_prem';
+  const sqlPayg = projectType === 'sql_payg';
   return {
     name,
     description,
     settings: {
       project_type: projectType,
-      aws_region: onPrem ? null : awsRegion,
-      azure_region: azureRegion,
+      aws_region: onPrem || sqlPayg ? null : awsRegion,
+      azure_region: sqlPayg ? 'global' : azureRegion,
       currency: 'USD',
       source_compute_discount: '0',
       source_license_discount: '0',
@@ -151,7 +159,14 @@ export function createProjectDraft(
       enterprise_license_sa_usd_per_two_core_pack: null,
       standard_license_sa_usd_per_two_core_pack: null,
       remaining_coverage_months: onPrem ? 36 : null,
-      electricity_rate_usd_per_kwh: onPrem ? '0' : null
+      electricity_rate_usd_per_kwh: onPrem ? '0' : null,
+      sql_payg: sqlPayg
+        ? {
+            enterprise_licensed_cores: 0,
+            standard_licensed_cores: 0,
+            software_assurance_annual_usd: '0'
+          }
+        : null
     },
     resources: [],
     aws_price_snapshot_id: null,
@@ -160,7 +175,7 @@ export function createProjectDraft(
 }
 
 export function createResource(
-  projectType: ProjectType,
+  projectType: Exclude<ProjectType, 'sql_payg'>,
   defaults: ResourceDefaults
 ): ResourceDraft {
   const shared: SharedResourceDraft = {
@@ -268,7 +283,23 @@ export function projectRequestPayload(project: ProjectDraft): ProjectDraft {
       project.settings.standard_license_sa_usd_per_two_core_pack
     ),
     remaining_coverage_months: optionalCoverageMonths(project.settings.remaining_coverage_months),
-    electricity_rate_usd_per_kwh: optionalDecimal(project.settings.electricity_rate_usd_per_kwh)
+    electricity_rate_usd_per_kwh: optionalDecimal(project.settings.electricity_rate_usd_per_kwh),
+    sql_payg: project.settings.sql_payg
+      ? {
+          enterprise_licensed_cores: requiredInteger(
+            project.settings.sql_payg.enterprise_licensed_cores,
+            'Enterprise licensed cores'
+          ),
+          standard_licensed_cores: requiredInteger(
+            project.settings.sql_payg.standard_licensed_cores,
+            'Standard licensed cores'
+          ),
+          software_assurance_annual_usd: requiredDecimal(
+            project.settings.sql_payg.software_assurance_annual_usd,
+            'Annual Software Assurance spend'
+          )
+        }
+      : null
   };
   const resources = project.resources.map((resource, index): ResourceDraft => {
     const shared = {
@@ -388,7 +419,13 @@ export function editableProject(value: unknown): ProjectDraft | null {
   }
   if (typeof value.name !== 'string') return null;
   const projectType = value.settings.project_type;
-  if (projectType !== 'ec2' && projectType !== 'rds' && projectType !== 'on_prem') return null;
+  if (
+    projectType !== 'ec2' &&
+    projectType !== 'rds' &&
+    projectType !== 'on_prem' &&
+    projectType !== 'sql_payg'
+  )
+    return null;
 
   return {
     name: value.name,
@@ -408,7 +445,16 @@ export async function loadGuestWorkspace(): Promise<GuestWorkspace | null> {
     const value = await requestToPromise(
       database.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(ACTIVE_KEY)
     );
-    return isGuestWorkspace(value) ? value : null;
+    if (!isRecord(value) || typeof value.updated_at !== 'string') return null;
+    const project = editableProject(value.project);
+    if (!project) return null;
+    return {
+      project,
+      calculation: value.calculation ?? null,
+      aws_resolution: value.aws_resolution ?? null,
+      azure_resolution: value.azure_resolution ?? null,
+      updated_at: value.updated_at
+    };
   } finally {
     database.close();
   }
@@ -438,14 +484,6 @@ export async function clearGuestWorkspace(): Promise<void> {
   } finally {
     database.close();
   }
-}
-
-function isGuestWorkspace(value: unknown): value is GuestWorkspace {
-  return (
-    isRecord(value) &&
-    editableProject(value.project) !== null &&
-    typeof value.updated_at === 'string'
-  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

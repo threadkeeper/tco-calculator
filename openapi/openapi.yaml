@@ -1058,6 +1058,54 @@ components:
           type: array
           items:
             type: string
+        sql_payg_analysis:
+          $ref: '#/components/schemas/SqlPaygAnalysis'
+    SqlPaygAnalysis:
+      type: [object, 'null']
+      required:
+        - enterprise_licensed_cores
+        - standard_licensed_cores
+        - software_assurance_annual_usd
+        - annual_hours
+        - enterprise_payg_usd_per_core_hour
+        - standard_payg_usd_per_core_hour
+        - payg_gross_annual_usd
+        - required_payg_discount
+        - payg_at_breakeven_usd
+        - outcome
+        - rate_source_url
+        - rate_verified_on
+      properties:
+        enterprise_licensed_cores:
+          type: integer
+          minimum: 0
+        standard_licensed_cores:
+          type: integer
+          minimum: 0
+        software_assurance_annual_usd:
+          $ref: '#/components/schemas/Decimal'
+        annual_hours:
+          type: integer
+          const: 8760
+        enterprise_payg_usd_per_core_hour:
+          $ref: '#/components/schemas/Decimal'
+        standard_payg_usd_per_core_hour:
+          $ref: '#/components/schemas/Decimal'
+        payg_gross_annual_usd:
+          $ref: '#/components/schemas/Decimal'
+        required_payg_discount:
+          $ref: '#/components/schemas/Decimal'
+        payg_at_breakeven_usd:
+          $ref: '#/components/schemas/Decimal'
+        outcome:
+          type: string
+          enum: [no_discount_needed, discount_required, full_discount_required]
+        rate_source_url:
+          type: string
+          format: uri
+        rate_verified_on:
+          type: string
+          format: date
     ResourceCalculation:
       type: object
       required:
@@ -1398,7 +1446,7 @@ components:
       properties:
         project_type:
           type: string
-          enum: [ec2, rds, on_prem]
+          enum: [ec2, rds, on_prem, sql_payg]
         aws_region:
           type: [string, 'null']
         azure_region:
@@ -1439,6 +1487,28 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Decimal'
             - type: 'null'
+        sql_payg:
+          oneOf:
+            - $ref: '#/components/schemas/SqlPaygSettings'
+            - type: 'null'
+    SqlPaygSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - enterprise_licensed_cores
+        - standard_licensed_cores
+        - software_assurance_annual_usd
+      properties:
+        enterprise_licensed_cores:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        standard_licensed_cores:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        software_assurance_annual_usd:
+          $ref: '#/components/schemas/Decimal'
     Resource:
       oneOf:
         - $ref: '#/components/schemas/Ec2Resource'
@@ -1617,7 +1687,7 @@ components:
           type: string
         project_type:
           type: string
-          enum: [ec2, rds, on_prem]
+          enum: [ec2, rds, on_prem, sql_payg]
         modified_at:
           type: string
           format: date-time

@@ -27,6 +27,7 @@
 
   function typeLabel(value: string | null): string {
     if (value === 'on_prem') return 'On-prem';
+    if (value === 'sql_payg') return 'SQL PAYG';
     return value?.toUpperCase() ?? 'Unknown';
   }
 

@@ -510,6 +510,7 @@ impl NewResourceInput {
             ProjectType::Ec2 => !rds_fields && !on_prem_fields,
             ProjectType::Rds => !ec2_fields && !on_prem_fields,
             ProjectType::OnPrem => self.instance_type.is_none() && !ec2_fields && !rds_fields,
+            ProjectType::SqlPayg => false,
         }
     }
 }
@@ -1010,8 +1011,11 @@ fn new_project_draft(input: &StageNewProjectDraftInput) -> EditableProject {
             .settings
             .electricity_rate_usd_per_kwh
             .or(on_prem.then_some(DecimalValue::ZERO)),
+        sql_payg: None,
     };
-    let resources = if input.resources.is_empty() {
+    let resources = if input.project_type == ProjectType::SqlPayg {
+        Vec::new()
+    } else if input.resources.is_empty() {
         vec![new_resource(&NewResourceInput {
             source_type: input.project_type,
             workload_name: None,
@@ -1119,6 +1123,9 @@ fn new_resource(input: &NewResourceInput) -> Resource {
             depreciation_years: input.depreciation_years.unwrap_or_else(|| decimal(5)),
             average_power_kw_override: input.average_power_kw_override,
         }),
+        ProjectType::SqlPayg => {
+            unreachable!("SQL Pay As You Go projects cannot contain workload resources")
+        }
     }
 }
 

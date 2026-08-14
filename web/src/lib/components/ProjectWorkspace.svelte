@@ -45,6 +45,7 @@
   import ProjectShareDialog from './ProjectShareDialog.svelte';
   import ResourceEditor from './ResourceEditor.svelte';
   import SearchSelect from './SearchSelect.svelte';
+  import SqlPaygWorkspace from './SqlPaygWorkspace.svelte';
 
   let {
     workspace,
@@ -106,6 +107,7 @@
       ? 'server'
       : workspace.project.settings.project_type.toUpperCase()
   );
+  const isSqlPayg = $derived(workspace.project.settings.project_type === 'sql_payg');
 
   $effect(() => {
     currentProjectId = projectId;
@@ -273,6 +275,7 @@
 
   function addResource() {
     const settings = workspace.project.settings;
+    if (settings.project_type === 'sql_payg') return;
     const resource = createResource(settings.project_type, settings);
     workspace.project.resources = [...workspace.project.resources, resource];
     markDirty();
@@ -288,7 +291,11 @@
 
   async function loadSourceCatalogs() {
     const project = workspace.project;
-    if (project.settings.project_type === 'on_prem' || !project.settings.aws_region) {
+    if (
+      project.settings.project_type === 'on_prem' ||
+      project.settings.project_type === 'sql_payg' ||
+      !project.settings.aws_region
+    ) {
       sourceInstances = [];
       ebsTypes = [];
       rdsOptions = {};
@@ -364,6 +371,7 @@
   }
 
   async function resolvePrices(operation: 'resolve' | 'refresh' = 'resolve'): Promise<void> {
+    if (isSqlPayg) return;
     resolving = true;
     problem = null;
     try {
@@ -419,15 +427,19 @@
   }
 
   async function calculate() {
-    if (workspace.project.resources.length === 0) {
+    if (!isSqlPayg && workspace.project.resources.length === 0) {
       problem = `Add at least one ${resourceLabel.toLowerCase()} workload before calculating.`;
+      return;
+    }
+    if (isSqlPayg && !workspace.project.settings.sql_payg) {
+      problem = 'SQL Pay As You Go settings are unavailable.';
       return;
     }
     if (!validateOnPremPrices()) return;
     calculating = true;
     problem = null;
     try {
-      await resolvePrices();
+      if (!isSqlPayg) await resolvePrices();
       workspace.calculation = await requestJson('/api/v1/calculations', {
         method: 'POST',
         body: JSON.stringify(projectRequestPayload(workspace.project))
@@ -462,8 +474,10 @@
   });
 
   onMount(() => {
-    void loadSourceCatalogs();
-    void loadRegionCatalogs();
+    if (!isSqlPayg) {
+      void loadSourceCatalogs();
+      void loadRegionCatalogs();
+    }
   });
 </script>
 
@@ -512,7 +526,7 @@
       </button>
       <button class="primary" type="button" onclick={calculate} disabled={calculating || resolving}>
         <Calculator size={17} />
-        {calculating ? 'Calculating…' : 'Calculate estimate'}
+        {calculating ? 'Calculating…' : isSqlPayg ? 'Calculate discount' : 'Calculate estimate'}
       </button>
     </div>
   </div>
@@ -520,7 +534,19 @@
   <main>
     {#if problem}<ProblemBanner message={problem} ondismiss={() => (problem = null)} />{/if}
 
-    <section class="scope-band" aria-label="Project pricing scope">
+    {#if isSqlPayg}
+      {#if workspace.project.settings.sql_payg}
+        <SqlPaygWorkspace
+          settings={workspace.project.settings.sql_payg}
+          calculation={workspace.calculation}
+          onchange={markDirty}
+        />
+      {:else}
+        <ProblemBanner message="SQL Pay As You Go settings are unavailable." />
+      {/if}
+    {/if}
+
+    <section class="scope-band" class:hidden={isSqlPayg} aria-label="Project pricing scope">
       <div class="scope-heading">
         <div>
           <span class="eyebrow">Comparison scope</span>
@@ -566,7 +592,7 @@
       {#if catalogWarning}<p class="catalog-warning">{catalogWarning}</p>{/if}
     </section>
 
-    <details class="settings-panel" bind:open={settingsOpen}>
+    <details class="settings-panel" class:hidden={isSqlPayg} bind:open={settingsOpen}>
       <summary>Project settings</summary>
       <div class="settings-grid">
         <label
@@ -796,7 +822,7 @@
       </div>
     </details>
 
-    <section class="resources" aria-labelledby="resources-heading">
+    <section class="resources" class:hidden={isSqlPayg} aria-labelledby="resources-heading">
       <div class="section-header">
         <div>
           <span class="eyebrow">Inventory</span>
@@ -833,7 +859,7 @@
       {/if}
     </section>
 
-    {#if workspace.calculation}
+    {#if !isSqlPayg && workspace.calculation}
       <CalculationResults
         calculation={workspace.calculation}
         resources={workspace.project.resources}

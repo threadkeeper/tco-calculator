@@ -542,6 +542,7 @@ mod tests {
                 price_unavailable_resource_count: 0,
             },
             warnings: vec![warning.to_owned()],
+            sql_payg_analysis: None,
         }
     }
 
@@ -571,6 +572,7 @@ mod tests {
                 ))),
                 remaining_coverage_months: Some(12),
                 electricity_rate_usd_per_kwh: Some(DecimalValue(Decimal::new(12, 2))),
+                sql_payg: None,
             },
             resources: vec![Resource::OnPrem(OnPremResource {
                 shared: SharedResource {

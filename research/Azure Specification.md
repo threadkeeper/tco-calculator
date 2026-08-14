@@ -13,7 +13,7 @@ Build a production-quality web application that reproduces the validated AWS SQL
 
 The application must:
 
-1. Calculate AWS RDS, AWS EC2, and On-premises SQL Server source costs.
+1. Calculate AWS RDS, AWS EC2, and On-premises SQL Server source costs, plus the bounded SQL Pay As You Go licensing breakeven comparison defined in section 10.12.
 2. Derive an Azure SQL Managed Instance target deterministically.
 3. Fetch current AWS and Azure public prices at runtime.
 4. show independent `Fetching AWS prices` and `Fetching Azure prices` states.
@@ -52,7 +52,8 @@ Useful engineering practices reviewed in `C:\Repos\gaia-robot` and adopted here 
 - AWS EC2 running Microsoft SQL Server.
 - AWS RDS for SQL Server.
 - On-premises SQL Server with user-entered infrastructure, licensing, and electricity assumptions.
-- Separate `EC2`, `RDS`, and `On-prem` project types; one project contains resources of exactly one source type.
+- Azure Arc-enabled SQL Server PAYG licensing compared with current annual Software Assurance or renewal spend.
+- Separate `EC2`, `RDS`, `On-prem`, and `SQL Pay As You Go` project types. Workload projects contain resources of exactly one source type; SQL Pay As You Go projects contain no workload resources.
 - EC2 EBS `gp3`, `io2`, and ephemeral volumes.
 - RDS Single-AZ and Multi-AZ deployments.
 - SQL Server Standard and Enterprise source editions.
@@ -179,11 +180,11 @@ The screen MUST NOT use a marketing hero or feature-description cards.
 
 - Project name, required, 1 to 100 characters.
 - Optional description, maximum 500 characters.
-- Project type: `EC2`, `RDS`, or `On-prem`.
+- Project type: `EC2`, `RDS`, `On-prem`, or `SQL Pay As You Go`.
 - AWS source region for EC2 and RDS projects, default `eu-west-1`. The region applies to every resource in the project.
-- Azure migration region, default `Sweden Central`. The selected supported region applies to every resource in the project.
+- Azure migration region for EC2, RDS, and On-prem projects, default `Sweden Central`. The selected supported region applies to every resource in the project.
 
-Authenticated users create a persisted EC2 or RDS project. Because On-prem License + SA prices are required customer inputs and are not collected in this dialog, an authenticated On-prem project opens as an unsaved workspace; its first explicit save persists it only after both prices are greater than zero. Guests create a temporary browser-local project draft.
+Authenticated users create a persisted EC2 or RDS project. Because On-prem and SQL Pay As You Go projects require customer inputs that are not collected in this dialog, either type opens as an unsaved workspace; its first explicit save persists it only after its required inputs validate. Guests create a temporary browser-local project draft.
 
 ### 6.3 Open Project
 
@@ -283,9 +284,9 @@ The settings area MUST contain:
 | Setting | Default | Validation | Notes |
 |---|---:|---:|---|
 | Project name | User supplied | 1-100 chars | Persisted for authenticated users |
-| Project type | User selected | `ec2`, `rds`, or `on_prem` | Immutable after the first resource is added |
-| AWS region | `eu-west-1` | Supported live catalog region | Required for EC2/RDS; absent for On-prem; one region per project |
-| Azure migration region | `Sweden Central` | One of the 28 reviewed SQL MI public pricing regions | One selected region per project; internal ARM region name |
+| Project type | User selected | `ec2`, `rds`, `on_prem`, or `sql_payg` | Immutable after creation |
+| AWS region | `eu-west-1` | Supported live catalog region | Required for EC2/RDS; absent for On-prem and SQL Pay As You Go; one region per workload project |
+| Azure migration region | `Sweden Central` | One of the 28 reviewed SQL MI public pricing regions | Required for workload projects; not user-editable or used for SQL Pay As You Go |
 
 The Azure migration-region catalog MUST contain the 28 public USD regions that, as reviewed on 2026-08-11, are listed by Microsoft for Premium-series hardware with 16-TB storage and are represented by both the global Azure Retail Prices API and Azure SQL calculator: Australia East, Australia Southeast, Brazil South, Canada Central, Canada East, Central India, Central US, East Asia, East US, East US 2, France Central, Germany West Central, Italy North, Japan East, Japan West, North Central US, North Europe, Poland Central, Qatar Central, South Central US, Southeast Asia, Sweden Central, Switzerland North, UK South, West Central US, West Europe, West US, and West US 2.
 
@@ -331,7 +332,9 @@ When a snapshot is older than 24 hours but no older than 7 days, calculation pro
 
 ### 7.4 Resource View
 
-Each project displays one resource table specialized for its immutable project type: EC2, RDS, or On-prem. Do not show cross-source tabs. The table MUST support horizontal scrolling on narrow screens and a compact mobile row summary that expands to details. Do not hide financial values without an explicit expansion control.
+Each workload project displays one resource table specialized for its immutable project type: EC2, RDS, or On-prem. Do not show cross-source tabs. The table MUST support horizontal scrolling on narrow screens and a compact mobile row summary that expands to details. Do not hide financial values without an explicit expansion control.
+
+SQL Pay As You Go uses a dedicated licensing workspace with exactly three calculation inputs: Enterprise licensed cores, Standard licensed cores, and annual Software Assurance or renewal spend. It MUST NOT show regions, provider price status, discounts, SQL MI purchase options, resource inventory, target sizing, or resource detail output.
 
 Show core inputs, selected target, source total, Azure total, savings, and parity by default. Keep component cost groups collapsed behind explicit expansion controls. The explanation drawer shows the selected candidate and decision threshold first, followed by a collapsible ordered candidate/rejection list.
 
@@ -458,6 +461,18 @@ RDS source max IOPS influences target-tier selection and appears in the mapping 
 | `average_power_kw_override` | optional decimal | >0; overrides the disclosed indicative server-power estimate |
 
 On-prem resources reuse the shared SQL data, RAM, edition, quantity, and annual-hours fields. `hardware_capex_usd` is the final net price for the complete physical server, including compute and storage hardware but excluding SQL licensing. Do not apply source compute or storage discounts to it. The project-level Enterprise and Standard two-core-pack prices exclude hardware and MUST represent License plus active Software Assurance for the selected remaining EA/SA coverage period. The source licensing explanation MUST round licensable cores up to complete two-core packs with a minimum of four licensable cores and MUST disclose that actual agreement terms control.
+
+### 8.5 SQL Pay As You Go Fields
+
+SQL Pay As You Go is project-level and MUST have an empty `resources` array.
+
+| Field | Type | Validation / behavior |
+|---|---|---|
+| `enterprise_licensed_cores` | integer | 0-100,000 |
+| `standard_licensed_cores` | integer | 0-100,000 |
+| `software_assurance_annual_usd` | decimal | >=0; annual avoidable SA or renewal spend in USD |
+
+At least one Enterprise or Standard core is required. The user is responsible for entering licensable cores after confirming OSE scope, edition, applicable four-core minimums, eligible passive instances, and current agreement rights. Perpetual acquisition cost is excluded from the annual run-rate baseline.
 
 ## 9. Live Pricing
 
@@ -841,6 +856,18 @@ Price availability is independent of target mapping.
 
 The UI displays `PRICE UNAVAILABLE` in affected cost cells. It MUST NOT replace unavailable values with zero or relabel a provider failure as `NO MAPPING`.
 
+### 10.12 SQL Pay As You Go Breakeven
+
+This calculation uses server-owned fixed rates verified against the Azure Retail Prices API on 2026-08-07: Enterprise `$0.375/core-hour`, Standard `$0.100/core-hour`, and `8,760` annual hours.
+
+- `payg_gross_annual = 8760 * (enterprise_licensed_cores * 0.375 + standard_licensed_cores * 0.100)`
+- `required_payg_discount = max(0, 1 - software_assurance_annual_usd / payg_gross_annual)`
+- `payg_at_breakeven = min(software_assurance_annual_usd, payg_gross_annual)`
+
+The server MUST use decimal arithmetic and return inputs, rates, hours, gross PAYG, required discount, breakeven PAYG, outcome, source URL, and verification date in `sql_payg_analysis`. The frontend MUST NOT reproduce the formula. SQL Pay As You Go calculation does not resolve AWS or Azure SQL MI price snapshots.
+
+The result is an estimate rather than a quote or entitlement statement. True-up, EAS anniversary and buyout, perpetual rights, SA eligibility, Azure Hybrid Benefit alternatives, passive replicas, outsourcing, taxes, connectivity, and contract-specific pricing remain explicit decision checks outside the formula. `docs/SQL-PAYG-LICENSING-DECISION.md` records the reviewed assumptions and official sources.
+
 ## 11. Resource Table Output
 
 Each row MUST expose these logical groups.
@@ -961,10 +988,11 @@ Response:
 - Portfolio totals.
 - Structured explanation steps.
 - Warnings and exclusions.
+- Nullable SQL Pay As You Go analysis for that project type.
 
 This endpoint is available to guests and authenticated users. It does not persist by itself.
 
-The backend loads snapshots by ID; clients cannot submit rates. An unknown, expired, provider-mismatched, or scope-mismatched snapshot returns the `snapshot-unavailable` Problem Detail and requires price resolution before recalculation.
+For workload projects, the backend loads snapshots by ID; clients cannot submit rates. An unknown, expired, provider-mismatched, or scope-mismatched snapshot returns the `snapshot-unavailable` Problem Detail and requires price resolution before recalculation. SQL Pay As You Go projects require no snapshots and use the server-owned licensing rates in section 10.12.
 
 ### 12.5 Project APIs
 
