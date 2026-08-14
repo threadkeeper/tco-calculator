@@ -36,7 +36,7 @@ test('opens, sends plain-text help, and returns focus after Escape', async ({ pa
   );
   await page.goto('/');
 
-  const launcher = page.getByRole('button', { name: 'Open TCO assistant' });
+  const launcher = page.getByRole('button', { name: 'Open Azure SQL TCO Copilot' });
   await expect(launcher).toBeVisible();
   await expect(launcher.locator('svg[data-icon="copilot"]')).toBeVisible();
   await expect(
@@ -46,7 +46,13 @@ test('opens, sends plain-text help, and returns focus after Escape', async ({ pa
   ).toBeVisible();
   await launcher.click();
 
-  const composer = page.getByLabel('Ask the TCO assistant');
+  await expect(page.getByRole('heading', { name: 'Azure SQL TCO Copilot' })).toBeVisible();
+  await expect(
+    page.getByText('Paste your documentation, click analyze and I will create the draft project.', {
+      exact: true
+    })
+  ).toBeVisible();
+  const composer = page.getByLabel('Ask Azure SQL TCO Copilot');
   await expect(composer).toBeFocused();
   await composer.fill('What does Azure region mean?');
   await composer.press('Enter');
@@ -56,7 +62,7 @@ test('opens, sends plain-text help, and returns focus after Escape', async ({ pa
   await expect(page.getByText('Azure region', { exact: true })).toBeVisible();
 
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'TCO assistant' })).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Azure SQL TCO Copilot' })).toBeHidden();
   await expect(launcher).toBeFocused();
 });
 
@@ -70,9 +76,9 @@ test('cancels a pending response and stays within the viewport', async ({ page }
     await route.fulfill({ status: 504, body: '' }).catch(() => undefined);
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Open TCO assistant' }).click();
+  await page.getByRole('button', { name: 'Open Azure SQL TCO Copilot' }).click();
 
-  const composer = page.getByLabel('Ask the TCO assistant');
+  const composer = page.getByLabel('Ask Azure SQL TCO Copilot');
   await composer.fill('Explain the calculation');
   await composer.press('Enter');
   await page.getByRole('button', { name: 'Cancel response' }).click();
@@ -80,7 +86,7 @@ test('cancels a pending response and stays within the viewport', async ({ page }
   await expect(page.getByText('The response was cancelled.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send question' })).toBeVisible();
 
-  const panel = page.getByRole('dialog', { name: 'TCO assistant' });
+  const panel = page.getByRole('dialog', { name: 'Azure SQL TCO Copilot' });
   const box = await panel.boundingBox();
   const viewport = page.viewportSize();
   expect(box).not.toBeNull();
@@ -130,8 +136,14 @@ test('opens a reviewed assistant draft with extracted values populated', async (
   );
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Open TCO assistant' }).click();
-  const composer = page.getByLabel('Ask the TCO assistant');
+  await page.getByRole('button', { name: 'Open Azure SQL TCO Copilot' }).click();
+  await expect(page.getByText('What can I do for you?', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Paste your source environment image here and I will build the TCO scenario.', {
+      exact: true
+    })
+  ).toBeVisible();
+  const composer = page.getByLabel('Ask Azure SQL TCO Copilot');
   await composer.fill('Create a new estimate from the screenshot');
   await composer.press('Enter');
   await page.getByRole('button', { name: 'Open draft' }).click();

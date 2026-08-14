@@ -184,7 +184,7 @@
 
   function chooseImage() {
     if (!authenticated) {
-      problem = 'Please log in to use the TCO agent.';
+      problem = 'Please log in to use Azure SQL TCO Copilot.';
       return;
     }
     if (!projectId && projectOpen) {
@@ -389,7 +389,7 @@
     if (error instanceof ApiProblem && error.requestId) {
       return `${error.message} Request ${error.requestId}`;
     }
-    return error instanceof Error ? error.message : 'The TCO assistant is unavailable.';
+    return error instanceof Error ? error.message : 'Azure SQL TCO Copilot is unavailable.';
   }
 </script>
 
@@ -405,9 +405,9 @@
       <div class="heading">
         <span class="heading-icon" aria-hidden="true"><CopilotIcon size={20} /></span>
         <div>
-          <h2 id="assistant-title">TCO assistant</h2>
+          <h2 id="assistant-title">Azure SQL TCO Copilot</h2>
           <p id="assistant-boundary">
-            {authenticated ? 'Tool-enabled agent · reviewed actions' : 'Sign-in required'}
+            Paste your documentation, click analyze and I will create the draft project.
           </p>
         </div>
       </div>
@@ -439,10 +439,10 @@
         <div class="empty-state">
           <span class="empty-icon" aria-hidden="true"><CopilotIcon size={28} /></span>
           {#if authenticated}
-            <p>What would you like to understand?</p>
-            <span>Ask about a field, action, result, or workflow.</span>
+            <p>What can I do for you?</p>
+            <span>Paste your source environment image here and I will build the TCO scenario.</span>
           {:else}
-            <p>Please log in to use the TCO agent.</p>
+            <p>Please log in to use Azure SQL TCO Copilot.</p>
           {/if}
         </div>
       {:else}
@@ -603,7 +603,7 @@
             if (canSend) void sendQuestion();
           }}
         >
-          <label class="visually-hidden" for="assistant-question">Ask the TCO assistant</label>
+          <label class="visually-hidden" for="assistant-question">Ask Azure SQL TCO Copilot</label>
           <textarea
             id="assistant-question"
             rows="2"
@@ -656,7 +656,7 @@
           </div>
         </form>
       {:else}
-        <p class="login-required">Please log in to use the TCO agent.</p>
+        <p class="login-required">Please log in to use Azure SQL TCO Copilot.</p>
       {/if}
     </div>
   </div>
@@ -667,10 +667,10 @@
   class:open
   type="button"
   bind:this={launcherButton}
-  aria-label={open ? 'Assistant open' : 'Open TCO assistant'}
+  aria-label={open ? 'Azure SQL TCO Copilot open' : 'Open Azure SQL TCO Copilot'}
   aria-expanded={open}
   aria-controls="assistant-panel"
-  title={open ? 'Assistant open' : 'Open TCO assistant'}
+  title={open ? 'Azure SQL TCO Copilot open' : 'Open Azure SQL TCO Copilot'}
   onclick={() => {
     if (!open) void openPanel();
   }}
@@ -742,8 +742,10 @@
   }
   .heading p {
     margin-top: 2px;
+    max-width: 260px;
     color: #c4d5d9;
-    font-size: 0.7rem;
+    font-size: 0.68rem;
+    line-height: 1.3;
   }
   .header-actions {
     gap: 2px;
