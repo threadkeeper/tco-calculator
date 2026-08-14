@@ -1224,7 +1224,7 @@ mod tests {
     use crate::{
         calculation::{
             cost::{AzureRate, Ec2Rate},
-            target_selector::{ServiceTier, TargetCandidate},
+            target_selector::{SelectionReasonCode, ServiceTier, TargetCandidate},
         },
         domain::resource::{
             EbsVolume, EbsVolumeType, LicenseBasis, ProjectType, PurchaseOption, SharedResource,
@@ -1263,6 +1263,139 @@ mod tests {
             DecimalValue::ZERO
         );
         assert!(revision.portfolio_totals.aws_all_rows_total.is_some());
+    }
+
+    #[test]
+    fn very_large_ec2_shape_uses_closest_sql_mi_capacity_with_explicit_notes() {
+        let engine = capacity_engine();
+        let settings = settings();
+        let resource = Resource::Ec2(Ec2Resource {
+            shared: SharedResource {
+                id: Uuid::new_v4(),
+                workload_name: "Synthetic large-memory EC2 workload".to_owned(),
+                quantity: 1,
+                sql_edition: SqlEdition::Enterprise,
+                license_basis: LicenseBasis::Byol,
+                sql_data_gb_per_instance: decimal("4096"),
+                source_ram_gb_per_instance: decimal("1536"),
+                annual_hours_per_instance: decimal("8760"),
+                mi_purchase_option: PurchaseOption::Ahb,
+            },
+            instance_type: "r7i.48xlarge".to_owned(),
+            volumes: vec![EbsVolume {
+                id: Uuid::new_v4(),
+                label: "Instance storage".to_owned(),
+                aws_volume_id: None,
+                volume_type: EbsVolumeType::Ephemeral,
+                capacity_gb: DecimalValue::ZERO,
+                provisioned_iops: None,
+                throughput_mibps: None,
+            }],
+        });
+        let aws = aws_snapshot_for("r7i.48xlarge", 192, "1536");
+        let azure = azure_snapshot_for(
+            "managed-vcore-next-gen-general-purpose-premium-series-memory-optimized-128",
+        );
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: Some(&azure),
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("calculation");
+        let row = &revision.resource_results[0];
+        let selection = row.target_selection.as_ref().expect("target selection");
+        let selected = selection.selected.as_ref().expect("capacity fallback");
+
+        assert_eq!(row.mapping_status, Some(MappingStatus::Mapped));
+        assert_eq!(selected.vcores, 128);
+        assert_eq!(selected.selected_memory_gb, decimal("870.4"));
+        assert_eq!(selection.outcome_reasons.len(), 2);
+        assert!(selection.outcome_reasons.iter().any(|reason| {
+            reason.code == SelectionReasonCode::InsufficientVcores
+                && reason.detail.contains("source requirement of 192 vCores")
+                && reason
+                    .detail
+                    .contains("closest available configuration provides 128 vCores")
+        }));
+        assert!(selection.outcome_reasons.iter().any(|reason| {
+            reason.code == SelectionReasonCode::InsufficientMemory
+                && reason
+                    .detail
+                    .contains("source requirement of 1536 GB memory")
+                && reason
+                    .detail
+                    .contains("closest available configuration provides 870.4 GB")
+        }));
+    }
+
+    #[test]
+    fn one_tib_on_prem_source_uses_closest_sql_mi_memory_with_explicit_note() {
+        let engine = capacity_engine();
+        let mut settings = settings();
+        settings.project_type = ProjectType::OnPrem;
+        settings.aws_region = None;
+        settings.standard_license_sa_usd_per_two_core_pack = Some(decimal("1200"));
+        settings.enterprise_license_sa_usd_per_two_core_pack = Some(decimal("4800"));
+        settings.remaining_coverage_months = Some(36);
+        settings.electricity_rate_usd_per_kwh = Some(decimal("0.20"));
+        let resource = Resource::OnPrem(OnPremResource {
+            shared: SharedResource {
+                id: Uuid::new_v4(),
+                workload_name: "Synthetic 1 TiB on-prem workload".to_owned(),
+                quantity: 1,
+                sql_edition: SqlEdition::Enterprise,
+                license_basis: LicenseBasis::LicenseIncluded,
+                sql_data_gb_per_instance: decimal("4096"),
+                source_ram_gb_per_instance: decimal("1024"),
+                annual_hours_per_instance: decimal("8760"),
+                mi_purchase_option: PurchaseOption::Ahb,
+            },
+            source_vcpu: 128,
+            licensable_cores: 128,
+            source_max_iops: 0,
+            hardware_capex_usd: decimal("100000"),
+            depreciation_years: decimal("4"),
+            average_power_kw_override: Some(decimal("2")),
+        });
+        let azure = azure_snapshot_for(
+            "managed-vcore-next-gen-general-purpose-premium-series-memory-optimized-128",
+        );
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: None,
+                azure_snapshot: Some(&azure),
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("calculation");
+        let row = &revision.resource_results[0];
+        let selection = row.target_selection.as_ref().expect("target selection");
+        let selected = selection.selected.as_ref().expect("capacity fallback");
+
+        assert_eq!(row.mapping_status, Some(MappingStatus::Mapped));
+        assert_eq!(selected.vcores, 128);
+        assert_eq!(selected.selected_memory_gb, decimal("870.4"));
+        assert_eq!(selection.outcome_reasons.len(), 1);
+        assert_eq!(
+            selection.outcome_reasons[0].code,
+            SelectionReasonCode::InsufficientMemory
+        );
+        assert!(
+            selection.outcome_reasons[0]
+                .detail
+                .contains("source requirement of 1024 GB memory")
+        );
+        assert!(
+            selection.outcome_reasons[0]
+                .detail
+                .contains("capacity-limited match has been applied")
+        );
     }
 
     #[test]
@@ -1517,6 +1650,51 @@ mod tests {
         .expect("engine")
     }
 
+    fn capacity_engine() -> CalculationEngine {
+        CalculationEngine::new(
+            Arc::new(CapabilityCatalog {
+                schema_version: "test".to_owned(),
+                candidates: vec![
+                    TargetCandidate {
+                        configuration_key:
+                            "managed-vcore-next-gen-general-purpose-premium-series-128"
+                                .to_owned(),
+                        azure_region: "swedencentral".to_owned(),
+                        service_tier: ServiceTier::NextGenerationGeneralPurpose,
+                        hardware_family: "Premium Series".to_owned(),
+                        vcores: 128,
+                        zone_redundant: false,
+                        included_memory_gb: decimal("560"),
+                        supported_memory_gb: vec![decimal("560")],
+                        storage_architecture: "Remote LRS".to_owned(),
+                        maximum_storage_gb: Some(decimal("32768")),
+                        source_url: "https://learn.microsoft.com/azure/azure-sql/managed-instance/resource-limits"
+                            .to_owned(),
+                        reviewed_date: "2026-08-14".to_owned(),
+                    },
+                    TargetCandidate {
+                        configuration_key: "managed-vcore-next-gen-general-purpose-premium-series-memory-optimized-128"
+                            .to_owned(),
+                        azure_region: "swedencentral".to_owned(),
+                        service_tier: ServiceTier::NextGenerationGeneralPurpose,
+                        hardware_family: "Premium Series Memory Optimized".to_owned(),
+                        vcores: 128,
+                        zone_redundant: false,
+                        included_memory_gb: decimal("870.4"),
+                        supported_memory_gb: vec![decimal("870.4")],
+                        storage_architecture: "Remote LRS".to_owned(),
+                        maximum_storage_gb: Some(decimal("32768")),
+                        source_url: "https://learn.microsoft.com/azure/azure-sql/managed-instance/resource-limits"
+                            .to_owned(),
+                        reviewed_date: "2026-08-14".to_owned(),
+                    },
+                ],
+            }),
+            "1.0.0",
+        )
+        .expect("capacity engine")
+    }
+
     fn settings() -> ProjectSettings {
         ProjectSettings {
             project_type: ProjectType::Ec2,
@@ -1566,15 +1744,23 @@ mod tests {
     }
 
     fn aws_snapshot() -> AwsPriceSnapshot {
+        aws_snapshot_for("m-test", 8, "64")
+    }
+
+    fn aws_snapshot_for(
+        instance_type: &str,
+        source_vcpu: u32,
+        catalog_memory_gb: &str,
+    ) -> AwsPriceSnapshot {
         AwsPriceSnapshot::create(
             snapshot_metadata("aws"),
             "eu-west-1",
             vec![AwsEc2RateRecord {
-                stable_key: "m-test".to_owned(),
-                instance_type: "m-test".to_owned(),
+                stable_key: instance_type.to_owned(),
+                instance_type: instance_type.to_owned(),
                 rate: Ec2Rate {
-                    source_vcpu: 8,
-                    catalog_memory_gb: decimal("64"),
+                    source_vcpu,
+                    catalog_memory_gb: decimal(catalog_memory_gb),
                     compute_hourly: decimal("1"),
                     standard_license_hourly: Some(decimal("0.48")),
                     enterprise_license_hourly: Some(decimal("1.5")),
@@ -1588,6 +1774,10 @@ mod tests {
     }
 
     fn azure_snapshot() -> AzurePriceSnapshot {
+        azure_snapshot_for("nggp-8")
+    }
+
+    fn azure_snapshot_for(configuration_key: &str) -> AzurePriceSnapshot {
         AzurePriceSnapshot::create(
             snapshot_metadata("azure"),
             "swedencentral",
@@ -1595,8 +1785,8 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(index, purchase_option)| AzureMiRateRecord {
-                    stable_key: format!("nggp-8|{index}"),
-                    configuration_key: "nggp-8".to_owned(),
+                    stable_key: format!("{configuration_key}|{index}"),
+                    configuration_key: configuration_key.to_owned(),
                     purchase_option: *purchase_option,
                     rate: AzureRate {
                         compute_hourly: decimal("0.8"),

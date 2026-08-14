@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 
 $resourceLimitsUrl = 'https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/resource-limits?view=azuresql'
 $regionAvailabilityUrl = 'https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/region-availability?view=azuresql'
-$reviewedDate = '2026-08-11'
+$reviewedDate = '2026-08-14'
 $azureRegions = @(
     'australiaeast',
     'australiasoutheast',
@@ -58,6 +58,24 @@ $memoryOptions = [ordered]@{
     '96' = @('560')
     '128' = @('560')
 }
+$memoryOptimizedOptions = [ordered]@{
+    '4' = @('54.4')
+    '6' = @('81.6')
+    '8' = @('108.8')
+    '10' = @('136')
+    '12' = @('163.2')
+    '16' = @('217.6')
+    '20' = @('272')
+    '24' = @('326.4')
+    '32' = @('435.2')
+    '40' = @('544')
+    '48' = @('652.8')
+    '56' = @('761.6')
+    '64' = @('870.4')
+    '80' = @('870.4')
+    '96' = @('870.4')
+    '128' = @('870.4')
+}
 
 function Get-NggpMaximumStorageGb {
     param([int]$Vcores)
@@ -75,6 +93,18 @@ function Get-BcMaximumStorageGb {
     if ($Vcores -le 12) { return '2048' }
     if ($Vcores -le 20) { return '4096' }
     if ($Vcores -le 56) { return '5632' }
+    return '16384'
+}
+
+function Get-MemoryOptimizedBcMaximumStorageGb {
+    param([int]$Vcores)
+
+    if ($Vcores -le 6) { return '1024' }
+    if ($Vcores -le 12) { return '2048' }
+    if ($Vcores -le 20) { return '4096' }
+    if ($Vcores -le 24) { return '5632' }
+    if ($Vcores -le 40) { return '8192' }
+    if ($Vcores -le 56) { return '12288' }
     return '16384'
 }
 
@@ -114,6 +144,39 @@ foreach ($azureRegion in $azureRegions) {
             source_url = $resourceLimitsUrl
             reviewed_date = $reviewedDate
         })
+
+        $memoryOptimized = @($memoryOptimizedOptions[[string]$vcore])
+        if ($azureRegion -ne 'italynorth') {
+            $candidates.Add([ordered]@{
+                configuration_key = "managed-vcore-next-gen-general-purpose-premium-series-memory-optimized-$vcore"
+                azure_region = $azureRegion
+                service_tier = 'next_generation_general_purpose'
+                hardware_family = 'Premium Series Memory Optimized'
+                vcores = $vcore
+                zone_redundant = $false
+                included_memory_gb = $memoryOptimized[0]
+                supported_memory_gb = $memoryOptimized
+                storage_architecture = 'Remote LRS'
+                maximum_storage_gb = Get-NggpMaximumStorageGb -Vcores $vcore
+                source_url = $resourceLimitsUrl
+                reviewed_date = $reviewedDate
+            })
+        }
+
+        $candidates.Add([ordered]@{
+            configuration_key = "managed-vcore-business-critical-premium-series-memory-optimized-$vcore"
+            azure_region = $azureRegion
+            service_tier = 'business_critical'
+            hardware_family = 'Premium Series Memory Optimized'
+            vcores = $vcore
+            zone_redundant = $false
+            included_memory_gb = $memoryOptimized[0]
+            supported_memory_gb = $memoryOptimized
+            storage_architecture = 'BC local SSD'
+            maximum_storage_gb = Get-MemoryOptimizedBcMaximumStorageGb -Vcores $vcore
+            source_url = $resourceLimitsUrl
+            reviewed_date = $reviewedDate
+        })
     }
 }
 
@@ -124,12 +187,21 @@ $anchor = $candidates | Where-Object {
 if ($null -eq $anchor -or $anchor.included_memory_gb -ne '224' -or '256' -notin $anchor.supported_memory_gb) {
     throw 'The required Sweden Central 32-vCore, 224/256-GB parity anchor is missing.'
 }
+$maximumMemoryAnchor = $candidates | Where-Object {
+    $_.azure_region -eq 'swedencentral' -and
+    $_.configuration_key -eq 'managed-vcore-next-gen-general-purpose-premium-series-memory-optimized-128'
+}
+if ($null -eq $maximumMemoryAnchor -or
+    $maximumMemoryAnchor.included_memory_gb -ne '870.4' -or
+    '870.4' -notin $maximumMemoryAnchor.supported_memory_gb) {
+    throw 'The required Sweden Central 128-vCore, 870.4-GB maximum-memory anchor is missing.'
+}
 $italyNorthCandidates = @($candidates | Where-Object { $_.azure_region -eq 'italynorth' })
-if ($italyNorthCandidates.Count -ne $vcores.Count -or
+if ($italyNorthCandidates.Count -ne ($vcores.Count * 2) -or
     @($italyNorthCandidates | Where-Object { $_.service_tier -ne 'business_critical' }).Count -ne 0) {
     throw 'Italy North must contain only the reviewed Business Critical configurations.'
 }
-$expectedCandidateCount = (($azureRegions.Count * 2) - 1) * $vcores.Count
+$expectedCandidateCount = (($azureRegions.Count * 4) - 2) * $vcores.Count
 if ($candidates.Count -ne $expectedCandidateCount) {
     throw "Expected $expectedCandidateCount reviewed capability records, found $($candidates.Count)."
 }
@@ -145,6 +217,7 @@ $catalog = [ordered]@{
         'Italy North includes Business Critical only because the approved Retail Prices endpoint does not publish the Premium-series additional-memory meter required to price Next Generation General Purpose flexible memory.'
         'East Asia can have temporary Premium-series capacity constraints; catalog inclusion does not promise deployable capacity.'
         'Business Critical flexible memory is excluded because the reviewed source marks it preview.'
+        'Memory optimized Premium-series uses 13.6 GB per vCore through 64 vCores and is capped at 870.4 GB above 64 vCores.'
         'Storage values convert documented TiB-scale limits to GB using 1 TiB = 1024 GB.'
     )
     candidates = $candidates

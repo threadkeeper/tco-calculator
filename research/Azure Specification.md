@@ -618,6 +618,8 @@ Each target shape includes:
 
 The capability catalog MUST cover every Azure SQL MI region exposed by the project settings selector. Sweden Central remains the default and the frozen workbook-parity region.
 
+The reviewed Premium-series hardware ceilings are 128 vCores and 560 GB memory. The reviewed memory-optimized Premium-series hardware ceiling is 128 vCores and 870.4 GB memory. The memory-optimized ratio is 13.6 GB per vCore through 64 vCores and remains capped at 870.4 GB for larger vCore configurations.
+
 ### 10.3 Candidate Eligibility
 
 A candidate is sizing-eligible only if:
@@ -627,9 +629,11 @@ A candidate is sizing-eligible only if:
 - At least one supported memory value >= source RAM.
 - The candidate's known maximum supported storage is >= source SQL data GB.
 
-Only non-zone-redundant candidates are eligible in v1. For NGGP, only Premium Series candidates are eligible in workbook-parity mode.
+Only non-zone-redundant candidates are eligible in v1. For NGGP, Premium Series and Premium Series Memory Optimized candidates are eligible in workbook-parity mode.
 
 For each candidate, selected memory is that candidate's smallest supported memory value >= source RAM.
+
+If no candidate meets source CPU or RAM because the source exceeds the requested tier's reviewed capacity ceiling, select the closest storage-valid maximum-capacity candidate in that same tier. Maximize each exceeded capacity dimension first, then minimize absolute shortfall in the remaining dimensions using vCores, memory, and stable configuration key as deterministic tie-breakers. Keep the result `MAPPED`, and add a visible outcome reason for every undersized dimension naming the source requirement, selected capacity, service tier, hardware family, and need for workload validation. This bounded fallback MUST NOT activate when the requested tier contains a CPU/RAM-sufficient candidate that was rejected for storage or another eligibility rule.
 
 Storage capacity MUST be enforced during selection. Candidates that fail storage are rejected, allowing the next larger candidate in the requested service tier to be selected. When storage causes selection of a larger SKU than CPU and RAM alone require, the row explanation MUST name the rejected SKU, its storage limit, and the selected larger SKU. Storage alone MUST NOT switch NGGP to Business Critical; if no candidate in the IOPS-requested tier satisfies capacity, return `NO MAPPING`.
 
@@ -637,7 +641,7 @@ Price completeness is evaluated after structural target selection. A usable targ
 
 ### 10.4 Candidate Ordering
 
-Among eligible candidates in the requested tier, select the minimum tuple:
+Among candidates that meet source CPU and RAM in the requested tier, select the minimum tuple:
 
 1. `(candidate_vcores - source_vcpu) / source_vcpu`
 2. `(selected_memory - source_memory) / source_memory`
@@ -664,7 +668,8 @@ Algorithm:
 4. If `source_max_iops <= nggp_iops_limit`, request NGGP.
 5. If `source_max_iops > nggp_iops_limit`, request Business Critical.
 6. Select the best eligible candidate in the requested tier.
-7. If no candidate exists in the requested tier, return `NO MAPPING`.
+7. If no candidate meets CPU or RAM because the source exceeds the requested tier's reviewed capacity ceiling, apply the maximum-capacity fallback from section 10.3 and expose its limitation reasons.
+8. Otherwise, if no candidate exists in the requested tier, return `NO MAPPING`.
 
 Business Critical MUST NOT be selected because the AWS source edition is Enterprise. It MUST NOT be selected solely because NGGP lacks enough RAM. It is selected only when source IOPS exceeds the NGGP limit.
 
@@ -1442,6 +1447,8 @@ At minimum test:
 - BC is never selected only because NGGP lacks RAM.
 - `source_max_iops=0` requests NGGP.
 - Smallest supported MI RAM meeting source RAM is selected.
+- A source above the reviewed SQL MI CPU or RAM ceiling maps to the closest maximum-capacity candidate in the IOPS-requested tier and exposes an explicit shortfall explanation for each undersized dimension.
+- A 192-vCPU, 1,536-GB EC2 source and a 128-vCPU, 1,024-GB on-premises source select the reviewed 128-vCore, 870.4-GB memory-optimized Premium-series ceiling; the EC2 row explains both CPU and RAM shortfalls, and the on-premises row explains its RAM shortfall.
 - A candidate that fails SQL data capacity is rejected and the next capacity-valid SKU in the requested tier is selected with an explicit explanation.
 - Additional RAM is charged once.
 - RDS Multi-AZ quantity is not doubled.

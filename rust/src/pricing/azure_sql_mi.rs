@@ -689,6 +689,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn memory_optimized_configuration_normalizes_complete_price_set() {
+        const MEMORY_OPTIMIZED_CONFIGURATION: &str =
+            "managed-vcore-next-gen-general-purpose-premium-series-memory-optimized-128";
+        let calculator = calculator_payload_for(MEMORY_OPTIMIZED_CONFIGURATION, true);
+        let retail = retail_page();
+        let configuration = AzureMiConfiguration {
+            configuration_key: MEMORY_OPTIMIZED_CONFIGURATION,
+            service_tier: ServiceTier::NextGenerationGeneralPurpose,
+            hardware_family: "Premium Series Memory Optimized",
+            vcores: 128,
+            zone_redundant: false,
+        };
+
+        let normalized = normalize_azure_sql_mi(
+            context(),
+            &[configuration],
+            &calculator,
+            &[AzureRetailPagePayload {
+                source_url: "https://prices.azure.com/api/retail/prices",
+                body: &retail,
+            }],
+        )
+        .expect("normalize memory-optimized configuration");
+
+        assert_eq!(normalized.records.len(), PurchaseOption::ALL.len());
+        assert!(normalized.records.iter().all(|record| {
+            record.configuration_key == MEMORY_OPTIMIZED_CONFIGURATION
+                && record
+                    .stable_key
+                    .contains("premium-series-memory-optimized")
+        }));
+    }
+
     fn context() -> AzureSqlMiNormalizationContext<'static> {
         AzureSqlMiNormalizationContext {
             target_region: "swedencentral",
@@ -719,6 +753,10 @@ mod tests {
     }
 
     fn calculator_payload(include_last_option: bool) -> Vec<u8> {
+        calculator_payload_for(CONFIGURATION, include_last_option)
+    }
+
+    fn calculator_payload_for(configuration_key: &str, include_last_option: bool) -> Vec<u8> {
         let mut options = serde_json::Map::new();
         options.insert(
             "payg".to_owned(),
@@ -752,7 +790,10 @@ mod tests {
             );
         }
         let mut skus = serde_json::Map::new();
-        skus.insert(CONFIGURATION.to_owned(), serde_json::Value::Object(options));
+        skus.insert(
+            configuration_key.to_owned(),
+            serde_json::Value::Object(options),
+        );
         let offers = serde_json::json!({
             "compute-payg": offer("compute", "5.632"),
             "compute-one-year": offer("reservation", "3.6602739712"),

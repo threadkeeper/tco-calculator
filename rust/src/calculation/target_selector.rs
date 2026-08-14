@@ -155,10 +155,19 @@ pub fn select_target(
 
     let without_storage = eligible_candidates(catalog, request, requested_tier, false);
     let with_storage = eligible_candidates(catalog, request, requested_tier, true);
-    let selected = with_storage.first().map(selected_target);
+    let capacity_fallback = if with_storage.is_empty() {
+        closest_capacity_candidate(catalog, request, requested_tier, true)
+    } else {
+        None
+    };
+    let selected_candidate = with_storage.first().or(capacity_fallback.as_ref());
+    let selected = selected_candidate.map(selected_target);
     let storage_escalation = storage_escalation(&without_storage, &with_storage, request);
     let candidates = candidate_evaluations(catalog, request, requested_tier);
-    let outcome_reasons = outcome_reasons(catalog, request, requested_tier, &with_storage);
+    let outcome_reasons = capacity_fallback.as_ref().map_or_else(
+        || outcome_reasons(catalog, request, requested_tier, &with_storage),
+        |fallback| capacity_fallback_reasons(request, fallback),
+    );
 
     Ok(TargetSelection {
         mapping_status: if selected.is_some() {
@@ -215,6 +224,147 @@ fn eligible_candidates<'a>(
     candidates
 }
 
+fn closest_capacity_candidate<'a>(
+    catalog: &'a CapabilityCatalog,
+    request: TargetSelectionRequest<'_>,
+    tier: ServiceTier,
+    enforce_storage: bool,
+) -> Option<EligibleCandidate<'a>> {
+    let mut candidates = catalog
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.azure_region == request.azure_region && candidate.service_tier == tier
+        })
+        .filter_map(|candidate| {
+            let (_, rejection_reasons) = evaluate_candidate(candidate, request, tier, false);
+            if rejection_reasons.iter().any(|reason| {
+                !matches!(
+                    reason.code,
+                    SelectionReasonCode::InsufficientVcores
+                        | SelectionReasonCode::InsufficientMemory
+                )
+            }) {
+                return None;
+            }
+
+            let selected_memory_gb = candidate
+                .supported_memory_gb
+                .iter()
+                .copied()
+                .filter(|memory| memory.0 >= request.source_memory_gb.0)
+                .min()
+                .or_else(|| candidate.supported_memory_gb.iter().copied().max())?;
+            Some(EligibleCandidate {
+                candidate,
+                selected_memory_gb,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let maximum_vcores = candidates
+        .iter()
+        .map(|candidate| candidate.candidate.vcores)
+        .max()?;
+    let maximum_memory_gb = candidates
+        .iter()
+        .map(|candidate| candidate.selected_memory_gb)
+        .max()?;
+    let cpu_capacity_exceeded = request.source_vcpu > maximum_vcores;
+    let memory_capacity_exceeded = request.source_memory_gb.0 > maximum_memory_gb.0;
+    if !cpu_capacity_exceeded && !memory_capacity_exceeded {
+        return None;
+    }
+
+    if enforce_storage {
+        candidates.retain(|candidate| {
+            candidate
+                .candidate
+                .maximum_storage_gb
+                .is_none_or(|maximum| maximum.0 >= request.sql_data_gb.0)
+        });
+    }
+
+    candidates.sort_by(|left, right| {
+        let cpu_capacity_order = if cpu_capacity_exceeded {
+            right.candidate.vcores.cmp(&left.candidate.vcores)
+        } else {
+            Ordering::Equal
+        };
+        let memory_capacity_order = if memory_capacity_exceeded {
+            right.selected_memory_gb.cmp(&left.selected_memory_gb)
+        } else {
+            Ordering::Equal
+        };
+
+        cpu_capacity_order
+            .then(memory_capacity_order)
+            .then_with(|| {
+                left.candidate
+                    .vcores
+                    .abs_diff(request.source_vcpu)
+                    .cmp(&right.candidate.vcores.abs_diff(request.source_vcpu))
+            })
+            .then_with(|| {
+                decimal_distance(left.selected_memory_gb.0, request.source_memory_gb.0).cmp(
+                    &decimal_distance(right.selected_memory_gb.0, request.source_memory_gb.0),
+                )
+            })
+            .then_with(|| {
+                left.candidate
+                    .configuration_key
+                    .cmp(&right.candidate.configuration_key)
+            })
+    });
+    candidates.into_iter().next()
+}
+
+fn decimal_distance(left: Decimal, right: Decimal) -> Decimal {
+    if left >= right {
+        left - right
+    } else {
+        right - left
+    }
+}
+
+fn capacity_fallback_reasons(
+    request: TargetSelectionRequest<'_>,
+    fallback: &EligibleCandidate<'_>,
+) -> Vec<SelectionReason> {
+    let mut reasons = Vec::new();
+    let tier = service_tier_label(fallback.candidate.service_tier);
+    if fallback.candidate.vcores < request.source_vcpu {
+        reasons.push(reason(
+            SelectionReasonCode::InsufficientVcores,
+            &format!(
+                "Azure SQL Managed Instance does not offer the source requirement of {} vCores in the {tier} tier on {} hardware. The closest available configuration provides {} vCores; this capacity-limited match has been applied and requires workload validation.",
+                request.source_vcpu,
+                fallback.candidate.hardware_family,
+                fallback.candidate.vcores
+            ),
+        ));
+    }
+    if fallback.selected_memory_gb.0 < request.source_memory_gb.0 {
+        reasons.push(reason(
+            SelectionReasonCode::InsufficientMemory,
+            &format!(
+                "Azure SQL Managed Instance does not offer the source requirement of {} GB memory in the {tier} tier on {} hardware. The closest available configuration provides {} GB; this capacity-limited match has been applied and requires workload validation.",
+                request.source_memory_gb,
+                fallback.candidate.hardware_family,
+                fallback.selected_memory_gb
+            ),
+        ));
+    }
+    reasons
+}
+
+fn service_tier_label(tier: ServiceTier) -> &'static str {
+    match tier {
+        ServiceTier::NextGenerationGeneralPurpose => "Next-generation General Purpose",
+        ServiceTier::BusinessCritical => "Business Critical",
+    }
+}
+
 fn evaluate_candidate(
     candidate: &TargetCandidate,
     request: TargetSelectionRequest<'_>,
@@ -234,11 +384,14 @@ fn evaluate_candidate(
     }
     if request.workbook_parity_mode
         && tier == ServiceTier::NextGenerationGeneralPurpose
-        && candidate.hardware_family != "Premium Series"
+        && !matches!(
+            candidate.hardware_family.as_str(),
+            "Premium Series" | "Premium Series Memory Optimized"
+        )
     {
         reasons.push(reason(
             SelectionReasonCode::HardwareFamilyUnsupported,
-            "Workbook-parity NGGP selection requires Premium Series hardware.",
+            "Workbook-parity NGGP selection requires Premium-series hardware.",
         ));
     }
     if candidate.vcores < request.source_vcpu {
@@ -490,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn lack_of_nggp_memory_does_not_select_business_critical() {
+    fn lack_of_nggp_memory_uses_nggp_capacity_fallback_instead_of_business_critical() {
         let catalog = catalog(vec![
             candidate(
                 "nggp-8",
@@ -516,8 +669,62 @@ mod tests {
             selection.requested_tier,
             ServiceTier::NextGenerationGeneralPurpose
         );
-        assert_eq!(selection.mapping_status, MappingStatus::NoMapping);
-        assert!(selection.selected.is_none());
+        assert_eq!(selection.mapping_status, MappingStatus::Mapped);
+        assert_eq!(
+            selection
+                .selected
+                .as_ref()
+                .expect("NGGP fallback")
+                .configuration_key,
+            "nggp-8"
+        );
+        assert_eq!(selection.outcome_reasons.len(), 1);
+        assert_eq!(
+            selection.outcome_reasons[0].code,
+            SelectionReasonCode::InsufficientMemory
+        );
+        assert!(
+            selection.outcome_reasons[0]
+                .detail
+                .contains("closest available configuration provides 32 GB")
+        );
+    }
+
+    #[test]
+    fn very_large_aws_shape_uses_maximum_available_cores_and_memory() {
+        let catalog = catalog(vec![
+            candidate(
+                "nggp-premium-128",
+                ServiceTier::NextGenerationGeneralPurpose,
+                128,
+                "560",
+                &["560"],
+                Some("32768"),
+            ),
+            memory_optimized_candidate(
+                "nggp-memory-optimized-128",
+                ServiceTier::NextGenerationGeneralPurpose,
+                128,
+                "870.4",
+                Some("32768"),
+            ),
+        ]);
+        let mut selection_request = request(0, "1536", "100");
+        selection_request.source_vcpu = 192;
+
+        let selection = select_target(&catalog, selection_request).expect("selection");
+        let selected = selection.selected.as_ref().expect("capacity fallback");
+
+        assert_eq!(selection.mapping_status, MappingStatus::Mapped);
+        assert_eq!(selected.configuration_key, "nggp-memory-optimized-128");
+        assert_eq!(selected.vcores, 128);
+        assert_eq!(selected.selected_memory_gb, decimal("870.4"));
+        assert_eq!(selection.outcome_reasons.len(), 2);
+        assert!(selection.outcome_reasons.iter().all(|reason| {
+            reason
+                .detail
+                .contains("capacity-limited match has been applied")
+        }));
     }
 
     #[test]
@@ -589,6 +796,33 @@ mod tests {
             ServiceTier::NextGenerationGeneralPurpose
         );
         assert_eq!(selection.mapping_status, MappingStatus::NoMapping);
+    }
+
+    #[test]
+    fn storage_failure_does_not_fall_back_to_an_undersized_candidate() {
+        let catalog = catalog(vec![
+            candidate(
+                "nggp-4",
+                ServiceTier::NextGenerationGeneralPurpose,
+                4,
+                "32",
+                &["32"],
+                Some("4096"),
+            ),
+            candidate(
+                "nggp-8",
+                ServiceTier::NextGenerationGeneralPurpose,
+                8,
+                "64",
+                &["64"],
+                Some("512"),
+            ),
+        ]);
+
+        let selection = select_target(&catalog, request(0, "60", "800")).expect("selection");
+
+        assert_eq!(selection.mapping_status, MappingStatus::NoMapping);
+        assert!(selection.selected.is_none());
     }
 
     #[test]
@@ -665,6 +899,25 @@ mod tests {
                     .to_owned(),
             reviewed_date: "2026-07-31".to_owned(),
         }
+    }
+
+    fn memory_optimized_candidate(
+        configuration_key: &str,
+        service_tier: ServiceTier,
+        vcores: u32,
+        memory_gb: &str,
+        maximum_storage_gb: Option<&str>,
+    ) -> TargetCandidate {
+        let mut candidate = candidate(
+            configuration_key,
+            service_tier,
+            vcores,
+            memory_gb,
+            &[memory_gb],
+            maximum_storage_gb,
+        );
+        candidate.hardware_family = "Premium Series Memory Optimized".to_owned();
+        candidate
     }
 
     fn decimal(value: &str) -> DecimalValue {
