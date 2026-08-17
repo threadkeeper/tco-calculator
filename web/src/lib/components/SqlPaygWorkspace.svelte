@@ -1,19 +1,49 @@
 <script lang="ts">
   import { BadgeDollarSign, ExternalLink, Gauge, Scale } from 'lucide-svelte';
-  import { asRecord, formatMoney, readNumber, readRecord, readString } from '$lib/api';
+  import { asRecord, formatMoney, readRecord, readString } from '$lib/api';
   import type { SqlPaygSettingsDraft } from '$lib/draft';
 
   let {
     settings,
+    annualHours,
+    appliedDiscount,
     calculation,
-    onchange
+    onchange,
+    onannualhourschange,
+    onapplieddiscountchange
   }: {
     settings: SqlPaygSettingsDraft;
+    annualHours: string;
+    appliedDiscount: string;
     calculation: unknown | null;
     onchange: () => void;
+    onannualhourschange: (value: string) => void;
+    onapplieddiscountchange: (value: string) => void;
   } = $props();
 
+  let utilizationUnit = $state<'monthly' | 'annual'>('annual');
   const analysis = $derived(readRecord(asRecord(calculation), 'sql_payg_analysis'));
+  const utilizationValue = $derived(
+    utilizationUnit === 'monthly' ? scaleInput(annualHours, 1 / 12) : annualHours
+  );
+  const discountPercent = $derived(scaleInput(appliedDiscount, 100));
+
+  function scaleInput(value: string, factor: number): string {
+    if (value.trim() === '') return '';
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return value;
+    return (parsed * factor).toFixed(6).replace(/\.?0+$/, '');
+  }
+
+  function updateUtilization(event: Event): void {
+    const input = event.currentTarget as HTMLInputElement;
+    onannualhourschange(utilizationUnit === 'monthly' ? scaleInput(input.value, 12) : input.value);
+  }
+
+  function updateDiscount(event: Event): void {
+    const input = event.currentTarget as HTMLInputElement;
+    onapplieddiscountchange(scaleInput(input.value, 1 / 100));
+  }
 
   function formatPercent(value: string | null): string {
     if (value === null) return 'Unavailable';
@@ -33,14 +63,42 @@
     return `${formatMoney(rate.toFixed(3))} / core-hour`;
   }
 
-  function outcomeCopy(value: string | null): string {
-    if (value === 'no_discount_needed') {
-      return 'Gross PAYG is already at or below the entered annual SA spend.';
-    }
-    if (value === 'full_discount_required') {
-      return 'The entered SA baseline is zero, so matching it requires a 100% PAYG discount.';
-    }
-    return 'This PAYG discount makes annual PAYG equal the entered annual SA spend.';
+  function formatHours(value: string | null): string {
+    if (value === null) return 'Unavailable';
+    const hours = Number(value);
+    if (!Number.isFinite(hours)) return value;
+    return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(hours);
+  }
+
+  function comparisonLabel(value: string | null): string {
+    if (value === null) return 'Annual comparison';
+    const amount = value === null ? Number.NaN : Number(value);
+    if (amount > 0) return 'Annual savings';
+    if (amount < 0) return 'Annual overage';
+    return 'Annual break-even';
+  }
+
+  function comparisonCopy(value: string | null): string {
+    const amount = value === null ? Number.NaN : Number(value);
+    if (amount > 0) return 'Net PAYG is below the entered annual SA spend.';
+    if (amount < 0) return 'Net PAYG exceeds the entered annual SA spend.';
+    if (amount === 0) return 'Net PAYG matches the entered annual SA spend.';
+    return 'The comparison is unavailable.';
+  }
+
+  function comparisonTone(value: string | null): 'savings' | 'overage' | 'neutral' {
+    const amount = value === null ? Number.NaN : Number(value);
+    if (amount > 0) return 'savings';
+    if (amount < 0) return 'overage';
+    return 'neutral';
+  }
+
+  function formatComparisonMoney(value: string | null): string {
+    if (value === null) return formatMoney(null);
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return value;
+    const formatted = formatMoney(String(Math.abs(amount)));
+    return amount > 0 ? `+${formatted}` : formatted;
   }
 
   function analysisString(key: string): string | null {
@@ -53,8 +111,9 @@
     <span class="eyebrow">Azure Arc licensing comparison</span>
     <h2 id="sql-payg-heading">SQL Pay As You Go</h2>
     <p>
-      Compare annual Software Assurance spend with an always-on Azure Arc-enabled SQL Server PAYG
-      run rate. The estimate is not a quote and does not determine licensing entitlement.
+      Compare annual Software Assurance spend with an Azure Arc-enabled SQL Server PAYG run rate at
+      the entered utilization and discount. The estimate is not a quote and does not determine
+      licensing entitlement.
     </p>
   </div>
   <BadgeDollarSign class="intro-icon" size={34} aria-hidden="true" />
@@ -101,6 +160,49 @@
         oninput={onchange}
       />
     </label>
+    <fieldset class="utilization-field">
+      <legend>PAYG utilization</legend>
+      <div class="utilization-control">
+        <div class="segmented" aria-label="Utilization period">
+          <button
+            type="button"
+            class:active={utilizationUnit === 'monthly'}
+            aria-pressed={utilizationUnit === 'monthly'}
+            onclick={() => (utilizationUnit = 'monthly')}>Monthly</button
+          >
+          <button
+            type="button"
+            class:active={utilizationUnit === 'annual'}
+            aria-pressed={utilizationUnit === 'annual'}
+            onclick={() => (utilizationUnit = 'annual')}>Annual</button
+          >
+        </div>
+        <label>
+          <span>{utilizationUnit === 'monthly' ? 'Hours per month' : 'Hours per year'}</span>
+          <input
+            type="number"
+            min="0"
+            max={utilizationUnit === 'monthly' ? '732' : '8784'}
+            step="0.01"
+            required
+            value={utilizationValue}
+            oninput={updateUtilization}
+          />
+        </label>
+      </div>
+    </fieldset>
+    <label>
+      <span>Applied PAYG discount (%)</span>
+      <input
+        type="number"
+        min="0"
+        max="100"
+        step="0.01"
+        required
+        value={discountPercent}
+        oninput={updateDiscount}
+      />
+    </label>
   </div>
   <p class="input-note">
     Enter licensable cores after confirming edition, OSE scope, passive replicas, and applicable
@@ -110,13 +212,15 @@
 
 {#if analysis}
   <section class="result-panel" aria-labelledby="discount-result-heading">
-    <div class="result-lead">
+    <div class="result-lead" data-tone={comparisonTone(analysisString('annual_savings_usd'))}>
       <div>
-        <span class="eyebrow">Breakeven result</span>
-        <h2 id="discount-result-heading">Required PAYG discount</h2>
+        <span class="eyebrow">Server-calculated comparison</span>
+        <h2 id="discount-result-heading">
+          {comparisonLabel(analysisString('annual_savings_usd'))}
+        </h2>
       </div>
-      <strong>{formatPercent(analysisString('required_payg_discount'))}</strong>
-      <p>{outcomeCopy(analysisString('outcome'))}</p>
+      <strong>{formatComparisonMoney(analysisString('annual_savings_usd'))}</strong>
+      <p>{comparisonCopy(analysisString('annual_savings_usd'))}</p>
     </div>
     <dl class="result-grid">
       <div>
@@ -128,12 +232,24 @@
         <dd>{formatMoney(analysisString('payg_gross_annual_usd'))}</dd>
       </div>
       <div>
+        <dt>Applied PAYG discount</dt>
+        <dd>{formatPercent(analysisString('applied_payg_discount'))}</dd>
+      </div>
+      <div>
+        <dt>Net annual PAYG</dt>
+        <dd>{formatMoney(analysisString('payg_net_annual_usd'))}</dd>
+      </div>
+      <div>
+        <dt>Required breakeven discount</dt>
+        <dd>{formatPercent(analysisString('required_payg_discount'))}</dd>
+      </div>
+      <div>
         <dt>PAYG at breakeven</dt>
         <dd>{formatMoney(analysisString('payg_at_breakeven_usd'))}</dd>
       </div>
       <div>
         <dt>Annual run hours</dt>
-        <dd>{readNumber(analysis, 'annual_hours')?.toLocaleString('en-US') ?? 'Unavailable'}</dd>
+        <dd>{formatHours(analysisString('annual_hours'))}</dd>
       </div>
       <div>
         <dt>Enterprise PAYG rate</dt>
@@ -278,6 +394,50 @@
     font-size: 0.8rem;
     font-weight: 700;
   }
+  .utilization-field {
+    grid-column: span 2;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .utilization-field legend {
+    margin-bottom: 7px;
+    padding: 0;
+    color: var(--ink-soft);
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+  .utilization-control {
+    display: grid;
+    grid-template-columns: auto minmax(150px, 1fr);
+    align-items: end;
+    gap: 10px;
+  }
+  .segmented {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(72px, 1fr));
+  }
+  .segmented button {
+    min-height: 44px;
+    padding: 9px 12px;
+    color: var(--ink-soft);
+    background: var(--surface-subtle);
+    border: 1px solid var(--border-input);
+    border-radius: 4px 0 0 4px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .segmented button + button {
+    margin-left: -1px;
+    border-radius: 0 4px 4px 0;
+  }
+  .segmented button.active {
+    position: relative;
+    color: #fff;
+    background: var(--azure);
+    border-color: var(--azure);
+  }
   input {
     width: 100%;
     min-height: 44px;
@@ -312,6 +472,18 @@
   .result-lead {
     padding-left: 16px;
     border-left: 4px solid var(--azure);
+  }
+  .result-lead[data-tone='savings'] {
+    border-left-color: var(--success);
+  }
+  .result-lead[data-tone='savings'] strong {
+    color: var(--success);
+  }
+  .result-lead[data-tone='overage'] {
+    border-left-color: var(--danger);
+  }
+  .result-lead[data-tone='overage'] strong {
+    color: var(--danger-text);
   }
   .result-lead strong {
     display: block;
@@ -397,6 +569,12 @@
     .input-grid,
     .check-grid,
     .result-grid {
+      grid-template-columns: 1fr;
+    }
+    .utilization-field {
+      grid-column: 1;
+    }
+    .utilization-control {
       grid-template-columns: 1fr;
     }
     .result-panel {

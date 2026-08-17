@@ -241,9 +241,12 @@ impl CalculationEngine {
             enterprise_licensed_cores: settings.enterprise_licensed_cores,
             standard_licensed_cores: settings.standard_licensed_cores,
             software_assurance_annual_usd: settings.software_assurance_annual_usd,
+            annual_hours: input.settings.default_annual_hours,
+            applied_payg_discount: input.settings.selected_parity_adjustment,
         })?;
         let source_total = analysis.software_assurance_annual_usd;
-        let payg_total = analysis.payg_gross_annual_usd;
+        let payg_gross_total = analysis.payg_gross_annual_usd;
+        let payg_net_total = analysis.payg_net_annual_usd;
 
         Ok(CalculationRevision {
             formula_version: self.formula_version.clone(),
@@ -253,17 +256,17 @@ impl CalculationEngine {
             portfolio_totals: PortfolioTotals {
                 aws_all_rows_total: Some(source_total),
                 aws_mapped_rows_total: source_total,
-                azure_mapped_rows_total: payg_total,
+                azure_mapped_rows_total: payg_gross_total,
                 required_portfolio_adjustment: analysis.required_payg_discount,
-                selected_parity_adjustment: DecimalValue::ZERO,
-                portfolio_after_selected_parity: payg_total,
-                portfolio_difference: DecimalValue(payg_total.0 - source_total.0),
+                selected_parity_adjustment: analysis.applied_payg_discount,
+                portfolio_after_selected_parity: payg_net_total,
+                portfolio_difference: DecimalValue(payg_net_total.0 - source_total.0),
                 comparable_resource_count: 1,
                 no_mapping_resource_count: 0,
                 price_unavailable_resource_count: 0,
             },
             warnings: vec![
-                "The estimate compares annual Software Assurance or renewal spend with always-on Azure Arc SQL Server PAYG licensing; perpetual acquisition cost is excluded as a sunk cost.".to_owned(),
+                "The estimate compares annual Software Assurance or renewal spend with Azure Arc SQL Server PAYG licensing at the entered utilization and applied discount; perpetual acquisition cost is excluded as a sunk cost.".to_owned(),
                 "Agreement, entitlement, true-up, buyout, passive replica, outsourcing, and edition-specific terms must be confirmed against the customer's current contract and Microsoft Product Terms.".to_owned(),
             ],
             sql_payg_analysis: Some(analysis),
@@ -1342,14 +1345,62 @@ mod tests {
             cost::{AzureRate, Ec2Rate},
             target_selector::{SelectionReasonCode, ServiceTier, TargetCandidate},
         },
-        domain::resource::{
-            EbsVolume, EbsVolumeType, LicenseBasis, ProjectType, PurchaseOption, SharedResource,
-            SqlEdition,
+        domain::{
+            project::SqlPaygSettings,
+            resource::{
+                EbsVolume, EbsVolumeType, LicenseBasis, ProjectType, PurchaseOption,
+                SharedResource, SqlEdition,
+            },
         },
         pricing::snapshot::{
             AwsEc2RateRecord, AzureMiRateRecord, RateProvenance, SnapshotCreationMetadata,
         },
     };
+
+    #[test]
+    fn sql_payg_workflow_uses_net_payg_for_portfolio_comparison() {
+        let engine = engine(Some("512"));
+        let mut settings = settings();
+        settings.project_type = ProjectType::SqlPayg;
+        settings.aws_region = None;
+        settings.azure_region = "global".to_owned();
+        settings.default_annual_hours = decimal("1920");
+        settings.selected_parity_adjustment = decimal("0.25");
+        settings.sql_payg = Some(SqlPaygSettings {
+            enterprise_licensed_cores: 8,
+            standard_licensed_cores: 16,
+            software_assurance_annual_usd: decimal("20000"),
+        });
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[],
+                aws_snapshot: None,
+                azure_snapshot: None,
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("calculation");
+        let analysis = revision
+            .sql_payg_analysis
+            .expect("SQL PAYGO analysis should be present");
+
+        assert_eq!(analysis.payg_gross_annual_usd, decimal("8832.000"));
+        assert_eq!(analysis.payg_net_annual_usd, decimal("6624.00000"));
+        assert_eq!(analysis.annual_savings_usd, decimal("13376.00000"));
+        assert_eq!(
+            revision.portfolio_totals.azure_mapped_rows_total,
+            decimal("8832.000")
+        );
+        assert_eq!(
+            revision.portfolio_totals.portfolio_after_selected_parity,
+            decimal("6624.00000")
+        );
+        assert_eq!(
+            revision.portfolio_totals.portfolio_difference,
+            decimal("-13376.00000")
+        );
+    }
 
     #[test]
     fn no_mapping_retains_source_cost_and_excludes_row_from_parity() {

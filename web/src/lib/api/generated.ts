@@ -605,13 +605,15 @@ export interface components {
             enterprise_licensed_cores: number;
             standard_licensed_cores: number;
             software_assurance_annual_usd: components["schemas"]["Decimal"];
-            /** @constant */
-            annual_hours: 8760;
+            annual_hours: components["schemas"]["Decimal"];
             enterprise_payg_usd_per_core_hour: components["schemas"]["Decimal"];
             standard_payg_usd_per_core_hour: components["schemas"]["Decimal"];
             payg_gross_annual_usd: components["schemas"]["Decimal"];
             required_payg_discount: components["schemas"]["Decimal"];
             payg_at_breakeven_usd: components["schemas"]["Decimal"];
+            applied_payg_discount: components["schemas"]["Decimal"];
+            payg_net_annual_usd: components["schemas"]["Decimal"];
+            annual_savings_usd: components["schemas"]["Decimal"];
             /** @enum {string} */
             outcome: "no_discount_needed" | "discount_required" | "full_discount_required";
             /** Format: uri */
@@ -776,7 +778,9 @@ export interface components {
             azure_compute_discount: components["schemas"]["Decimal"];
             azure_license_discount: components["schemas"]["Decimal"];
             azure_storage_discount: components["schemas"]["Decimal"];
+            /** @description Applied PAYG discount for SQL Pay As You Go projects; selected portfolio adjustment otherwise. */
             selected_parity_adjustment: components["schemas"]["Decimal"];
+            /** @description Authoritative annual utilization for SQL Pay As You Go projects; default resource hours otherwise. */
             default_annual_hours: components["schemas"]["Decimal"];
             default_mi_purchase_option: components["schemas"]["PurchaseOptionKey"];
             enterprise_license_sa_usd_per_two_core_pack?: components["schemas"]["Decimal"] | null;

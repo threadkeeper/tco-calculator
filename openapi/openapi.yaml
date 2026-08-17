@@ -1072,6 +1072,9 @@ components:
         - payg_gross_annual_usd
         - required_payg_discount
         - payg_at_breakeven_usd
+        - applied_payg_discount
+        - payg_net_annual_usd
+        - annual_savings_usd
         - outcome
         - rate_source_url
         - rate_verified_on
@@ -1085,8 +1088,7 @@ components:
         software_assurance_annual_usd:
           $ref: '#/components/schemas/Decimal'
         annual_hours:
-          type: integer
-          const: 8760
+          $ref: '#/components/schemas/Decimal'
         enterprise_payg_usd_per_core_hour:
           $ref: '#/components/schemas/Decimal'
         standard_payg_usd_per_core_hour:
@@ -1096,6 +1098,12 @@ components:
         required_payg_discount:
           $ref: '#/components/schemas/Decimal'
         payg_at_breakeven_usd:
+          $ref: '#/components/schemas/Decimal'
+        applied_payg_discount:
+          $ref: '#/components/schemas/Decimal'
+        payg_net_annual_usd:
+          $ref: '#/components/schemas/Decimal'
+        annual_savings_usd:
           $ref: '#/components/schemas/Decimal'
         outcome:
           type: string
@@ -1487,8 +1495,10 @@ components:
           $ref: '#/components/schemas/Decimal'
         selected_parity_adjustment:
           $ref: '#/components/schemas/Decimal'
+          description: Applied PAYG discount for SQL Pay As You Go projects; selected portfolio adjustment otherwise.
         default_annual_hours:
           $ref: '#/components/schemas/Decimal'
+          description: Authoritative annual utilization for SQL Pay As You Go projects; default resource hours otherwise.
         default_mi_purchase_option:
           $ref: '#/components/schemas/PurchaseOptionKey'
         enterprise_license_sa_usd_per_two_core_pack:

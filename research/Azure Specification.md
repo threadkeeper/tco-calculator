@@ -334,7 +334,7 @@ When a snapshot is older than 24 hours but no older than 7 days, calculation pro
 
 Each workload project displays one resource table specialized for its immutable project type: EC2, RDS, or On-prem. Do not show cross-source tabs. The table MUST support horizontal scrolling on narrow screens and a compact mobile row summary that expands to details. Do not hide financial values without an explicit expansion control.
 
-SQL Pay As You Go uses a dedicated licensing workspace with exactly three calculation inputs: Enterprise licensed cores, Standard licensed cores, and annual Software Assurance or renewal spend. It MUST NOT show regions, provider price status, discounts, SQL MI purchase options, resource inventory, target sizing, or resource detail output.
+SQL Pay As You Go uses a dedicated licensing workspace with Enterprise licensed cores, Standard licensed cores, annual Software Assurance or renewal spend, PAYG utilization, and an applied PAYG discount. Utilization MUST be editable as either hours per month or hours per year while persisting and submitting one authoritative annual-hours value. It MUST NOT show regions, provider price status, generic source or SQL MI discount controls, SQL MI purchase options, resource inventory, target sizing, or resource detail output.
 
 Show core inputs, selected target, source total, Azure total, savings, and parity by default. Keep component cost groups collapsed behind explicit expansion controls. The explanation drawer shows the selected candidate and decision threshold first, followed by a collapsible ordered candidate/rejection list.
 
@@ -472,6 +472,8 @@ SQL Pay As You Go is project-level and MUST have an empty `resources` array.
 | `enterprise_licensed_cores` | integer | 0-100,000 |
 | `standard_licensed_cores` | integer | 0-100,000 |
 | `software_assurance_annual_usd` | decimal | >=0; annual avoidable SA or renewal spend in USD |
+| `default_annual_hours` | decimal | 0-8,784; authoritative SQL PAYG annual utilization, default 8,760; the UI may edit this as monthly hours by multiplying the entered monthly value by 12 |
+| `selected_parity_adjustment` | decimal | 0-1; applied SQL PAYG discount, default 0 |
 
 At least one Enterprise or Standard core is required. The user is responsible for entering licensable cores after confirming OSE scope, edition, applicable four-core minimums, eligible passive instances, and current agreement rights. Perpetual acquisition cost is excluded from the annual run-rate baseline.
 
@@ -859,13 +861,15 @@ The UI displays `PRICE UNAVAILABLE` in affected cost cells. It MUST NOT replace 
 
 ### 10.12 SQL Pay As You Go Breakeven
 
-This calculation uses server-owned fixed rates verified against the Azure Retail Prices API on 2026-08-07: Enterprise `$0.375/core-hour`, Standard `$0.100/core-hour`, and `8,760` annual hours.
+This calculation uses server-owned fixed rates verified against the Azure Retail Prices API on 2026-08-07: Enterprise `$0.375/core-hour` and Standard `$0.100/core-hour`. Annual utilization defaults to `8,760` hours and may be overridden from `0` through `8,784` hours. The UI may present a monthly-hours editing mode, but it MUST persist and submit only the normalized annual-hours value so monthly and annual values cannot conflict.
 
-- `payg_gross_annual = 8760 * (enterprise_licensed_cores * 0.375 + standard_licensed_cores * 0.100)`
-- `required_payg_discount = max(0, 1 - software_assurance_annual_usd / payg_gross_annual)`
+- `payg_gross_annual = annual_hours * (enterprise_licensed_cores * 0.375 + standard_licensed_cores * 0.100)`
+- `required_payg_discount = 0` when `payg_gross_annual = 0`; otherwise `max(0, 1 - software_assurance_annual_usd / payg_gross_annual)`
 - `payg_at_breakeven = min(software_assurance_annual_usd, payg_gross_annual)`
+- `payg_net_annual = payg_gross_annual * (1 - applied_payg_discount)`
+- `annual_savings = software_assurance_annual_usd - payg_net_annual`; positive values are savings and negative values are overage
 
-The server MUST use decimal arithmetic and return inputs, rates, hours, gross PAYG, required discount, breakeven PAYG, outcome, source URL, and verification date in `sql_payg_analysis`. The frontend MUST NOT reproduce the formula. SQL Pay As You Go calculation does not resolve AWS or Azure SQL MI price snapshots.
+The server MUST use decimal arithmetic and return inputs, rates, hours, gross PAYG, required discount, breakeven PAYG, applied discount, net PAYG, signed savings, outcome, source URL, and verification date in `sql_payg_analysis`. The frontend MUST NOT reproduce the financial formula. It MUST label positive signed results as savings, negative results as overage, and zero as break-even. SQL Pay As You Go calculation does not resolve AWS or Azure SQL MI price snapshots.
 
 The result is an estimate rather than a quote or entitlement statement. True-up, EAS anniversary and buyout, perpetual rights, SA eligibility, Azure Hybrid Benefit alternatives, passive replicas, outsourcing, taxes, connectivity, and contract-specific pricing remain explicit decision checks outside the formula. `docs/SQL-PAYG-LICENSING-DECISION.md` records the reviewed assumptions and official sources.
 

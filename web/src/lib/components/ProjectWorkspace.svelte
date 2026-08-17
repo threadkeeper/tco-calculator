@@ -557,7 +557,7 @@
       </button>
       <button class="primary" type="button" onclick={calculate} disabled={calculating || resolving}>
         <Calculator size={17} />
-        {calculating ? 'Calculating…' : isSqlPayg ? 'Calculate discount' : 'Calculate estimate'}
+        {calculating ? 'Calculating…' : isSqlPayg ? 'Calculate savings' : 'Calculate estimate'}
       </button>
     </div>
   </div>
@@ -569,8 +569,18 @@
       {#if workspace.project.settings.sql_payg}
         <SqlPaygWorkspace
           settings={workspace.project.settings.sql_payg}
+          annualHours={workspace.project.settings.default_annual_hours}
+          appliedDiscount={workspace.project.settings.selected_parity_adjustment}
           calculation={workspace.calculation}
           onchange={markDirty}
+          onannualhourschange={(value) => {
+            workspace.project.settings.default_annual_hours = value;
+            markDirty();
+          }}
+          onapplieddiscountchange={(value) => {
+            workspace.project.settings.selected_parity_adjustment = value;
+            markDirty();
+          }}
         />
       {:else}
         <ProblemBanner message="SQL Pay As You Go settings are unavailable." />
