@@ -488,8 +488,17 @@ export interface components {
             project: components["schemas"]["EditableProject"];
         };
         AssistantProposal: components["schemas"]["AssistantProjectPatchProposal"] | components["schemas"]["AssistantNewProjectDraftProposal"];
+        AssistantImageProjectClassification: {
+            /** @enum {string} */
+            project_type: "ec2" | "rds" | "on_prem" | "sql_payg" | "unknown";
+            /** @enum {string} */
+            confidence: "high" | "medium" | "low";
+            evidence: string[];
+            ambiguities: string[];
+        };
         AssistantImageResponse: {
             answer: string;
+            classification: components["schemas"]["AssistantImageProjectClassification"] | null;
             proposal: components["schemas"]["AssistantProposal"] | null;
             omissions: string[];
             uncertainties: string[];

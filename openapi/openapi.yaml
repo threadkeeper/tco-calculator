@@ -784,13 +784,43 @@ components:
         mapping:
           apply_project_patch: '#/components/schemas/AssistantProjectPatchProposal'
           open_project_draft: '#/components/schemas/AssistantNewProjectDraftProposal'
+    AssistantImageProjectClassification:
+      type: object
+      additionalProperties: false
+      required: [project_type, confidence, evidence, ambiguities]
+      properties:
+        project_type:
+          type: string
+          enum: [ec2, rds, on_prem, sql_payg, unknown]
+        confidence:
+          type: string
+          enum: [high, medium, low]
+        evidence:
+          type: array
+          minItems: 1
+          maxItems: 12
+          items:
+            type: string
+            minLength: 1
+            maxLength: 240
+        ambiguities:
+          type: array
+          maxItems: 12
+          items:
+            type: string
+            minLength: 1
+            maxLength: 240
     AssistantImageResponse:
       type: object
       additionalProperties: false
-      required: [answer, proposal, omissions, uncertainties]
+      required: [answer, classification, proposal, omissions, uncertainties]
       properties:
         answer:
           type: string
+        classification:
+          oneOf:
+            - $ref: '#/components/schemas/AssistantImageProjectClassification'
+            - type: 'null'
         proposal:
           oneOf:
             - $ref: '#/components/schemas/AssistantProposal'

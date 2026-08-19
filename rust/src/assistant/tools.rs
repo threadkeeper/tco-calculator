@@ -23,7 +23,7 @@ use crate::{
     },
     domain::{
         decimal::DecimalValue,
-        project::{EditableProject, ProjectSettings, ValidationIssue},
+        project::{EditableProject, ProjectSettings, SqlPaygSettings, ValidationIssue},
         resource::{
             EbsVolume, EbsVolumeType, Ec2Resource, LicenseBasis, OnPremResource, ProjectType,
             PurchaseOption, RdsDeployment, RdsResource, Resource, SharedResource, SqlEdition,
@@ -213,7 +213,7 @@ const STAGE_NEW_PROJECT_DRAFT_SCHEMA: &str = r#"{
     "properties": {
         "project_type": {
             "type": "string",
-            "enum": ["ec2", "rds", "on_prem"],
+            "enum": ["ec2", "rds", "on_prem", "sql_payg"],
             "description": "Source estate for the new unsaved project draft."
         },
         "name": { "type": "string", "minLength": 1, "maxLength": 100 },
@@ -239,7 +239,17 @@ const STAGE_NEW_PROJECT_DRAFT_SCHEMA: &str = r#"{
                 "enterprise_license_sa_usd_per_two_core_pack": { "type": ["string", "null"] },
                 "standard_license_sa_usd_per_two_core_pack": { "type": ["string", "null"] },
                 "remaining_coverage_months": { "type": ["integer", "null"], "enum": [12, 24, 36, null] },
-                "electricity_rate_usd_per_kwh": { "type": ["string", "null"] }
+                "electricity_rate_usd_per_kwh": { "type": ["string", "null"] },
+                "sql_payg": {
+                    "type": ["object", "null"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "enterprise_licensed_cores": { "type": "integer", "minimum": 0, "maximum": 100000 },
+                        "standard_licensed_cores": { "type": "integer", "minimum": 0, "maximum": 100000 },
+                        "software_assurance_annual_usd": { "type": "string" }
+                    },
+                    "description": "Visible SQL Pay As You Go licensing inputs. Use only for sql_payg and report missing values as omissions."
+                }
             }
         },
         "resources": {
@@ -457,6 +467,15 @@ pub struct NewProjectSettingsInput {
     pub standard_license_sa_usd_per_two_core_pack: Option<DecimalValue>,
     pub remaining_coverage_months: Option<u8>,
     pub electricity_rate_usd_per_kwh: Option<DecimalValue>,
+    pub sql_payg: Option<NewSqlPaygSettingsInput>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewSqlPaygSettingsInput {
+    pub enterprise_licensed_cores: Option<u32>,
+    pub standard_licensed_cores: Option<u32>,
+    pub software_assurance_annual_usd: Option<DecimalValue>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -942,6 +961,18 @@ fn stage_new_project_draft(
                 .to_owned(),
         );
     }
+    if input.project_type == ProjectType::SqlPayg
+        && input
+            .settings
+            .sql_payg
+            .as_ref()
+            .is_none_or(|settings| settings.software_assurance_annual_usd.is_none())
+    {
+        uncertainties.push(
+            "Annual Software Assurance or renewal spend was not visible and is temporarily set to USD 0 for review."
+                .to_owned(),
+        );
+    }
 
     ToolOutcome::Staged {
         proposal: Some(Box::new(
@@ -958,11 +989,24 @@ fn stage_new_project_draft(
 
 fn new_project_draft(input: &StageNewProjectDraftInput) -> EditableProject {
     let on_prem = input.project_type == ProjectType::OnPrem;
+    let aws_project = matches!(input.project_type, ProjectType::Ec2 | ProjectType::Rds);
+    let sql_payg = (input.project_type == ProjectType::SqlPayg).then(|| {
+        let settings = input.settings.sql_payg.as_ref();
+        SqlPaygSettings {
+            enterprise_licensed_cores: settings
+                .and_then(|settings| settings.enterprise_licensed_cores)
+                .unwrap_or_default(),
+            standard_licensed_cores: settings
+                .and_then(|settings| settings.standard_licensed_cores)
+                .unwrap_or_default(),
+            software_assurance_annual_usd: settings
+                .and_then(|settings| settings.software_assurance_annual_usd)
+                .unwrap_or_default(),
+        }
+    });
     let settings = ProjectSettings {
         project_type: input.project_type,
-        aws_region: if on_prem {
-            None
-        } else {
+        aws_region: if aws_project {
             Some(
                 input
                     .settings
@@ -970,6 +1014,8 @@ fn new_project_draft(input: &StageNewProjectDraftInput) -> EditableProject {
                     .clone()
                     .unwrap_or_else(|| "eu-west-1".to_owned()),
             )
+        } else {
+            None
         },
         azure_region: input
             .settings
@@ -1011,7 +1057,7 @@ fn new_project_draft(input: &StageNewProjectDraftInput) -> EditableProject {
             .settings
             .electricity_rate_usd_per_kwh
             .or(on_prem.then_some(DecimalValue::ZERO)),
-        sql_payg: None,
+        sql_payg,
     };
     let resources = if input.project_type == ProjectType::SqlPayg {
         Vec::new()

@@ -11,6 +11,7 @@
     validateAssistantImage,
     validateAssistantQuestion,
     type AssistantHelpReference,
+    type AssistantImageProjectClassification,
     type AssistantProposal
   } from '$lib/assistant';
 
@@ -37,6 +38,7 @@
     role: 'user' | 'assistant';
     text: string;
     references: AssistantHelpReference[];
+    classification: AssistantImageProjectClassification | null;
     proposal: AssistantProposal | null;
     proposalStatus: 'pending' | 'applied' | 'opened' | 'dismissed' | null;
     omissions: string[];
@@ -143,6 +145,7 @@
         role: 'user',
         text: normalizedQuestion,
         references: [],
+        classification: null,
         proposal: null,
         proposalStatus: null,
         omissions: [],
@@ -162,6 +165,7 @@
           role: 'assistant',
           text: response.answer,
           references: response.references,
+          classification: null,
           proposal: response.proposal,
           proposalStatus: response.proposal ? 'pending' : null,
           omissions: [],
@@ -238,6 +242,7 @@
         role: 'user',
         text: 'Analyze the selected image for project inputs.',
         references: [],
+        classification: null,
         proposal: null,
         proposalStatus: null,
         omissions: [],
@@ -256,6 +261,7 @@
           role: 'assistant',
           text: response.answer,
           references: [],
+          classification: response.classification,
           proposal: response.proposal,
           proposalStatus: response.proposal ? 'pending' : null,
           omissions: response.omissions,
@@ -391,6 +397,21 @@
     }
     return error instanceof Error ? error.message : 'Azure SQL TCO Copilot is unavailable.';
   }
+
+  function projectTypeLabel(projectType: AssistantImageProjectClassification['project_type']) {
+    switch (projectType) {
+      case 'ec2':
+        return 'AWS EC2';
+      case 'rds':
+        return 'AWS RDS';
+      case 'on_prem':
+        return 'On-premises';
+      case 'sql_payg':
+        return 'SQL Pay As You Go';
+      default:
+        return 'Undetermined';
+    }
+  }
 </script>
 
 {#if open}
@@ -458,6 +479,20 @@
                 <span>Related controls</span>
                 {message.references.map((reference) => reference.label).join(', ')}
               </p>
+            {/if}
+            {#if message.classification}
+              <div class="report classification">
+                <strong>Detected project type</strong>
+                <span
+                  >{projectTypeLabel(message.classification.project_type)} ·
+                  {message.classification.confidence} confidence</span
+                >
+                <ul>
+                  {#each message.classification.evidence as item, itemIndex (itemIndex)}<li>
+                      {item}
+                    </li>{/each}
+                </ul>
+              </div>
             {/if}
             {#if message.omissions.length > 0}
               <div class="report omissions">

@@ -16,6 +16,9 @@ use uuid::Uuid;
 
 use crate::{
     assistant::{
+        classification::{
+            CLASSIFICATION_PROMPT_VERSION, ImageProjectClassification, classify_project_image,
+        },
         context::{SelectedProject, TurnContext, TurnPhase},
         help as help_catalog,
         image::{ImageIntakeError, ImageMediaType, MAX_IMAGE_INPUT_BYTES, normalize_image},
@@ -39,7 +42,8 @@ const IMAGE_INSTANCE: &str = "/api/v1/assistant/image";
 const ACTION_INSTANCE: &str = "/api/v1/assistant/actions";
 const IMAGE_PROJECT_HEADER: &str = "x-tco-project-id";
 const IMAGE_PATCH_EXTRACTION_REQUEST: &str = "Extract supported project fields from the uploaded image. Read the current project, validate candidate changes, and call stage_project_patch with all visible omissions and uncertainties. Do not infer missing values.";
-const IMAGE_DRAFT_EXTRACTION_REQUEST: &str = "Extract supported project fields from the uploaded image and call stage_new_project_draft with all visible omissions and uncertainties. Use host defaults for missing values and do not invent source values.";
+pub(crate) const IMAGE_DRAFT_EXTRACTION_REQUEST: &str = "Extract supported project fields from the uploaded image and call stage_new_project_draft with all visible omissions and uncertainties. Use host defaults for missing values and do not invent source values.";
+pub(crate) const IMAGE_CLASSIFICATION_UNCERTAIN_ANSWER: &str = "I could not determine a supported project type confidently enough to create a draft. Review the classification evidence and upload a clearer image.";
 pub const ACTION_CONFIRMATION_HEADER: &str = "x-tco-action-confirmation";
 const ACTION_CONFIRMATION_VALUE: &str = "apply_project_patch";
 
@@ -66,6 +70,7 @@ struct TurnResponse {
 #[derive(Debug, Serialize)]
 struct ImageResponse {
     answer: String,
+    classification: Option<ImageProjectClassification>,
     proposal: Option<BoundAssistantProposal>,
     omissions: Vec<String>,
     uncertainties: Vec<String>,
@@ -265,6 +270,64 @@ pub async fn image(
     let width = normalized.width.get();
     let height = normalized.height.get();
     let model_image = ModelImage::normalized_jpeg(normalized.bytes);
+    let mut classification = None;
+    let mut classifier_routed_model = None;
+
+    if context.project().is_none() {
+        let outcome = classify_project_image(
+            state.assistant_model.as_ref(),
+            &context,
+            model_image.clone(),
+        )
+        .await
+        .map_err(|error| {
+            map_logged_turn_error(
+                TurnError::Model(error),
+                IMAGE_INSTANCE,
+                context.request_id(),
+            )
+        })?;
+        classifier_routed_model = outcome.routed_model;
+        let resolved_project_type = outcome.classification.resolved_project_type();
+        classification = Some(outcome.classification);
+
+        let Some(project_type) = resolved_project_type else {
+            let classification = classification.expect("classification was just recorded");
+            let mut uncertainties = classification.ambiguities.clone();
+            if uncertainties.is_empty() {
+                uncertainties.push(
+                    "The image did not contain a decisive supported project-type marker."
+                        .to_owned(),
+                );
+            }
+            tracing::info!(
+                request_id = %context.request_id(),
+                classifier_prompt_version = CLASSIFICATION_PROMPT_VERSION,
+                classified_project_type = classification.project_type.as_str(),
+                classification_confidence = classification.confidence.as_str(),
+                classifier_routed_model = classifier_routed_model.as_deref().unwrap_or("unknown"),
+                model_requests = 1,
+                tool_calls = 1,
+                image_width = width,
+                image_height = height,
+                "assistant image classification requires user review"
+            );
+            let mut response = Json(ImageResponse {
+                answer: IMAGE_CLASSIFICATION_UNCERTAIN_ANSWER.to_owned(),
+                classification: Some(classification),
+                proposal: None,
+                omissions: Vec::new(),
+                uncertainties,
+            })
+            .into_response();
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                "no-store".parse().expect("static header value"),
+            );
+            return Ok(response);
+        };
+        context = context.with_classified_project_type(project_type);
+    }
 
     let outcome = run_turn_with_image(
         &state,
@@ -285,6 +348,10 @@ pub async fn image(
         request_id = %context.request_id(),
         selected_project = context.project().is_some(),
         prompt_version = PROMPT_VERSION,
+        classifier_prompt_version = classification.as_ref().map(|_| CLASSIFICATION_PROMPT_VERSION).unwrap_or("not_run"),
+        classified_project_type = classification.as_ref().map(|value| value.project_type.as_str()).unwrap_or("not_run"),
+        classification_confidence = classification.as_ref().map(|value| value.confidence.as_str()).unwrap_or("not_run"),
+        classifier_routed_model = classifier_routed_model.as_deref().unwrap_or("not_run"),
         routed_model = outcome.routed_model.as_deref().unwrap_or("unknown"),
         model_requests = outcome.model_requests,
         tool_calls = outcome.tool_calls,
@@ -298,6 +365,7 @@ pub async fn image(
         .transpose()?;
     let mut response = Json(ImageResponse {
         answer: outcome.answer,
+        classification,
         proposal,
         omissions: outcome.omissions,
         uncertainties: outcome.uncertainties,
@@ -1035,6 +1103,10 @@ mod tests {
         let mut state = state(true);
         let model = Arc::new(ScriptedModelClient::new(vec![
             Ok(tool_calls(
+                "classify_project_type",
+                r#"{"project_type":"on_prem","confidence":"high","evidence":["64 vCPU and 256 GB RAM with no provider identifiers"],"ambiguities":[]}"#,
+            )),
+            Ok(tool_calls(
                 "stage_new_project_draft",
                 r#"{"project_type":"on_prem","name":"Imported inventory","omissions":[],"uncertainties":[]}"#,
             )),
@@ -1052,6 +1124,8 @@ mod tests {
 
         assert_eq!(payload["proposal"]["action"], "open_project_draft");
         assert_eq!(payload["proposal"]["project"]["name"], "Imported inventory");
+        assert_eq!(payload["classification"]["project_type"], "on_prem");
+        assert_eq!(payload["classification"]["confidence"], "high");
         assert!(
             state
                 .projects
@@ -1061,23 +1135,164 @@ mod tests {
                 .is_empty()
         );
         let requests = model.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].prompt_version, CLASSIFICATION_PROMPT_VERSION);
+        assert_eq!(requests[0].tools.len(), 1);
+        assert_eq!(requests[0].tools[0].name, "classify_project_type");
+        assert!(requests[0].image.is_some());
         assert!(
-            requests[0]
+            requests[1]
                 .tools
                 .iter()
                 .any(|tool| tool.name == "stage_new_project_draft")
         );
         assert!(
-            !requests[0]
+            !requests[1]
                 .tools
                 .iter()
                 .any(|tool| tool.name == "stage_project_patch")
         );
         assert!(
-            requests[0]
+            requests[1]
                 .system_instruction
-                .contains("through stage_new_project_draft")
+                .contains("host classified this as on_prem")
         );
+        assert!(requests[1].image.is_some());
+        assert!(requests[2].image.is_none());
+    }
+
+    #[tokio::test]
+    async fn image_without_a_confident_classification_does_not_enter_the_draft_loop() {
+        let mut state = state(true);
+        let model = Arc::new(ScriptedModelClient::new(vec![Ok(tool_calls(
+            "classify_project_type",
+            r#"{"project_type":"unknown","confidence":"low","evidence":["SQL Server"],"ambiguities":["No provider or licensing-estate marker is visible"]}"#,
+        ))]));
+        enable_scripted_assistant(&mut state, model.clone());
+
+        let response = image(
+            State(state.clone()),
+            image_request_without_project("image/jpeg", jpeg_with_metadata(b"private")),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("an uncertain classification returns a reviewable report"));
+        let payload = response_json(response).await;
+
+        assert!(payload["proposal"].is_null());
+        assert_eq!(payload["classification"]["project_type"], "unknown");
+        assert_eq!(payload["classification"]["confidence"], "low");
+        assert_eq!(
+            payload["uncertainties"][0],
+            "No provider or licensing-estate marker is visible"
+        );
+        assert!(
+            state
+                .projects
+                .list(&owner_id())
+                .await
+                .expect("the repository remains readable")
+                .is_empty()
+        );
+        let requests = model.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].tools[0].name, "classify_project_type");
+    }
+
+    #[tokio::test]
+    async fn image_draft_type_must_match_the_host_classification() {
+        let mut state = state(true);
+        let model = Arc::new(ScriptedModelClient::new(vec![
+            Ok(tool_calls(
+                "classify_project_type",
+                r#"{"project_type":"rds","confidence":"high","evidence":["DB instance class db.m6i.2xlarge"],"ambiguities":[]}"#,
+            )),
+            Ok(tool_calls(
+                "stage_new_project_draft",
+                r#"{"project_type":"ec2","omissions":[],"uncertainties":[]}"#,
+            )),
+        ]));
+        enable_scripted_assistant(&mut state, model.clone());
+
+        let response = image(
+            State(state.clone()),
+            image_request_without_project("image/jpeg", jpeg_with_metadata(b"private")),
+        )
+        .await
+        .expect_err("a model cannot replace the host classification")
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            state
+                .projects
+                .list(&owner_id())
+                .await
+                .expect("the repository remains readable")
+                .is_empty()
+        );
+        assert_eq!(model.requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn image_can_classify_and_stage_a_complete_sql_payg_draft() {
+        let mut state = state(true);
+        let model = Arc::new(ScriptedModelClient::new(vec![
+            Ok(tool_calls(
+                "classify_project_type",
+                r#"{"project_type":"sql_payg","confidence":"high","evidence":["Azure Arc PAYG","EE cores 32","SE cores 16","SA annual spend"],"ambiguities":[]}"#,
+            )),
+            Ok(tool_calls(
+                "stage_new_project_draft",
+                r#"{"project_type":"sql_payg","name":"Arc licensing estate","settings":{"default_annual_hours":"6000","selected_parity_adjustment":"0.10","sql_payg":{"enterprise_licensed_cores":32,"standard_licensed_cores":16,"software_assurance_annual_usd":"85000"}},"omissions":[],"uncertainties":[]}"#,
+            )),
+            Ok(message(
+                "I prepared a SQL Pay As You Go project draft for review.",
+            )),
+        ]));
+        enable_scripted_assistant(&mut state, model.clone());
+
+        let response = image(
+            State(state.clone()),
+            image_request_without_project("image/jpeg", jpeg_with_metadata(b"private")),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("a complete SQL PAYG image proposal completes"));
+        let payload = response_json(response).await;
+
+        assert_eq!(payload["classification"]["project_type"], "sql_payg");
+        assert_eq!(
+            payload["proposal"]["project"]["settings"]["project_type"],
+            "sql_payg"
+        );
+        assert!(payload["proposal"]["project"]["settings"]["aws_region"].is_null());
+        assert_eq!(
+            payload["proposal"]["project"]["settings"]["sql_payg"]["enterprise_licensed_cores"],
+            32
+        );
+        assert_eq!(
+            payload["proposal"]["project"]["settings"]["sql_payg"]["standard_licensed_cores"],
+            16
+        );
+        assert_eq!(
+            payload["proposal"]["project"]["settings"]["sql_payg"]["software_assurance_annual_usd"],
+            "85000"
+        );
+        assert_eq!(
+            payload["proposal"]["project"]["resources"]
+                .as_array()
+                .expect("resource array")
+                .len(),
+            0
+        );
+        assert!(
+            state
+                .projects
+                .list(&owner_id())
+                .await
+                .expect("the repository remains readable")
+                .is_empty()
+        );
+        assert_eq!(model.requests().len(), 3);
     }
 
     #[tokio::test]

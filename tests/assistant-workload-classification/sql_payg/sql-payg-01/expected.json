@@ -1,0 +1,34 @@
+{
+  "case_id": "sql_payg/sql-payg-01",
+  "project_type": "sql_payg",
+  "minimum_confidence": "medium",
+  "research_retrieved": "2026-08-19",
+  "sources": [
+    "https://learn.microsoft.com/sql/sql-server/azure-arc/manage-license-billing?view=sql-server-ver17",
+    "https://learn.microsoft.com/sql/sql-server/azure-arc/overview?view=sql-server-ver17"
+  ],
+  "required_visible_markers": [
+    "Azure Arc-enabled SQL Server",
+    "PAYG",
+    "Enterprise Edition",
+    "Software Assurance"
+  ],
+  "draft_assertions": [
+    {
+      "pointer": "/settings/project_type",
+      "equals": "sql_payg"
+    },
+    {
+      "pointer": "/settings/sql_payg/enterprise_licensed_cores",
+      "equals": 32
+    },
+    {
+      "pointer": "/settings/sql_payg/standard_licensed_cores",
+      "equals": 48
+    },
+    {
+      "pointer": "/settings/sql_payg/software_assurance_annual_usd",
+      "equals": "72000"
+    }
+  ]
+}

@@ -5,6 +5,15 @@ edition = "2024"
 rust-version = "1.97"
 publish = false
 
+[features]
+default = []
+live-evaluation = []
+
+[[bin]]
+name = "evaluate-assistant-classification"
+path = "src/bin/evaluate_assistant_classification.rs"
+required-features = ["live-evaluation"]
+
 [dependencies]
 async-trait = "=0.1.92"
 axum = "=0.8.9"

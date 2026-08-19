@@ -1,0 +1,35 @@
+{
+  "case_id": "ec2/ec2-02",
+  "project_type": "ec2",
+  "minimum_confidence": "medium",
+  "research_retrieved": "2026-08-19",
+  "sources": [
+    "https://docs.aws.amazon.com/ec2/latest/instancetypes/instance-type-names.html",
+    "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-volume-types.html",
+    "https://docs.aws.amazon.com/sql-server-ec2/latest/userguide/what-is.html"
+  ],
+  "required_visible_markers": [
+    "Amazon EC2",
+    "AMI",
+    "r6i.2xlarge",
+    "io2"
+  ],
+  "draft_assertions": [
+    {
+      "pointer": "/settings/project_type",
+      "equals": "ec2"
+    },
+    {
+      "pointer": "/resources/0/source_type",
+      "equals": "ec2"
+    },
+    {
+      "pointer": "/resources/0/instance_type",
+      "equals": "r6i.2xlarge"
+    },
+    {
+      "pointer": "/resources/0/volumes/0/volume_type",
+      "equals": "io2"
+    }
+  ]
+}

@@ -21,6 +21,8 @@
 *.[oO][dD][tT]
 *.[oO][dD][pP]
 *.[pP][nN][gG]
+# Reviewed synthetic fixtures contain no customer or production data.
+!/tests/assistant-workload-classification/**/input.png
 *.[jJ][pP][gG]
 *.[jJ][pP][eE][gG]
 *.[gG][iI][fF]

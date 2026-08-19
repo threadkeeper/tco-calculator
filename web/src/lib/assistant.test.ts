@@ -118,6 +118,7 @@ describe('assistant help client', () => {
       new Response(
         JSON.stringify({
           answer: 'Review the extracted values.',
+          classification: null,
           proposal: null,
           omissions: ['Unsupported field'],
           uncertainties: []
@@ -151,6 +152,12 @@ describe('assistant help client', () => {
       new Response(
         JSON.stringify({
           answer: 'Open the extracted draft.',
+          classification: {
+            project_type: 'on_prem',
+            confidence: 'high',
+            evidence: ['64 vCPU and 256 GB RAM'],
+            ambiguities: []
+          },
           proposal,
           omissions: [],
           uncertainties: []
@@ -173,8 +180,23 @@ describe('assistant help client', () => {
     expect(() =>
       parseAssistantImageResponse({
         answer: 'Incomplete',
+        classification: null,
         proposal: null,
         omissions: ['a'.repeat(501)],
+        uncertainties: []
+      })
+    ).toThrow('image response was not recognized');
+    expect(() =>
+      parseAssistantImageResponse({
+        answer: 'Untrusted classification',
+        classification: {
+          project_type: 'unknown',
+          confidence: 'high',
+          evidence: ['SQL Server'],
+          ambiguities: []
+        },
+        proposal: null,
+        omissions: [],
         uncertainties: []
       })
     ).toThrow('image response was not recognized');

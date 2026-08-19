@@ -1,0 +1,34 @@
+{
+  "case_id": "on_prem/on-prem-01",
+  "project_type": "on_prem",
+  "minimum_confidence": "medium",
+  "research_retrieved": "2026-08-19",
+  "sources": [
+    "https://learn.microsoft.com/azure/migrate/tutorial-discover-import?view=migrate",
+    "https://learn.microsoft.com/azure/migrate/discovered-metadata?view=migrate"
+  ],
+  "required_visible_markers": [
+    "Server type: Physical",
+    "Processor cores",
+    "Memory",
+    "Hardware capex"
+  ],
+  "draft_assertions": [
+    {
+      "pointer": "/settings/project_type",
+      "equals": "on_prem"
+    },
+    {
+      "pointer": "/resources/0/source_type",
+      "equals": "on_prem"
+    },
+    {
+      "pointer": "/resources/0/source_vcpu",
+      "equals": 24
+    },
+    {
+      "pointer": "/resources/0/licensable_cores",
+      "equals": 24
+    }
+  ]
+}

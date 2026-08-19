@@ -12,6 +12,8 @@ export type AssistantHelpReference = components['schemas']['AssistantHelpReferen
 export type AssistantTurnRequest = components['schemas']['AssistantTurnRequest'];
 export type AssistantTurnResponse = components['schemas']['AssistantTurnResponse'];
 export type AssistantImageResponse = components['schemas']['AssistantImageResponse'];
+export type AssistantImageProjectClassification =
+  components['schemas']['AssistantImageProjectClassification'];
 export type AssistantProjectPatch = components['schemas']['AssistantProjectPatch'];
 export type AssistantProjectPatchProposal = components['schemas']['AssistantProjectPatchProposal'];
 export type AssistantNewProjectDraftProposal =
@@ -81,14 +83,45 @@ export function parseAssistantTurnResponse(value: unknown): AssistantTurnRespons
 export function parseAssistantImageResponse(value: unknown): AssistantImageResponse {
   const response = asRecord(value);
   const answer = readString(response, 'answer');
-  if (answer === null || !response || !Object.hasOwn(response, 'proposal')) {
+  if (
+    answer === null ||
+    !response ||
+    !Object.hasOwn(response, 'classification') ||
+    !Object.hasOwn(response, 'proposal')
+  ) {
     throw new Error('The assistant image response was not recognized.');
   }
   return {
     answer,
+    classification: parseImageClassification(response.classification),
     proposal: parseProposal(response.proposal),
     omissions: parseNotes(response.omissions),
     uncertainties: parseNotes(response.uncertainties)
+  };
+}
+
+function parseImageClassification(value: unknown): AssistantImageProjectClassification | null {
+  if (value === null) return null;
+  const classification = asRecord(value);
+  const projectType = readString(classification, 'project_type');
+  const confidence = readString(classification, 'confidence');
+  if (
+    !classification ||
+    !['ec2', 'rds', 'on_prem', 'sql_payg', 'unknown'].includes(projectType ?? '') ||
+    !['high', 'medium', 'low'].includes(confidence ?? '')
+  ) {
+    throw new Error('The assistant image response was not recognized.');
+  }
+  const evidence = parseBoundedNotes(classification.evidence, 12, 240, true);
+  const ambiguities = parseBoundedNotes(classification.ambiguities, 12, 240, false);
+  if (projectType === 'unknown' && confidence !== 'low') {
+    throw new Error('The assistant image response was not recognized.');
+  }
+  return {
+    project_type: projectType as AssistantImageProjectClassification['project_type'],
+    confidence: confidence as AssistantImageProjectClassification['confidence'],
+    evidence,
+    ambiguities
   };
 }
 
@@ -256,11 +289,24 @@ function parsePatch(value: unknown): AssistantProjectPatch | null {
 }
 
 function parseNotes(value: unknown): string[] {
-  if (!Array.isArray(value) || value.length > 100) {
+  return parseBoundedNotes(value, 100, 500, false);
+}
+
+function parseBoundedNotes(
+  value: unknown,
+  maximumItems: number,
+  maximumCharacters: number,
+  required: boolean
+): string[] {
+  if (!Array.isArray(value) || (required && value.length < 1) || value.length > maximumItems) {
     throw new Error('The assistant image response was not recognized.');
   }
   return value.map((note) => {
-    if (typeof note !== 'string' || note.length < 1 || Array.from(note).length > 500) {
+    if (
+      typeof note !== 'string' ||
+      note.length < 1 ||
+      Array.from(note).length > maximumCharacters
+    ) {
       throw new Error('The assistant image response was not recognized.');
     }
     return note;

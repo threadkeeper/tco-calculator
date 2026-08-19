@@ -39,6 +39,8 @@ pub enum PolicyError {
     TooManyMutations,
     #[error("the model supplied arguments the tool schema rejects")]
     InvalidArguments,
+    #[error("the draft project type did not match the host image classification")]
+    ClassificationMismatch,
     #[error("a mutating tool was not confirmed by the user")]
     MissingConfirmation,
 }
@@ -101,6 +103,13 @@ pub fn preflight(
 
         let input = tools::parse_input(definition, &call.arguments)
             .map_err(|_| PolicyError::InvalidArguments)?;
+        if let ToolInput::StageNewProjectDraft(draft) = &input
+            && context
+                .classified_project_type()
+                .is_some_and(|project_type| project_type != draft.project_type)
+        {
+            return Err(PolicyError::ClassificationMismatch);
+        }
         validated.push(ValidatedToolCall {
             id: call.id.clone(),
             definition,
@@ -123,9 +132,12 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::assistant::{
-        budget::MAX_TOOL_CALLS,
-        context::{SelectedProject, TurnPhase},
+    use crate::{
+        assistant::{
+            budget::MAX_TOOL_CALLS,
+            context::{SelectedProject, TurnPhase},
+        },
+        domain::resource::ProjectType,
     };
 
     fn context(phase: TurnPhase) -> TurnContext {
@@ -278,6 +290,32 @@ mod tests {
             .expect_err("a new draft requires no selected project"),
             PolicyError::ProjectContextNotAllowed
         );
+    }
+
+    #[test]
+    fn host_classification_cannot_be_overridden_by_a_new_draft() {
+        let context = context(TurnPhase::Propose).with_classified_project_type(ProjectType::Rds);
+        let mismatched = call(
+            "call-1",
+            "stage_new_project_draft",
+            r#"{"project_type":"ec2","omissions":[],"uncertainties":[]}"#,
+        );
+
+        assert_eq!(
+            preflight(&[mismatched], &context, &TurnBudget::new(), &HashSet::new(),)
+                .expect_err("a model cannot override the host-classified project type"),
+            PolicyError::ClassificationMismatch
+        );
+
+        let matching = call(
+            "call-2",
+            "stage_new_project_draft",
+            r#"{"project_type":"rds","omissions":[],"uncertainties":[]}"#,
+        );
+        let accepted = preflight(&[matching], &context, &TurnBudget::new(), &HashSet::new())
+            .expect("the model may use the exact host-classified project type");
+
+        assert_eq!(accepted.len(), 1);
     }
 
     #[test]

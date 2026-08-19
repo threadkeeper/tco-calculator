@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
+use crate::domain::resource::ProjectType;
+
 use super::budget::MAX_TURN_WALL_CLOCK;
 
 /// Phase of a bounded assistant turn.
@@ -42,6 +44,7 @@ pub struct TurnContext {
     request_id: Uuid,
     phase: TurnPhase,
     project: Option<SelectedProject>,
+    classified_project_type: Option<ProjectType>,
     confirmed_actions: Vec<String>,
     started_at: Instant,
     wall_clock: Duration,
@@ -55,6 +58,7 @@ impl TurnContext {
             request_id,
             phase,
             project: None,
+            classified_project_type: None,
             confirmed_actions: Vec::new(),
             started_at: Instant::now(),
             wall_clock: MAX_TURN_WALL_CLOCK,
@@ -65,6 +69,13 @@ impl TurnContext {
     #[must_use]
     pub fn with_project(mut self, project: SelectedProject) -> Self {
         self.project = Some(project);
+        self
+    }
+
+    /// Attach the host-validated image classification that constrains a new draft.
+    #[must_use]
+    pub fn with_classified_project_type(mut self, project_type: ProjectType) -> Self {
+        self.classified_project_type = Some(project_type);
         self
     }
 
@@ -96,6 +107,10 @@ impl TurnContext {
 
     pub fn project(&self) -> Option<&SelectedProject> {
         self.project.as_ref()
+    }
+
+    pub fn classified_project_type(&self) -> Option<ProjectType> {
+        self.classified_project_type
     }
 
     /// Report whether the user confirmed this exact action identifier for this turn.
@@ -152,6 +167,7 @@ mod tests {
         let context = context();
 
         assert!(context.project().is_none());
+        assert!(context.classified_project_type().is_none());
         assert!(!context.is_confirmed("apply_confirmed_project_patch"));
         assert_eq!(context.phase(), TurnPhase::ReadPlan);
     }

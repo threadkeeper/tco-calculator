@@ -35,6 +35,17 @@ pub struct FoundryModelClient {
 impl FoundryModelClient {
     /// Create a fail-closed client for one approved deployment and the pinned stable API.
     pub fn new(endpoint: Url, deployment: &str, api_version: &str) -> Result<Self, ModelError> {
+        let credential: Arc<dyn TokenCredential> =
+            ManagedIdentityCredential::new(None).map_err(|_| ModelError::Unavailable)?;
+        Self::new_with_credential(endpoint, deployment, api_version, credential)
+    }
+
+    pub(crate) fn new_with_credential(
+        endpoint: Url,
+        deployment: &str,
+        api_version: &str,
+        credential: Arc<dyn TokenCredential>,
+    ) -> Result<Self, ModelError> {
         if api_version != FOUNDRY_API_VERSION
             || !valid_endpoint(&endpoint)
             || !valid_deployment_name(deployment)
@@ -58,8 +69,6 @@ impl FoundryModelClient {
             .user_agent(format!("azure-sql-tco/{APP_VERSION}"))
             .build()
             .map_err(|_| ModelError::Unavailable)?;
-        let credential: Arc<dyn TokenCredential> =
-            ManagedIdentityCredential::new(None).map_err(|_| ModelError::Unavailable)?;
 
         Ok(Self {
             client,

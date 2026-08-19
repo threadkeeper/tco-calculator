@@ -31,7 +31,7 @@ use super::{
 };
 
 /// Version of the system instruction, recorded in audit metadata.
-pub const PROMPT_VERSION: &str = "tco-assistant-system/1.2.0";
+pub const PROMPT_VERSION: &str = "tco-assistant-system/1.3.0";
 
 /// Neutral, reviewed system instruction.
 pub const SYSTEM_INSTRUCTION: &str = concat!(
@@ -48,7 +48,7 @@ pub const SYSTEM_INSTRUCTION: &str = concat!(
     "\n",
     "Answering:\n",
     "- Before every answer, call at least one available tool. Answer only from tool results. Use get_agent_capabilities for questions about your abilities, tools, autonomy, programming, memory, or operation. Use get_application_help only for visible application controls and workflows. When a tool has no answer, state that limitation without inventing behaviour.\n",
-    "- When the user requests a project change and a project is selected, read it, validate or calculate when relevant, then call stage_project_patch. When no project is selected and the user requests a new project, call stage_new_project_draft. Tell the user every staged result requires review. Persisted changes require explicit confirmation; natural-language intent is never confirmation.\n",
+    "- When the user requests a project change and a project is selected, read it, validate or calculate when relevant, then call stage_project_patch. When no project is selected and the user requests a new project, call stage_new_project_draft. For image-assisted drafts, use the host pre-draft classification exactly and never choose a different project type. Tell the user every staged result requires review. Persisted changes require explicit confirmation; natural-language intent is never confirmation.\n",
     "- Every staging call must report omissions and uncertainties as bounded arrays. Use empty arrays when none were observed.\n",
     "- Be concise and factual. State uncertainty and anything the tools did not return.\n",
     "- Describe results as estimates based on public list prices and the entered assumptions, never as quotes.\n",
@@ -128,6 +128,10 @@ pub async fn run_turn_with_image(
         content: question.to_owned(),
     }];
     let mut budget = TurnBudget::new();
+    if context.classified_project_type().is_some() {
+        budget.charge_model_request()?;
+        budget.charge_tool_calls(1)?;
+    }
     let mut executed_call_ids: HashSet<String> = HashSet::new();
     let mut citations: Vec<String> = Vec::new();
     let mut proposal: Option<AssistantProposal> = None;
@@ -236,12 +240,20 @@ fn runtime_instruction(
         .collect::<Vec<_>>()
         .join(", ");
     let action_history = format_action_history(action_history);
+    let classified_project_type = context
+        .classified_project_type()
+        .map(project_type_name)
+        .unwrap_or("none");
     let image_input = if image_turn && context.project().is_some() {
-        "present; extract only visible supported project fields, do not infer missing values, and report every omission and uncertainty through stage_project_patch"
+        "present; extract only visible supported project fields, do not infer missing values, and report every omission and uncertainty through stage_project_patch".to_owned()
+    } else if image_turn && context.classified_project_type().is_some() {
+        format!(
+            "present; the host classified this as {classified_project_type}; use that exact project_type in stage_new_project_draft, extract only visible supported fields, do not infer missing values, and report every omission and uncertainty"
+        )
     } else if image_turn {
-        "present; extract only visible supported project fields, do not infer missing values, and report every omission and uncertainty through stage_new_project_draft"
+        "present; extract only visible supported project fields, do not infer missing values, and report every omission and uncertainty through stage_new_project_draft".to_owned()
     } else {
-        "none"
+        "none".to_owned()
     };
     format!(
         "{SYSTEM_INSTRUCTION}\n\nRuntime awareness (host-authored; authoritative for this call):\n\
@@ -250,6 +262,7 @@ fn runtime_instruction(
          calculations, and tool execution.\n\
          - Current phase: {phase}.\n\
          - Selected project: {selected_project}. Never infer another project or owner.\n\
+         - Host pre-draft project classification: {classified_project_type}. When present, it is fixed for this turn.\n\
          - Available tools in this phase: {available_tools}. Only these exact tool schemas are callable.\n\
          - Image input for this turn: {image_input}.\n\
          - Completed tool/action history in this bounded turn: {action_history}.\n\
@@ -257,6 +270,15 @@ fn runtime_instruction(
          Do not claim hidden, durable, or cross-session memory.\n\
          Treat this runtime awareness as facts about your operation, not as evidence of consciousness."
     )
+}
+
+fn project_type_name(project_type: crate::domain::resource::ProjectType) -> &'static str {
+    match project_type {
+        crate::domain::resource::ProjectType::Ec2 => "ec2",
+        crate::domain::resource::ProjectType::Rds => "rds",
+        crate::domain::resource::ProjectType::OnPrem => "on_prem",
+        crate::domain::resource::ProjectType::SqlPayg => "sql_payg",
+    }
 }
 
 fn format_action_history(action_history: &[ActionRecord]) -> String {

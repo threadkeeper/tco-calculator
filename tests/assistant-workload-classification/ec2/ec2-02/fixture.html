@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Database host detail - compute and storage</title>
+    <style>
+      :root {
+        --ink: #17212b;
+        --muted: #5f6b76;
+        --paper: #ffffff;
+        --canvas: #edf0f2;
+        --line: #cbd2d8;
+        --accent: #9e3d22;
+        --accent-soft: color-mix(in srgb, var(--accent) 12%, white);
+      }
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; }
+      body {
+        color: var(--ink);
+        background:
+          linear-gradient(90deg, rgb(23 33 43 / 4%) 1px, transparent 1px) 0 0 / 24px 24px,
+          linear-gradient(rgb(23 33 43 / 4%) 1px, transparent 1px) 0 0 / 24px 24px,
+          var(--canvas);
+        font-family: "Aptos", "Segoe UI", sans-serif;
+        letter-spacing: 0;
+      }
+      main {
+        width: 1320px;
+        min-height: 900px;
+        margin: 50px auto;
+        background: var(--paper);
+        border: 1px solid #b9c1c8;
+        box-shadow: 0 18px 48px rgb(23 33 43 / 16%);
+      }
+      header {
+        position: relative;
+        padding: 40px 48px 34px;
+        border-top: 10px solid var(--accent);
+        border-bottom: 1px solid var(--line);
+      }
+      .kicker {
+        color: var(--accent);
+        font-size: 14px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      h1 {
+        max-width: 920px;
+        margin: 10px 0 8px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 38px;
+        font-weight: 600;
+        line-height: 1.12;
+      }
+      .subtitle { margin: 0; color: var(--muted); font-size: 18px; }
+      .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+      .badge {
+        padding: 7px 10px;
+        border: 1px solid color-mix(in srgb, var(--accent) 36%, white);
+        border-radius: 4px;
+        background: var(--accent-soft);
+        color: #27313a;
+        font-size: 14px;
+        font-weight: 650;
+      }
+      .case-id {
+        position: absolute;
+        top: 42px;
+        right: 48px;
+        color: var(--muted);
+        font-family: Consolas, monospace;
+        font-size: 13px;
+      }
+      .content {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 22px;
+        padding: 30px 48px 38px;
+      }
+      section {
+        min-width: 0;
+        border-top: 3px solid var(--accent);
+        background: #fff;
+      }
+      section.wide { grid-column: 1 / -1; }
+      h2 { margin: 14px 0 12px; font-size: 18px; line-height: 1.25; }
+      table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 15px; }
+      th, td {
+        padding: 11px 12px;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+        overflow-wrap: anywhere;
+      }
+      th { background: #f1f3f5; color: #35414c; font-size: 13px; font-weight: 700; }
+      tbody tr:nth-child(even) td { background: #fafbfc; }
+      dl {
+        display: grid;
+        grid-template-columns: minmax(160px, 42%) minmax(0, 1fr);
+        margin: 0;
+        border: 1px solid var(--line);
+        border-bottom: 0;
+      }
+      dt, dd { margin: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+      dt { color: var(--muted); background: #f7f8f9; font-size: 13px; font-weight: 700; }
+      dd { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+      .notes { margin: 0; padding: 14px 18px 14px 34px; border: 1px solid var(--line); }
+      .notes li { margin: 5px 0; line-height: 1.35; }
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 16px 48px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="kicker">Migration discovery export</div>
+        <div class="case-id">ec2/ec2-02</div>
+        <h1>Database host detail - compute and storage</h1>
+        <p class="subtitle">Synthetic source worksheet for one independently managed SQL host</p>
+        <div class="badges"><span class="badge">Platform: Amazon EC2</span><span class="badge">Image: AMI</span><span class="badge">Region: us-east-2</span></div>
+      </header>
+      <div class="content"><section><h2>Compute</h2><dl><dt>AMI</dt><dd>ami-0abc1234def567890</dd><dt>EC2 instance type</dt><dd>r6i.2xlarge</dd><dt>vCPU</dt><dd>8</dd><dt>Source RAM</dt><dd>64 GiB</dd></dl></section>
+<section><h2>Database</h2><dl><dt>Workload</dt><dd>Synthetic reporting warehouse</dd><dt>SQL Server edition</dt><dd>Enterprise</dd><dt>License basis</dt><dd>BYOL</dd><dt>Annual runtime</dt><dd>6,240 hours</dd></dl></section>
+<section class="wide"><h2>Attached EBS storage</h2><table><thead><tr><th>Device role</th><th>Volume ID</th><th>EBS type</th><th>Capacity</th><th>Provisioned IOPS</th></tr></thead><tbody><tr><td>SQL data and log</td><td>vol-02223333444455556</td><td>io2</td><td>1,024 GiB</td><td>20,000</td></tr></tbody></table></section>
+<section class="wide"><h2>Observed values</h2><ul class="notes"><li>SQL data in use: 880 GiB</li><li>Storage throughput: 500 MiB/s</li><li>Quantity: 1</li></ul></section></div>
+      <footer>
+        <span>Synthetic classification fixture. No customer or production data.</span>
+        <span>Values are test inputs, not prices or licensing advice.</span>
+      </footer>
+    </main>
+  </body>
+</html>

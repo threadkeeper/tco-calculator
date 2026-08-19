@@ -5,7 +5,10 @@
 //! host component validates it.
 
 pub mod budget;
+pub mod classification;
 pub mod context;
+#[cfg(feature = "live-evaluation")]
+pub mod evaluation;
 pub mod foundry;
 pub mod help;
 pub mod image;

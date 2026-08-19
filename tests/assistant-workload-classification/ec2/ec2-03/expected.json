@@ -1,0 +1,33 @@
+{
+  "case_id": "ec2/ec2-03",
+  "project_type": "ec2",
+  "minimum_confidence": "medium",
+  "research_retrieved": "2026-08-19",
+  "sources": [
+    "https://docs.aws.amazon.com/ec2/latest/instancetypes/instance-type-names.html",
+    "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-volume-types.html"
+  ],
+  "required_visible_markers": [
+    "Amazon EC2",
+    "r6id.8xlarge",
+    "Amazon EBS"
+  ],
+  "draft_assertions": [
+    {
+      "pointer": "/settings/project_type",
+      "equals": "ec2"
+    },
+    {
+      "pointer": "/resources/0/source_type",
+      "equals": "ec2"
+    },
+    {
+      "pointer": "/resources/0/instance_type",
+      "equals": "r6id.8xlarge"
+    },
+    {
+      "pointer": "/resources/0/quantity",
+      "equals": 3
+    }
+  ]
+}
