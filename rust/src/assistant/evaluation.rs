@@ -10,7 +10,7 @@ use std::{
 };
 
 use azure_core::credentials::TokenCredential;
-use azure_identity::AzureCliCredential;
+use azure_identity::{AzureCliCredential, ManagedIdentityCredential};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -33,12 +33,16 @@ use super::{
     foundry::FoundryModelClient,
     image::{ImageMediaType, normalize_image},
     model::{ModelError, ModelImage},
+    policy::PolicyError,
     tools::AssistantProposal,
     turn::{PROMPT_VERSION, TurnError, run_turn_with_image},
 };
 
 const ACKNOWLEDGEMENT_VARIABLE: &str = "TCO_LIVE_FOUNDRY_EVALUATION";
 const ACKNOWLEDGEMENT_VALUE: &str = "SYNTHETIC_FIXTURES_ONLY";
+const IDENTITY_VARIABLE: &str = "TCO_LIVE_FOUNDRY_IDENTITY";
+const AZURE_CLI_USER_IDENTITY: &str = "azure_cli_user";
+const SYSTEM_ASSIGNED_MANAGED_IDENTITY: &str = "system_assigned_managed_identity";
 const FIXTURE_MANIFEST: &str = "cases.json";
 const EXPECTED_CASES: usize = 12;
 const EXPECTED_CASES_PER_FAMILY: usize = 3;
@@ -49,6 +53,8 @@ pub enum EvaluationError {
     MissingAcknowledgement,
     #[error("Azure CLI must be signed in with an interactive user account")]
     InteractiveIdentityRequired,
+    #[error("a system-assigned managed identity token is required")]
+    SystemAssignedManagedIdentityRequired,
     #[error("Foundry evaluation configuration is missing or invalid")]
     InvalidConfiguration,
     #[error("the synthetic fixture corpus is missing or invalid")]
@@ -98,19 +104,42 @@ struct FailedCase {
     classification: Option<ImageProjectClassification>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EvaluationIdentity {
+    AzureCliUser,
+    SystemAssignedManagedIdentity,
+}
+
+impl EvaluationIdentity {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AzureCliUser => AZURE_CLI_USER_IDENTITY,
+            Self::SystemAssignedManagedIdentity => SYSTEM_ASSIGNED_MANAGED_IDENTITY,
+        }
+    }
+
+    fn unavailable_error(self) -> EvaluationError {
+        match self {
+            Self::AzureCliUser => EvaluationError::InteractiveIdentityRequired,
+            Self::SystemAssignedManagedIdentity => {
+                EvaluationError::SystemAssignedManagedIdentityRequired
+            }
+        }
+    }
+}
+
 /// Run every committed synthetic screenshot through the live classifier and draft loop.
 pub async fn run() -> Result<(), EvaluationError> {
     require_acknowledgement()?;
-    verify_interactive_azure_cli_identity()?;
+    let identity = evaluation_identity(env::var(IDENTITY_VARIABLE).ok().as_deref())?;
 
     let endpoint =
         env::var("FOUNDRY_ENDPOINT").map_err(|_| EvaluationError::InvalidConfiguration)?;
     let deployment =
         env::var("FOUNDRY_MODEL_DEPLOYMENT").map_err(|_| EvaluationError::InvalidConfiguration)?;
     let endpoint = Url::parse(&endpoint).map_err(|_| EvaluationError::InvalidConfiguration)?;
-    let credential: Arc<dyn TokenCredential> =
-        AzureCliCredential::new(None).map_err(|_| EvaluationError::InteractiveIdentityRequired)?;
-    verify_cli_token(credential.as_ref()).await?;
+    let credential = evaluation_credential(identity)?;
+    verify_credential_token(credential.as_ref(), identity).await?;
     let client = FoundryModelClient::new_with_credential(
         endpoint,
         &deployment,
@@ -133,7 +162,7 @@ pub async fn run() -> Result<(), EvaluationError> {
         if !passed {
             failures += 1;
         }
-        write_result(&fixture_root, &fixture, result)?;
+        write_result(&fixture_root, &fixture, identity, result)?;
         println!(
             "{}: {}",
             fixture.id,
@@ -148,15 +177,18 @@ pub async fn run() -> Result<(), EvaluationError> {
     }
 }
 
-async fn verify_cli_token(credential: &dyn TokenCredential) -> Result<(), EvaluationError> {
+async fn verify_credential_token(
+    credential: &dyn TokenCredential,
+    identity: EvaluationIdentity,
+) -> Result<(), EvaluationError> {
     tokio::time::timeout(
         std::time::Duration::from_secs(30),
         credential.get_token(&[super::foundry::FOUNDRY_TOKEN_SCOPE], None),
     )
     .await
-    .map_err(|_| EvaluationError::InteractiveIdentityRequired)?
+    .map_err(|_| identity.unavailable_error())?
     .map(|_| ())
-    .map_err(|_| EvaluationError::InteractiveIdentityRequired)
+    .map_err(|_| identity.unavailable_error())
 }
 
 fn require_acknowledgement() -> Result<(), EvaluationError> {
@@ -164,6 +196,32 @@ fn require_acknowledgement() -> Result<(), EvaluationError> {
         Ok(())
     } else {
         Err(EvaluationError::MissingAcknowledgement)
+    }
+}
+
+fn evaluation_identity(value: Option<&str>) -> Result<EvaluationIdentity, EvaluationError> {
+    match value {
+        None | Some(AZURE_CLI_USER_IDENTITY) => Ok(EvaluationIdentity::AzureCliUser),
+        Some(SYSTEM_ASSIGNED_MANAGED_IDENTITY) => {
+            Ok(EvaluationIdentity::SystemAssignedManagedIdentity)
+        }
+        Some(_) => Err(EvaluationError::InvalidConfiguration),
+    }
+}
+
+fn evaluation_credential(
+    identity: EvaluationIdentity,
+) -> Result<Arc<dyn TokenCredential>, EvaluationError> {
+    match identity {
+        EvaluationIdentity::AzureCliUser => {
+            verify_interactive_azure_cli_identity()?;
+            AzureCliCredential::new(None)
+                .map(|credential| credential as Arc<dyn TokenCredential>)
+                .map_err(|_| identity.unavailable_error())
+        }
+        EvaluationIdentity::SystemAssignedManagedIdentity => ManagedIdentityCredential::new(None)
+            .map(|credential| credential as Arc<dyn TokenCredential>)
+            .map_err(|_| identity.unavailable_error()),
     }
 }
 
@@ -291,13 +349,14 @@ async fn evaluate_case(
     })?;
     let model_image = ModelImage::normalized_jpeg(normalized.bytes);
     let context = TurnContext::new("evaluation:synthetic", Uuid::new_v4(), TurnPhase::Propose);
-    let classification = classify_project_image(client, &context, model_image.clone())
+    let classification_outcome = classify_project_image(client, &context, model_image.clone())
         .await
         .map_err(|error| FailedCase {
             code: model_error_code(error),
             classification: None,
-        })?
-        .classification;
+        })?;
+    let classifier_model_requests = classification_outcome.model_requests;
+    let classification = classification_outcome.classification;
 
     let Some(project_type) = classification.resolved_project_type() else {
         let uncertainties = if classification.ambiguities.is_empty() {
@@ -320,7 +379,7 @@ async fn evaluate_case(
         });
     };
 
-    let context = context.with_classified_project_type(project_type);
+    let context = context.with_classification_usage(project_type, classifier_model_requests);
     let outcome = run_turn_with_image(
         state,
         client,
@@ -461,6 +520,7 @@ fn scrub_generated_uuids(value: &mut Value, next_id: &mut usize) {
 fn write_result(
     fixture_root: &Path,
     fixture: &FixtureCase,
+    identity: EvaluationIdentity,
     result: Result<CompletedCase, FailedCase>,
 ) -> Result<(), EvaluationError> {
     let evaluated_at = utc_now_rfc3339().map_err(|_| EvaluationError::InvalidConfiguration)?;
@@ -509,6 +569,7 @@ fn write_result(
          - Status: `{status}`\n\
          - Case: `{case_id}`\n\
          - Evaluated UTC: `{evaluated_at}`\n\
+         - Evaluation identity: `{evaluation_identity}`\n\
          - Classifier prompt: `{CLASSIFICATION_PROMPT_VERSION}`\n\
          - Draft prompt: `{PROMPT_VERSION}`\n\
          - Expected family: `{expected_family}`\n\
@@ -518,6 +579,7 @@ fn write_result(
          ## Assertions\n\n```json\n{assertions}\n```\n\n\
          ## Complete Sanitized Response\n\n```json\n{response}\n```\n",
         case_id = fixture.id,
+        evaluation_identity = identity.as_str(),
         expected_family = fixture.expected.project_type.as_str(),
         expected_confidence = fixture.expected.minimum_confidence.as_str(),
     );
@@ -543,8 +605,47 @@ fn turn_error_code(error: &TurnError) -> &'static str {
         TurnError::Question(_) => "turn_question_rejected",
         TurnError::Deadline => "turn_deadline",
         TurnError::Budget(_) => "turn_budget",
-        TurnError::Policy(_) => "turn_policy",
+        TurnError::Policy(error) => policy_error_code(*error),
         TurnError::Model(error) => model_error_code(*error),
+    }
+}
+
+fn policy_error_code(error: PolicyError) -> &'static str {
+    match error {
+        PolicyError::EmptyBatch => "policy_empty_batch",
+        PolicyError::UngroundedResponse => "policy_ungrounded_response",
+        PolicyError::BatchTooLarge => "policy_batch_too_large",
+        PolicyError::BudgetExhausted => "policy_budget_exhausted",
+        PolicyError::InvalidCallId => "policy_invalid_call_id",
+        PolicyError::UnknownTool => "policy_unknown_tool",
+        PolicyError::PhaseNotAllowed => "policy_phase_not_allowed",
+        PolicyError::ProjectContextNotAllowed => "policy_project_context_not_allowed",
+        PolicyError::TooManyMutations => "policy_too_many_mutations",
+        PolicyError::InvalidArguments(error) => invalid_tool_arguments_code(error),
+        PolicyError::ClassificationMismatch => "policy_classification_mismatch",
+        PolicyError::MissingConfirmation => "policy_missing_confirmation",
+    }
+}
+
+fn invalid_tool_arguments_code(error: super::tools::InvalidToolArguments) -> &'static str {
+    match error {
+        super::tools::InvalidToolArguments::MalformedJson => "policy_arguments_malformed_json",
+        super::tools::InvalidToolArguments::UnknownField => "policy_arguments_unknown_field",
+        super::tools::InvalidToolArguments::MissingField => "policy_arguments_missing_field",
+        super::tools::InvalidToolArguments::TypeMismatch => "policy_arguments_type_mismatch",
+        super::tools::InvalidToolArguments::UnknownVariant => "policy_arguments_unknown_variant",
+        super::tools::InvalidToolArguments::InvalidScalarValue => {
+            "policy_arguments_invalid_scalar_value"
+        }
+        super::tools::InvalidToolArguments::InvalidShape => "policy_arguments_invalid_shape",
+        super::tools::InvalidToolArguments::InputBounds => "policy_arguments_input_bounds",
+        super::tools::InvalidToolArguments::ExtractionNotes => "policy_arguments_extraction_notes",
+        super::tools::InvalidToolArguments::ResourceFieldMismatch => {
+            "policy_arguments_resource_field_mismatch"
+        }
+        super::tools::InvalidToolArguments::UnregisteredTool => {
+            "policy_arguments_unregistered_tool"
+        }
     }
 }
 
@@ -558,6 +659,43 @@ mod tests {
         assert!(interactive_user_type(b"USER\n"));
         assert!(!interactive_user_type(b"servicePrincipal\n"));
         assert!(!interactive_user_type(b""));
+    }
+
+    #[test]
+    fn evaluator_identity_requires_an_explicit_supported_mode() {
+        assert_eq!(
+            evaluation_identity(None).expect("default identity"),
+            EvaluationIdentity::AzureCliUser
+        );
+        assert_eq!(
+            evaluation_identity(Some(AZURE_CLI_USER_IDENTITY)).expect("CLI identity"),
+            EvaluationIdentity::AzureCliUser
+        );
+        assert_eq!(
+            evaluation_identity(Some(SYSTEM_ASSIGNED_MANAGED_IDENTITY)).expect("managed identity"),
+            EvaluationIdentity::SystemAssignedManagedIdentity
+        );
+        assert!(evaluation_identity(Some("service_principal")).is_err());
+    }
+
+    #[test]
+    fn policy_failures_keep_a_sanitized_discriminating_code() {
+        assert_eq!(
+            turn_error_code(&TurnError::Policy(PolicyError::InvalidArguments(
+                super::super::tools::InvalidToolArguments::UnknownField
+            ))),
+            "policy_arguments_unknown_field"
+        );
+        assert_eq!(
+            turn_error_code(&TurnError::Policy(PolicyError::InvalidArguments(
+                super::super::tools::InvalidToolArguments::ResourceFieldMismatch
+            ))),
+            "policy_arguments_resource_field_mismatch"
+        );
+        assert_eq!(
+            turn_error_code(&TurnError::Policy(PolicyError::ClassificationMismatch)),
+            "policy_classification_mismatch"
+        );
     }
 
     #[test]
@@ -659,7 +797,13 @@ mod tests {
             passed: false,
         };
 
-        write_result(&root, &fixture, Ok(completed)).expect("replace result");
+        write_result(
+            &root,
+            &fixture,
+            EvaluationIdentity::SystemAssignedManagedIdentity,
+            Ok(completed),
+        )
+        .expect("replace result");
 
         let result =
             fs::read_to_string(case_directory.join("result.md")).expect("replacement result");
@@ -668,6 +812,7 @@ mod tests {
         assert!(result.contains("Expected minimum confidence: `medium`"));
         assert!(result.contains("Observed family: `ec2`"));
         assert!(result.contains("Observed confidence: `high`"));
+        assert!(result.contains("Evaluation identity: `system_assigned_managed_identity`"));
         assert!(!result.contains("old result"));
         fs::remove_dir_all(root).expect("remove temporary corpus");
     }

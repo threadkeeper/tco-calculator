@@ -12,7 +12,7 @@ use super::{
     budget::{MAX_MUTATING_CALLS_PER_BATCH, MAX_TOOL_CALLS_PER_RESPONSE, TurnBudget},
     context::{TurnContext, TurnPhase},
     model::ProposedToolCall,
-    tools::{self, ToolDefinition, ToolInput, ToolRisk},
+    tools::{self, InvalidToolArguments, ToolDefinition, ToolInput, ToolRisk},
 };
 
 const MAX_CALL_ID_CHARS: usize = 128;
@@ -38,7 +38,7 @@ pub enum PolicyError {
     #[error("the tool batch contained more than one mutating call")]
     TooManyMutations,
     #[error("the model supplied arguments the tool schema rejects")]
-    InvalidArguments,
+    InvalidArguments(InvalidToolArguments),
     #[error("the draft project type did not match the host image classification")]
     ClassificationMismatch,
     #[error("a mutating tool was not confirmed by the user")]
@@ -102,7 +102,7 @@ pub fn preflight(
         }
 
         let input = tools::parse_input(definition, &call.arguments)
-            .map_err(|_| PolicyError::InvalidArguments)?;
+            .map_err(PolicyError::InvalidArguments)?;
         if let ToolInput::StageNewProjectDraft(draft) = &input
             && context
                 .classified_project_type()
@@ -208,7 +208,10 @@ mod tests {
         )
         .expect_err("a batch with malformed arguments must be rejected as a unit");
 
-        assert_eq!(error, PolicyError::InvalidArguments);
+        assert_eq!(
+            error,
+            PolicyError::InvalidArguments(InvalidToolArguments::UnknownField)
+        );
     }
 
     #[test]
@@ -412,6 +415,9 @@ mod tests {
         )
         .expect_err("a model may not supply an owner identifier");
 
-        assert_eq!(error, PolicyError::InvalidArguments);
+        assert_eq!(
+            error,
+            PolicyError::InvalidArguments(InvalidToolArguments::UnknownField)
+        );
     }
 }

@@ -13,8 +13,9 @@ use super::{
     },
 };
 
-pub const CLASSIFICATION_PROMPT_VERSION: &str = "tco-assistant-image-classifier/1.1.0";
+pub const CLASSIFICATION_PROMPT_VERSION: &str = "tco-assistant-image-classifier/1.2.0";
 const CLASSIFICATION_MAX_OUTPUT_TOKENS: u32 = 800;
+const CLASSIFICATION_MAX_ATTEMPTS: u32 = 3;
 const MAX_CLASSIFICATION_NOTES: usize = 12;
 const MAX_CLASSIFICATION_NOTE_CHARS: usize = 240;
 const CLASSIFICATION_TOOL_NAME: &str = "classify_project_type";
@@ -29,7 +30,7 @@ const CLASSIFICATION_SYSTEM_INSTRUCTION: &str = concat!(
     "- sql_payg: an Azure Arc-enabled SQL Server PAYG licensing comparison with Enterprise or EE core counts, Standard or SE core counts, Software Assurance or SA annual spend, and usage hours. Treat STE as a weak OCR-like alias for SE only when Standard Edition and the complete Arc/PAYG comparison bundle are also visible. SQL edition or STE alone is not sufficient.\n",
     "- on_prem: generic server, CPU or core, RAM or memory, disk or storage, socket, hardware, datacenter, or power data only when no AWS, RDS, EC2, or SQL PAYG identifier is visible.\n",
     "AWS service-specific evidence takes precedence over generic CPU, RAM, SQL edition, and storage fields. Use unknown when evidence is absent or materially conflicting.\n",
-    "Evidence must quote short visible labels or identifiers. Record conflicts in ambiguities.\n",
+    "Evidence must quote 1 to 6 short visible labels or identifiers. Record at most 6 conflicts in ambiguities. Keep every note on one line and under 160 characters.\n",
 );
 
 const CLASSIFICATION_SCHEMA: &str = r#"{
@@ -47,14 +48,11 @@ const CLASSIFICATION_SCHEMA: &str = r#"{
         },
         "evidence": {
             "type": "array",
-            "minItems": 1,
-            "maxItems": 12,
-            "items": { "type": "string", "minLength": 1, "maxLength": 240 }
+            "items": { "type": "string" }
         },
         "ambiguities": {
             "type": "array",
-            "maxItems": 12,
-            "items": { "type": "string", "minLength": 1, "maxLength": 240 }
+            "items": { "type": "string" }
         }
     }
 }"#;
@@ -132,6 +130,7 @@ impl ImageProjectClassification {
 pub struct ClassificationOutcome {
     pub classification: ImageProjectClassification,
     pub routed_model: Option<String>,
+    pub model_requests: u32,
 }
 
 pub async fn classify_project_image(
@@ -139,34 +138,54 @@ pub async fn classify_project_image(
     context: &TurnContext,
     image: ModelImage,
 ) -> Result<ClassificationOutcome, ModelError> {
-    let timeout = model_call_timeout(context.remaining());
-    if timeout.is_zero() {
-        return Err(ModelError::Timeout);
+    for model_requests in 1..=CLASSIFICATION_MAX_ATTEMPTS {
+        let timeout = model_call_timeout(context.remaining());
+        if timeout.is_zero() {
+            return Err(ModelError::Timeout);
+        }
+        let request = ModelTurnRequest {
+            system_instruction: CLASSIFICATION_SYSTEM_INSTRUCTION.to_owned(),
+            prompt_version: CLASSIFICATION_PROMPT_VERSION,
+            messages: vec![TranscriptMessage::User {
+                content: "Classify the visible source estate for the host before project drafting."
+                    .to_owned(),
+            }],
+            image: Some(image.clone()),
+            tools: vec![ToolSchema {
+                name: CLASSIFICATION_TOOL_NAME,
+                description: "Report the source-estate project type using only visible image evidence. This classification cannot create or change a project.",
+                parameters: CLASSIFICATION_SCHEMA.to_owned(),
+                strict: true,
+            }],
+            required_tool: Some(CLASSIFICATION_TOOL_NAME),
+            max_output_tokens: CLASSIFICATION_MAX_OUTPUT_TOKENS,
+            timeout,
+        };
+        let response = match tokio::time::timeout(timeout, client.respond(request)).await {
+            Err(_) => return Err(ModelError::Timeout),
+            Ok(Err(ModelError::MalformedResponse))
+                if model_requests < CLASSIFICATION_MAX_ATTEMPTS =>
+            {
+                continue;
+            }
+            Ok(Err(error)) => return Err(error),
+            Ok(Ok(response)) => response,
+        };
+        match parse_output(response.output) {
+            Ok(classification) => {
+                return Ok(ClassificationOutcome {
+                    classification,
+                    routed_model: response.routed_model,
+                    model_requests,
+                });
+            }
+            Err(ModelError::MalformedResponse) if model_requests < CLASSIFICATION_MAX_ATTEMPTS => {
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
     }
-    let request = ModelTurnRequest {
-        system_instruction: CLASSIFICATION_SYSTEM_INSTRUCTION.to_owned(),
-        prompt_version: CLASSIFICATION_PROMPT_VERSION,
-        messages: vec![TranscriptMessage::User {
-            content: "Classify the visible source estate for the host before project drafting."
-                .to_owned(),
-        }],
-        image: Some(image),
-        tools: vec![ToolSchema {
-            name: CLASSIFICATION_TOOL_NAME,
-            description: "Report the source-estate project type using only visible image evidence. This classification cannot create or change a project.",
-            parameters: CLASSIFICATION_SCHEMA,
-        }],
-        max_output_tokens: CLASSIFICATION_MAX_OUTPUT_TOKENS,
-        timeout,
-    };
-    let response = tokio::time::timeout(timeout, client.respond(request))
-        .await
-        .map_err(|_| ModelError::Timeout)??;
-    let classification = parse_output(response.output)?;
-    Ok(ClassificationOutcome {
-        classification,
-        routed_model: response.routed_model,
-    })
+    Err(ModelError::MalformedResponse)
 }
 
 fn parse_output(output: ModelOutput) -> Result<ImageProjectClassification, ModelError> {
@@ -213,8 +232,43 @@ fn normalize_notes(notes: &mut [String], required: bool) -> Result<(), ModelErro
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::VecDeque, sync::Mutex};
+
     use super::*;
-    use crate::assistant::model::ProposedToolCall;
+    use crate::assistant::model::{ModelTurnResponse, ProposedToolCall};
+
+    struct ScriptedClient {
+        responses: Mutex<VecDeque<Result<ModelTurnResponse, ModelError>>>,
+        requests: Mutex<Vec<ModelTurnRequest>>,
+    }
+
+    impl ScriptedClient {
+        fn new(responses: Vec<Result<ModelTurnResponse, ModelError>>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into()),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn request_count(&self) -> usize {
+            self.requests.lock().expect("request lock").len()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ModelClient for ScriptedClient {
+        async fn respond(
+            &self,
+            request: ModelTurnRequest,
+        ) -> Result<ModelTurnResponse, ModelError> {
+            self.requests.lock().expect("request lock").push(request);
+            self.responses
+                .lock()
+                .expect("response lock")
+                .pop_front()
+                .expect("scripted response")
+        }
+    }
 
     fn output(arguments: &str) -> ModelOutput {
         ModelOutput::ToolCalls(vec![ProposedToolCall {
@@ -222,6 +276,72 @@ mod tests {
             name: CLASSIFICATION_TOOL_NAME.to_owned(),
             arguments: arguments.to_owned(),
         }])
+    }
+
+    fn response(output: ModelOutput) -> ModelTurnResponse {
+        ModelTurnResponse {
+            output,
+            routed_model: Some("test-model".to_owned()),
+        }
+    }
+
+    fn context() -> TurnContext {
+        TurnContext::new(
+            "evaluation:test",
+            uuid::Uuid::nil(),
+            super::super::context::TurnPhase::Propose,
+        )
+    }
+
+    fn image() -> ModelImage {
+        ModelImage::normalized_jpeg(vec![0xff, 0xd8, 0xff, 0xd9])
+    }
+
+    #[tokio::test]
+    async fn retries_one_malformed_classifier_response() {
+        let client = ScriptedClient::new(vec![
+            Ok(response(ModelOutput::Message("on_prem".to_owned()))),
+            Ok(response(output(
+                r#"{"project_type":"on_prem","confidence":"high","evidence":["Processor cores"],"ambiguities":[]}"#,
+            ))),
+        ]);
+
+        let outcome = classify_project_image(&client, &context(), image())
+            .await
+            .expect("second classification should pass");
+
+        assert_eq!(outcome.model_requests, 2);
+        assert_eq!(
+            outcome.classification.project_type,
+            ClassifiedProjectType::OnPrem
+        );
+        assert_eq!(client.request_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn stops_after_three_malformed_classifier_responses() {
+        let client = ScriptedClient::new(vec![
+            Ok(response(ModelOutput::Message("ec2".to_owned()))),
+            Ok(response(ModelOutput::Message("ec2".to_owned()))),
+            Ok(response(ModelOutput::Message("ec2".to_owned()))),
+        ]);
+
+        assert_eq!(
+            classify_project_image(&client, &context(), image()).await,
+            Err(ModelError::MalformedResponse)
+        );
+        assert_eq!(client.request_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_content_filter_failures() {
+        let client = ScriptedClient::new(vec![Err(ModelError::ContentFiltered)]);
+
+        assert_eq!(
+            classify_project_image(&client, &context(), image()).await,
+            Err(ModelError::ContentFiltered)
+        );
+        assert_eq!(client.request_count(), 1);
     }
 
     #[test]

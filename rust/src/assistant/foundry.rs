@@ -209,6 +209,8 @@ struct ChatCompletionRequest<'a> {
     messages: Vec<WireMessage<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<WireTool<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<WireToolChoice<'a>>,
     max_completion_tokens: u32,
     n: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -277,7 +279,25 @@ struct WireTool<'a> {
 struct WireFunction<'a> {
     name: &'a str,
     description: &'a str,
+    #[serde(skip_serializing_if = "is_false")]
+    strict: bool,
     parameters: Value,
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[derive(Serialize)]
+struct WireToolChoice<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    function: WireToolChoiceFunction<'a>,
+}
+
+#[derive(Serialize)]
+struct WireToolChoiceFunction<'a> {
+    name: &'a str,
 }
 
 fn encode_request(request: &ModelTurnRequest) -> Result<Value, ModelError> {
@@ -322,10 +342,25 @@ fn encode_request(request: &ModelTurnRequest) -> Result<Value, ModelError> {
         .iter()
         .map(wire_tool)
         .collect::<Result<Vec<_>, _>>()?;
+    let tool_choice = request
+        .required_tool
+        .map(|name| {
+            request
+                .tools
+                .iter()
+                .any(|tool| tool.name == name)
+                .then_some(WireToolChoice {
+                    kind: "function",
+                    function: WireToolChoiceFunction { name },
+                })
+                .ok_or(ModelError::MalformedResponse)
+        })
+        .transpose()?;
     serde_json::to_value(ChatCompletionRequest {
         messages,
-        parallel_tool_calls: (!tools.is_empty()).then_some(true),
+        parallel_tool_calls: (!tools.is_empty()).then_some(tool_choice.is_none()),
         tools,
+        tool_choice,
         max_completion_tokens: request.max_output_tokens,
         n: 1,
     })
@@ -354,12 +389,13 @@ fn wire_user_content<'a>(
 
 fn wire_tool(schema: &ToolSchema) -> Result<WireTool<'_>, ModelError> {
     let parameters =
-        serde_json::from_str(schema.parameters).map_err(|_| ModelError::MalformedResponse)?;
+        serde_json::from_str(&schema.parameters).map_err(|_| ModelError::MalformedResponse)?;
     Ok(WireTool {
         kind: "function",
         function: WireFunction {
             name: schema.name,
             description: schema.description,
+            strict: schema.strict,
             parameters,
         },
     })
@@ -541,8 +577,10 @@ mod tests {
             tools: vec![ToolSchema {
                 name: "get_application_help",
                 description: "Read reviewed help.",
-                parameters: r#"{"type":"object","additionalProperties":false}"#,
+                parameters: r#"{"type":"object","additionalProperties":false}"#.to_owned(),
+                strict: false,
             }],
+            required_tool: None,
             max_output_tokens: 4000,
             timeout: Duration::from_secs(10),
         }
@@ -587,7 +625,33 @@ mod tests {
         assert_eq!(body["max_completion_tokens"], 4000);
         assert_eq!(body["n"], 1);
         assert_eq!(body["parallel_tool_calls"], true);
+        assert!(body.get("tool_choice").is_none());
         assert!(body.get("model").is_none());
+    }
+
+    #[test]
+    fn required_tool_is_named_and_parallel_calls_are_disabled() {
+        let mut request = request();
+        request.required_tool = Some("get_application_help");
+        request.tools[0].strict = true;
+
+        let body = encode_request(&request).expect("required tool should serialize");
+
+        assert_eq!(body["tool_choice"]["type"], "function");
+        assert_eq!(
+            body["tool_choice"]["function"]["name"],
+            "get_application_help"
+        );
+        assert_eq!(body["parallel_tool_calls"], false);
+        assert_eq!(body["tools"][0]["function"]["strict"], true);
+    }
+
+    #[test]
+    fn required_tool_must_be_exposed_by_the_request() {
+        let mut request = request();
+        request.required_tool = Some("classify_project_type");
+
+        assert_eq!(encode_request(&request), Err(ModelError::MalformedResponse));
     }
 
     #[test]

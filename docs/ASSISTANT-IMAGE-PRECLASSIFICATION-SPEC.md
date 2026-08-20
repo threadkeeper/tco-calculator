@@ -1,7 +1,7 @@
 # Assistant Image Preclassification Specification
 
 - Status: implemented contract and evaluation baseline
-- Prompt contracts: `tco-assistant-image-classifier/1.1.0` and `tco-assistant-system/1.3.0`
+- Prompt contracts: `tco-assistant-image-classifier/1.2.0` and `tco-assistant-system/1.3.3`
 Research retrieval date: 2026-08-19
 
 ## 1. Outcome
@@ -82,9 +82,10 @@ The pre-draft classifier MUST:
 - return `high`, `medium`, or `low` confidence;
 - quote 1 to 12 short visible evidence strings;
 - return 0 to 12 short ambiguity strings;
+- retry an otherwise identical classifier request at most twice only when the provider response or typed classifier output is malformed, charging every attempt to the same turn budget;
 - stay within 800 output tokens and the remaining whole-turn deadline.
 
-Each evidence or ambiguity entry MUST be non-empty, trimmed, control-character-free, and at most 240 characters. Unknown fields, prose-only responses, the wrong tool, multiple tool calls, an empty call ID, malformed JSON, oversized notes, or `unknown` with non-low confidence MUST fail closed as a malformed model response.
+Each evidence or ambiguity entry MUST be non-empty, trimmed, control-character-free, and at most 240 characters. Unknown fields, prose-only responses, the wrong tool, multiple tool calls, an empty call ID, malformed JSON, oversized notes, or `unknown` with non-low confidence MUST fail closed as a malformed model response after the bounded malformed-only attempts are exhausted. Content filtering, authentication, authorization, quota, timeout, and other provider failures MUST NOT use this retry.
 
 ### 4.3 Confidence Gate
 
@@ -185,8 +186,9 @@ Production continues to use only the system-assigned managed identity and the co
 The synthetic live evaluator is a separate opt-in executable. It MUST:
 
 - use the same request encoder, endpoint/deployment allowlist, classifier, turn loop, tools, host policy, and domain validation as the application;
-- authenticate only as the interactive user currently signed in to Azure CLI;
-- reject a service-principal or other non-user Azure CLI account;
+- default to the interactive user currently signed in to Azure CLI and reject a service-principal or other non-user Azure CLI account;
+- allow the explicit `system_assigned_managed_identity` mode only for a controlled Azure-hosted test machine whose system-assigned identity has least-privilege inference RBAC and private network access to the approved Foundry account;
+- construct `ManagedIdentityCredential` without a client or resource ID in system-assigned mode, and never accept a user-assigned identity, service-principal credential, key, pre-minted token, or implicit credential chain;
 - require an explicit synthetic-egress acknowledgement;
 - use only synthetic committed screenshots;
 - perform no Azure resource mutation and no application persistence;
@@ -236,7 +238,7 @@ Each `result.md` MUST be overwritten atomically for every attempted live run and
 
 1. fixture case and UTC evaluation time;
 2. classifier and draft prompt versions;
-3. expected family and observed family/confidence;
+3. non-sensitive evaluator identity mode, expected family, and observed family/confidence;
 4. pass/fail against deterministic assertions;
 5. complete classifier evidence and ambiguities;
 6. complete assistant answer, omissions, and uncertainties;
@@ -269,7 +271,7 @@ The feature is complete when:
 4. policy tests prove the classified family cannot be overridden;
 5. OpenAPI generation, strict TypeScript validation, Svelte checks, and focused frontend tests pass;
 6. all 12 retained PNG fixtures decode within production limits and match their `expected.json` metadata;
-7. the opt-in evaluator compiles with the locked dependency graph and rejects missing acknowledgement or a non-user Azure CLI identity;
+7. the opt-in evaluator compiles with the locked dependency graph, rejects missing acknowledgement or a non-user Azure CLI identity in its default mode, and accepts only the explicit host system-assigned identity as its alternate mode;
 8. a controlled live run attempts every fixture and writes one sanitized `result.md` beside each screenshot;
 9. formatting, Clippy, locked Rust tests, frontend lint/test/build, and applicable dependency checks pass or precise environmental blockers are recorded;
 10. no customer data, secret, credential, private endpoint, tenant/subscription identifier, or production value enters the corpus or results.

@@ -52,12 +52,14 @@ pub struct ProposedToolCall {
 }
 
 /// The subset of a tool definition that is safe to expose to a model.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolSchema {
     pub name: &'static str,
     pub description: &'static str,
     /// Closed JSON Schema for the tool arguments.
-    pub parameters: &'static str,
+    pub parameters: String,
+    /// Ask compatible providers to enforce their strict structured-output subset.
+    pub strict: bool,
 }
 
 /// One metadata-free JPEG attachment accepted from the bounded image intake path.
@@ -87,6 +89,8 @@ pub struct ModelTurnRequest {
     /// Present only on the initial request of an image-assisted turn.
     pub image: Option<ModelImage>,
     pub tools: Vec<ToolSchema>,
+    /// When present, the provider must return a call to this exposed tool instead of prose.
+    pub required_tool: Option<&'static str>,
     pub max_output_tokens: u32,
     pub timeout: Duration,
 }
@@ -160,6 +164,7 @@ mod tests {
             }],
             image: None,
             tools: Vec::new(),
+            required_tool: None,
             max_output_tokens: 1,
             timeout: Duration::from_secs(1),
         };

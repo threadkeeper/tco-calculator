@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 
 use rust_decimal::Decimal;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
@@ -93,7 +93,8 @@ impl ToolDefinition {
         ToolSchema {
             name: self.name,
             description: self.description,
-            parameters: self.parameters,
+            parameters: self.parameters.to_owned(),
+            strict: false,
         }
     }
 
@@ -236,26 +237,48 @@ const STAGE_NEW_PROJECT_DRAFT_SCHEMA: &str = r#"{
                     "type": "string",
                     "enum": ["payg", "ahb", "one-year", "ahbone-year", "three-year", "ahbthree-year", "sv-one-year", "ahbsv-one-year"]
                 },
-                "enterprise_license_sa_usd_per_two_core_pack": { "type": ["string", "null"] },
-                "standard_license_sa_usd_per_two_core_pack": { "type": ["string", "null"] },
+                "enterprise_license_sa_usd_per_two_core_pack": {
+                    "type": ["string", "null"],
+                    "description": "Canonical USD decimal string without currency symbols, grouping separators, units, or whitespace."
+                },
+                "standard_license_sa_usd_per_two_core_pack": {
+                    "type": ["string", "null"],
+                    "description": "Canonical USD decimal string without currency symbols, grouping separators, units, or whitespace."
+                },
                 "remaining_coverage_months": { "type": ["integer", "null"], "enum": [12, 24, 36, null] },
-                "electricity_rate_usd_per_kwh": { "type": ["string", "null"] },
+                "electricity_rate_usd_per_kwh": {
+                    "type": ["string", "null"],
+                    "description": "Canonical USD decimal string without currency symbols, grouping separators, units, or whitespace."
+                },
                 "sql_payg": {
                     "type": ["object", "null"],
                     "additionalProperties": false,
                     "properties": {
-                        "enterprise_licensed_cores": { "type": "integer", "minimum": 0, "maximum": 100000 },
-                        "standard_licensed_cores": { "type": "integer", "minimum": 0, "maximum": 100000 },
-                        "software_assurance_annual_usd": { "type": "string" }
+                        "enterprise_licensed_cores": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 100000,
+                            "description": "Visible Enterprise, Enterprise Edition, or EE licensed/core count. Preserve it exactly as an unquoted JSON integer."
+                        },
+                        "standard_licensed_cores": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 100000,
+                            "description": "Visible Standard, Standard Edition, SE, or context-qualified STE licensed/core count. Preserve it exactly as an unquoted JSON integer."
+                        },
+                        "software_assurance_annual_usd": {
+                            "type": "string",
+                            "description": "Visible Software Assurance, SA annual renewal, or SA annual spend as a canonical USD decimal string. For visible USD 50,000, send 50000."
+                        }
                     },
-                    "description": "Visible SQL Pay As You Go licensing inputs. Use only for sql_payg and report missing values as omissions."
+                    "description": "Visible SQL Pay As You Go licensing inputs. Read each labeled value exactly, use only for sql_payg, never replace visible values with defaults, and report missing values as omissions."
                 }
             }
         },
         "resources": {
             "type": "array",
             "maxItems": 100,
-            "description": "Workloads visible in the request. Omit or use an empty array for one host-defaulted starter workload.",
+            "description": "Workloads visible in the request. Every source_type must equal project_type. EC2 fields: shared fields, instance_type, volumes. RDS fields: shared fields, instance_type, deployment, commercial_term, storage_class, source_max_iops. On-premises fields: shared fields, source_vcpu, licensable_cores, source_max_iops, hardware_capex_usd, depreciation_years, average_power_kw_override. Report visible unsupported fields as omissions. SQL PAYG must use an empty array. Omit or use an empty array for one host-defaulted starter workload.",
             "items": {
                 "type": "object",
                 "additionalProperties": false,
@@ -266,17 +289,30 @@ const STAGE_NEW_PROJECT_DRAFT_SCHEMA: &str = r#"{
                     "quantity": { "type": "integer", "minimum": 1, "maximum": 10000 },
                     "sql_edition": { "type": "string", "enum": ["standard", "enterprise"] },
                     "license_basis": { "type": "string", "enum": ["license_included", "byol"] },
-                    "sql_data_gb_per_instance": { "type": "string" },
-                    "source_ram_gb_per_instance": { "type": "string" },
-                    "annual_hours_per_instance": { "type": "string" },
+                    "sql_data_gb_per_instance": {
+                        "type": "string",
+                        "description": "Canonical decimal string without grouping separators or units. For visible 1,024 GiB, send 1024 without converting units."
+                    },
+                    "source_ram_gb_per_instance": {
+                        "type": "string",
+                        "description": "Canonical decimal string without grouping separators or units. For visible 128 GiB, send 128 without converting units."
+                    },
+                    "annual_hours_per_instance": {
+                        "type": "string",
+                        "description": "Canonical decimal string without grouping separators or units. For visible 6,240 hours, send 6240."
+                    },
                     "mi_purchase_option": {
                         "type": "string",
                         "enum": ["payg", "ahb", "one-year", "ahbone-year", "three-year", "ahbthree-year", "sv-one-year", "ahbsv-one-year"]
                     },
-                    "instance_type": { "type": "string" },
+                    "instance_type": {
+                        "type": "string",
+                        "description": "EC2 or RDS only. Never send for on-premises resources."
+                    },
                     "volumes": {
                         "type": "array",
                         "maxItems": 50,
+                        "description": "EC2 only. Never send for RDS or on-premises resources; report unsupported visible storage values as omissions.",
                         "items": {
                             "type": "object",
                             "additionalProperties": false,
@@ -284,21 +320,61 @@ const STAGE_NEW_PROJECT_DRAFT_SCHEMA: &str = r#"{
                                 "label": { "type": "string", "minLength": 1, "maxLength": 80 },
                                 "aws_volume_id": { "type": ["string", "null"], "maxLength": 128 },
                                 "volume_type": { "type": "string", "enum": ["gp3", "io2", "ephemeral"] },
-                                "capacity_gb": { "type": "string" },
+                                "capacity_gb": {
+                                    "type": "string",
+                                    "description": "Canonical decimal string without grouping separators or units. For visible 1,024 GiB, send 1024 without converting units."
+                                },
                                 "provisioned_iops": { "type": ["integer", "null"], "minimum": 0 },
-                                "throughput_mibps": { "type": ["string", "null"] }
+                                "throughput_mibps": {
+                                    "type": ["string", "null"],
+                                    "description": "Canonical decimal string without grouping separators or units. For visible 500 MiB/s, send 500."
+                                }
                             }
                         }
                     },
-                    "deployment": { "type": "string", "enum": ["single_az", "multi_az"] },
-                    "commercial_term": { "type": "string" },
-                    "storage_class": { "type": "string" },
-                    "source_vcpu": { "type": "integer", "minimum": 1, "maximum": 100000 },
-                    "licensable_cores": { "type": "integer", "minimum": 1, "maximum": 100000 },
-                    "source_max_iops": { "type": "integer", "minimum": 0, "maximum": 1000000000 },
-                    "hardware_capex_usd": { "type": "string" },
-                    "depreciation_years": { "type": "string" },
-                    "average_power_kw_override": { "type": ["string", "null"] }
+                    "deployment": {
+                        "type": "string",
+                        "enum": ["single_az", "multi_az"],
+                        "description": "RDS only."
+                    },
+                    "commercial_term": {
+                        "type": "string",
+                        "description": "RDS only."
+                    },
+                    "storage_class": {
+                        "type": "string",
+                        "description": "RDS only."
+                    },
+                    "source_vcpu": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100000,
+                        "description": "On-premises only. Use the visible vCPU or logical CPU count as an unquoted JSON integer. When only physical Processor cores or CPU cores is visible, use that exact count; never use quantity, RAM, utilization, or unrelated values. Report visible EC2 or RDS vCPU values as omissions."
+                    },
+                    "licensable_cores": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100000,
+                        "description": "On-premises only. Use only a visible Licensable cores or SQL licensable cores value as an unquoted JSON integer and keep it distinct from source_vcpu."
+                    },
+                    "source_max_iops": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000,
+                        "description": "RDS or on-premises only. For EC2, put IOPS on the corresponding volume."
+                    },
+                    "hardware_capex_usd": {
+                        "type": "string",
+                        "description": "On-premises only. Canonical USD decimal string without currency symbols, grouping separators, units, or whitespace."
+                    },
+                    "depreciation_years": {
+                        "type": "string",
+                        "description": "On-premises only. Canonical decimal string without grouping separators or units."
+                    },
+                    "average_power_kw_override": {
+                        "type": ["string", "null"],
+                        "description": "On-premises only. Canonical decimal string without grouping separators or units. Do not convert watts or other power units."
+                    }
                 }
             }
         },
@@ -384,8 +460,89 @@ pub fn schemas_for_context(context: &TurnContext) -> Vec<ToolSchema> {
     TOOLS
         .iter()
         .filter(|tool| tool.is_available(context))
-        .map(ToolDefinition::schema)
+        .map(|tool| {
+            let mut schema = tool.schema();
+            if tool.name == "stage_new_project_draft"
+                && let Some(project_type) = context.classified_project_type()
+            {
+                schema.parameters = scoped_new_project_draft_schema(project_type)
+                    .unwrap_or_else(|| tool.parameters.to_owned());
+            }
+            schema
+        })
         .collect()
+}
+
+fn scoped_new_project_draft_schema(project_type: ProjectType) -> Option<String> {
+    let mut schema: Value = serde_json::from_str(STAGE_NEW_PROJECT_DRAFT_SCHEMA).ok()?;
+    let project_type_name = match project_type {
+        ProjectType::Ec2 => "ec2",
+        ProjectType::Rds => "rds",
+        ProjectType::OnPrem => "on_prem",
+        ProjectType::SqlPayg => "sql_payg",
+    };
+    *schema.pointer_mut("/properties/project_type/enum")? = json!([project_type_name]);
+
+    let resources = schema
+        .pointer_mut("/properties/resources")?
+        .as_object_mut()?;
+    if project_type == ProjectType::SqlPayg {
+        resources.insert("maxItems".to_owned(), json!(0));
+        resources.insert(
+            "description".to_owned(),
+            json!("SQL PAYG projects use settings.sql_payg and cannot contain workload resources."),
+        );
+        return serde_json::to_string(&schema).ok();
+    }
+
+    let properties = resources
+        .get_mut("items")?
+        .get_mut("properties")?
+        .as_object_mut()?;
+    properties
+        .get_mut("source_type")?
+        .as_object_mut()?
+        .insert("enum".to_owned(), json!([project_type_name]));
+
+    let allowed_specific_fields: &[&str] = match project_type {
+        ProjectType::Ec2 => &["instance_type", "volumes"],
+        ProjectType::Rds => &[
+            "instance_type",
+            "deployment",
+            "commercial_term",
+            "storage_class",
+            "source_max_iops",
+        ],
+        ProjectType::OnPrem => &[
+            "source_vcpu",
+            "licensable_cores",
+            "source_max_iops",
+            "hardware_capex_usd",
+            "depreciation_years",
+            "average_power_kw_override",
+        ],
+        ProjectType::SqlPayg => unreachable!("SQL PAYG returned before resource scoping"),
+    };
+    const SOURCE_SPECIFIC_FIELDS: &[&str] = &[
+        "instance_type",
+        "volumes",
+        "deployment",
+        "commercial_term",
+        "storage_class",
+        "source_vcpu",
+        "licensable_cores",
+        "source_max_iops",
+        "hardware_capex_usd",
+        "depreciation_years",
+        "average_power_kw_override",
+    ];
+    for field in SOURCE_SPECIFIC_FIELDS {
+        if !allowed_specific_fields.contains(field) {
+            properties.remove(*field);
+        }
+    }
+
+    serde_json::to_string(&schema).ok()
 }
 
 /// Candidate project changes a model may propose.
@@ -561,8 +718,30 @@ pub enum ToolInput {
 }
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-#[error("the tool arguments did not match the tool contract")]
-pub struct InvalidToolArguments;
+pub enum InvalidToolArguments {
+    #[error("the tool arguments were not valid JSON")]
+    MalformedJson,
+    #[error("the tool arguments contained an unknown field")]
+    UnknownField,
+    #[error("the tool arguments omitted a required field")]
+    MissingField,
+    #[error("a tool argument had the wrong JSON type")]
+    TypeMismatch,
+    #[error("a tool argument contained an unsupported enum variant")]
+    UnknownVariant,
+    #[error("a scalar tool argument contained an unsupported value")]
+    InvalidScalarValue,
+    #[error("the tool arguments did not match the typed input shape")]
+    InvalidShape,
+    #[error("a bounded tool argument was outside its allowed range")]
+    InputBounds,
+    #[error("an extraction note was outside its allowed bounds")]
+    ExtractionNotes,
+    #[error("a resource contained fields for a different source type")]
+    ResourceFieldMismatch,
+    #[error("the tool is not registered")]
+    UnregisteredTool,
+}
 
 /// Parse untrusted model arguments into a typed input for a registered tool.
 pub fn parse_input(
@@ -576,65 +755,83 @@ pub fn parse_input(
     };
     match definition.name {
         "get_agent_capabilities" => {
-            let _input: CurrentProjectInput =
-                serde_json::from_str(arguments).map_err(|_| InvalidToolArguments)?;
+            let _input: CurrentProjectInput = parse_json_input(arguments)?;
             Ok(ToolInput::AgentCapabilities)
         }
         "get_application_help" => {
-            let input: ApplicationHelpInput =
-                serde_json::from_str(arguments).map_err(|_| InvalidToolArguments)?;
+            let input: ApplicationHelpInput = parse_json_input(arguments)?;
             let question_chars = input.question.trim().chars().count();
             if !(1..=help::MAX_QUESTION_CHARS).contains(&question_chars) {
-                return Err(InvalidToolArguments);
+                return Err(InvalidToolArguments::InputBounds);
             }
             if input
                 .control_id
                 .as_ref()
                 .is_some_and(|control_id| !(1..=64).contains(&control_id.chars().count()))
             {
-                return Err(InvalidToolArguments);
+                return Err(InvalidToolArguments::InputBounds);
             }
             Ok(ToolInput::ApplicationHelp(input))
         }
         "get_current_project" => {
-            let _input: CurrentProjectInput =
-                serde_json::from_str(arguments).map_err(|_| InvalidToolArguments)?;
+            let _input: CurrentProjectInput = parse_json_input(arguments)?;
             Ok(ToolInput::CurrentProject)
         }
-        "validate_project_patch" => serde_json::from_str(arguments)
-            .map(ToolInput::ValidateProjectPatch)
-            .map_err(|_| InvalidToolArguments),
-        "calculate_project_draft" => serde_json::from_str(arguments)
-            .map(ToolInput::CalculateProjectDraft)
-            .map_err(|_| InvalidToolArguments),
+        "validate_project_patch" => {
+            parse_json_input(arguments).map(ToolInput::ValidateProjectPatch)
+        }
+        "calculate_project_draft" => {
+            parse_json_input(arguments).map(ToolInput::CalculateProjectDraft)
+        }
         "stage_project_patch" => {
-            let mut input: StageProjectPatchInput =
-                serde_json::from_str(arguments).map_err(|_| InvalidToolArguments)?;
+            let mut input: StageProjectPatchInput = parse_json_input(arguments)?;
             normalize_extraction_notes(&mut input.omissions)?;
             normalize_extraction_notes(&mut input.uncertainties)?;
             Ok(ToolInput::StageProjectPatch(input))
         }
         "stage_new_project_draft" => {
-            let mut input: StageNewProjectDraftInput =
-                serde_json::from_str(arguments).map_err(|_| InvalidToolArguments)?;
+            let mut input: StageNewProjectDraftInput = parse_json_input(arguments)?;
             normalize_extraction_notes(&mut input.omissions)?;
             normalize_extraction_notes(&mut input.uncertainties)?;
-            if input
-                .resources
-                .iter()
-                .any(|resource| !resource.fields_match_source_type())
-            {
-                return Err(InvalidToolArguments);
+            if input.resources.iter().any(|resource| {
+                resource.source_type != input.project_type || !resource.fields_match_source_type()
+            }) {
+                return Err(InvalidToolArguments::ResourceFieldMismatch);
             }
             Ok(ToolInput::StageNewProjectDraft(input))
         }
-        _ => Err(InvalidToolArguments),
+        _ => Err(InvalidToolArguments::UnregisteredTool),
+    }
+}
+
+fn parse_json_input<T: DeserializeOwned>(arguments: &str) -> Result<T, InvalidToolArguments> {
+    serde_json::from_str(arguments).map_err(classify_json_input_error)
+}
+
+fn classify_json_input_error(error: serde_json::Error) -> InvalidToolArguments {
+    if error.is_syntax() || error.is_eof() {
+        return InvalidToolArguments::MalformedJson;
+    }
+
+    let message = error.to_string();
+    if message.starts_with("unknown field ") {
+        InvalidToolArguments::UnknownField
+    } else if message.starts_with("missing field ") {
+        InvalidToolArguments::MissingField
+    } else if message.starts_with("invalid type:") {
+        InvalidToolArguments::TypeMismatch
+    } else if message.starts_with("unknown variant ") {
+        InvalidToolArguments::UnknownVariant
+    } else if message.starts_with("invalid value:") {
+        InvalidToolArguments::InvalidScalarValue
+    } else {
+        InvalidToolArguments::InvalidShape
     }
 }
 
 fn normalize_extraction_notes(notes: &mut Vec<String>) -> Result<(), InvalidToolArguments> {
     if notes.len() > MAX_EXTRACTION_NOTES {
-        return Err(InvalidToolArguments);
+        return Err(InvalidToolArguments::ExtractionNotes);
     }
     for note in notes {
         let trimmed = note.trim();
@@ -642,7 +839,7 @@ fn normalize_extraction_notes(notes: &mut Vec<String>) -> Result<(), InvalidTool
             || trimmed.chars().count() > MAX_EXTRACTION_NOTE_CHARS
             || trimmed.chars().any(char::is_control)
         {
-            return Err(InvalidToolArguments);
+            return Err(InvalidToolArguments::ExtractionNotes);
         }
         if trimmed.len() != note.len() {
             *note = trimmed.to_owned();
@@ -1599,6 +1796,78 @@ mod tests {
             .collect()
     }
 
+    fn classified_draft_schema(project_type: ProjectType) -> Value {
+        let context =
+            turn_context(TurnPhase::Propose, false).with_classified_project_type(project_type);
+        let schema = schemas_for_context(&context)
+            .into_iter()
+            .find(|schema| schema.name == "stage_new_project_draft")
+            .expect("classified draft schema");
+        serde_json::from_str(&schema.parameters).expect("valid classified draft schema")
+    }
+
+    #[test]
+    fn classified_draft_schemas_expose_only_matching_resource_fields() {
+        let cases = [
+            (
+                ProjectType::Ec2,
+                "ec2",
+                &["instance_type", "volumes"][..],
+                &["deployment", "source_vcpu"][..],
+            ),
+            (
+                ProjectType::Rds,
+                "rds",
+                &["instance_type", "deployment", "source_max_iops"][..],
+                &["volumes", "source_vcpu"][..],
+            ),
+            (
+                ProjectType::OnPrem,
+                "on_prem",
+                &["source_vcpu", "licensable_cores", "hardware_capex_usd"][..],
+                &["instance_type", "volumes", "deployment"][..],
+            ),
+        ];
+
+        for (project_type, expected_name, present, absent) in cases {
+            let schema = classified_draft_schema(project_type);
+            assert_eq!(
+                schema["properties"]["project_type"]["enum"],
+                json!([expected_name])
+            );
+            assert_eq!(
+                schema["properties"]["resources"]["items"]["properties"]["source_type"]["enum"],
+                json!([expected_name])
+            );
+            let properties = schema["properties"]["resources"]["items"]["properties"]
+                .as_object()
+                .expect("resource properties");
+            for field in present {
+                assert!(
+                    properties.contains_key(*field),
+                    "{expected_name} needs {field}"
+                );
+            }
+            for field in absent {
+                assert!(
+                    !properties.contains_key(*field),
+                    "{expected_name} must not expose {field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn classified_sql_payg_schema_disallows_resources() {
+        let schema = classified_draft_schema(ProjectType::SqlPayg);
+
+        assert_eq!(
+            schema["properties"]["project_type"]["enum"],
+            json!(["sql_payg"])
+        );
+        assert_eq!(schema["properties"]["resources"]["maxItems"], json!(0));
+    }
+
     #[test]
     fn a_new_on_prem_project_is_staged_as_a_valid_unsaved_draft() {
         let definition = find("stage_new_project_draft").expect("registered");
@@ -1656,6 +1925,43 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn display_formatted_numbers_are_not_canonical_decimal_inputs() {
+        let definition = find("stage_new_project_draft").expect("registered");
+        let error = parse_input(
+            definition,
+            r#"{
+                "project_type":"ec2",
+                "resources":[{
+                    "source_type":"ec2",
+                    "annual_hours_per_instance":"6,240"
+                }],
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect_err("grouping separators are not accepted by the domain decimal type");
+
+        assert_eq!(error, InvalidToolArguments::InvalidScalarValue);
+    }
+
+    #[test]
+    fn new_project_resources_must_match_the_locked_project_family() {
+        let definition = find("stage_new_project_draft").expect("registered");
+        let error = parse_input(
+            definition,
+            r#"{
+                "project_type":"rds",
+                "resources":[{"source_type":"ec2","instance_type":"r6i.2xlarge"}],
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect_err("a resource cannot override the project family");
+
+        assert_eq!(error, InvalidToolArguments::ResourceFieldMismatch);
     }
 
     #[test]

@@ -42,7 +42,7 @@ const IMAGE_INSTANCE: &str = "/api/v1/assistant/image";
 const ACTION_INSTANCE: &str = "/api/v1/assistant/actions";
 const IMAGE_PROJECT_HEADER: &str = "x-tco-project-id";
 const IMAGE_PATCH_EXTRACTION_REQUEST: &str = "Extract supported project fields from the uploaded image. Read the current project, validate candidate changes, and call stage_project_patch with all visible omissions and uncertainties. Do not infer missing values.";
-pub(crate) const IMAGE_DRAFT_EXTRACTION_REQUEST: &str = "Extract supported project fields from the uploaded image and call stage_new_project_draft with all visible omissions and uncertainties. Use host defaults for missing values and do not invent source values.";
+pub(crate) const IMAGE_DRAFT_EXTRACTION_REQUEST: &str = "Extract supported project fields from the uploaded image and call stage_new_project_draft with all visible omissions and uncertainties. Read each visible label-value pair exactly and map it according to the tool field descriptions. Use host defaults only for missing values; never replace a visible value or invent a source value.";
 pub(crate) const IMAGE_CLASSIFICATION_UNCERTAIN_ANSWER: &str = "I could not determine a supported project type confidently enough to create a draft. Review the classification evidence and upload a clearer image.";
 pub const ACTION_CONFIRMATION_HEADER: &str = "x-tco-action-confirmation";
 const ACTION_CONFIRMATION_VALUE: &str = "apply_project_patch";
@@ -288,6 +288,7 @@ pub async fn image(
             )
         })?;
         classifier_routed_model = outcome.routed_model;
+        let classifier_model_requests = outcome.model_requests;
         let resolved_project_type = outcome.classification.resolved_project_type();
         classification = Some(outcome.classification);
 
@@ -306,7 +307,7 @@ pub async fn image(
                 classified_project_type = classification.project_type.as_str(),
                 classification_confidence = classification.confidence.as_str(),
                 classifier_routed_model = classifier_routed_model.as_deref().unwrap_or("unknown"),
-                model_requests = 1,
+                model_requests = classifier_model_requests,
                 tool_calls = 1,
                 image_width = width,
                 image_height = height,
@@ -326,7 +327,7 @@ pub async fn image(
             );
             return Ok(response);
         };
-        context = context.with_classified_project_type(project_type);
+        context = context.with_classification_usage(project_type, classifier_model_requests);
     }
 
     let outcome = run_turn_with_image(

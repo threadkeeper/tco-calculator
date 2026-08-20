@@ -45,6 +45,7 @@ pub struct TurnContext {
     phase: TurnPhase,
     project: Option<SelectedProject>,
     classified_project_type: Option<ProjectType>,
+    classification_model_requests: u32,
     confirmed_actions: Vec<String>,
     started_at: Instant,
     wall_clock: Duration,
@@ -59,6 +60,7 @@ impl TurnContext {
             phase,
             project: None,
             classified_project_type: None,
+            classification_model_requests: 0,
             confirmed_actions: Vec::new(),
             started_at: Instant::now(),
             wall_clock: MAX_TURN_WALL_CLOCK,
@@ -76,6 +78,19 @@ impl TurnContext {
     #[must_use]
     pub fn with_classified_project_type(mut self, project_type: ProjectType) -> Self {
         self.classified_project_type = Some(project_type);
+        self.classification_model_requests = 1;
+        self
+    }
+
+    /// Attach a classification and the model requests the host actually spent obtaining it.
+    #[must_use]
+    pub fn with_classification_usage(
+        mut self,
+        project_type: ProjectType,
+        model_requests: u32,
+    ) -> Self {
+        self.classified_project_type = Some(project_type);
+        self.classification_model_requests = model_requests;
         self
     }
 
@@ -111,6 +126,10 @@ impl TurnContext {
 
     pub fn classified_project_type(&self) -> Option<ProjectType> {
         self.classified_project_type
+    }
+
+    pub fn classification_model_requests(&self) -> u32 {
+        self.classification_model_requests
     }
 
     /// Report whether the user confirmed this exact action identifier for this turn.

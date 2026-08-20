@@ -96,6 +96,7 @@ async function writeInitialResult(caseDirectory, fixture) {
 
 - Status: not run
 - Case: \`${fixture.id}\`
+- Evaluation identity: \`not_run\`
 - Expected project type: \`${fixture.expected.project_type}\`
 
 Run the opt-in live evaluator after local fixture and code validation. This file contains no generated draft yet.

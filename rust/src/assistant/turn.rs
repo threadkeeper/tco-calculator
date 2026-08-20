@@ -31,7 +31,7 @@ use super::{
 };
 
 /// Version of the system instruction, recorded in audit metadata.
-pub const PROMPT_VERSION: &str = "tco-assistant-system/1.3.0";
+pub const PROMPT_VERSION: &str = "tco-assistant-system/1.3.3";
 
 /// Neutral, reviewed system instruction.
 pub const SYSTEM_INSTRUCTION: &str = concat!(
@@ -50,6 +50,11 @@ pub const SYSTEM_INSTRUCTION: &str = concat!(
     "- Before every answer, call at least one available tool. Answer only from tool results. Use get_agent_capabilities for questions about your abilities, tools, autonomy, programming, memory, or operation. Use get_application_help only for visible application controls and workflows. When a tool has no answer, state that limitation without inventing behaviour.\n",
     "- When the user requests a project change and a project is selected, read it, validate or calculate when relevant, then call stage_project_patch. When no project is selected and the user requests a new project, call stage_new_project_draft. For image-assisted drafts, use the host pre-draft classification exactly and never choose a different project type. Tell the user every staged result requires review. Persisted changes require explicit confirmation; natural-language intent is never confirmation.\n",
     "- Every staging call must report omissions and uncertainties as bounded arrays. Use empty arrays when none were observed.\n",
+    "- For image extraction, normalize visible numeric display text to the tool schema's canonical JSON form: remove grouping separators, currency symbols, and displayed units from numeric strings while preserving the visible digits, sign, and decimal point. For example, send 6,240 hours as \"6240\", 1,024 GiB as \"1024\", and USD 50,000 as \"50000\". Do not convert units, calculate derived values, or infer missing values.\n",
+    "- Follow each tool field's JSON type exactly. Integer fields are unquoted JSON numbers after removing display formatting: send source_vcpu 24, licensable_cores 24, quantity 2, source_max_iops 3000, enterprise_licensed_cores 16, and standard_licensed_cores 64. Use quoted canonical numeric strings only where the schema type is string.\n",
+    "- In a new image-assisted draft, every resource source_type must exactly match the host project classification. Use only that source type's fields: EC2 supports instance_type and volumes; RDS supports instance_type, deployment, commercial_term, storage_class, and source_max_iops; on-premises supports source_vcpu, licensable_cores, source_max_iops, hardware_capex_usd, depreciation_years, and average_power_kw_override. Shared workload fields are supported for all three. Do not place another source type's fields in a resource; report visible unsupported values as omissions.\n",
+    "- For on-premises images, map a visible vCPU or logical CPU count to source_vcpu. When only a physical Processor cores or CPU cores value is visible, map that value to source_vcpu; keep a separately visible Licensable cores value in licensable_cores. Never substitute quantity, RAM, utilization percentages, or unrelated numbers for either field.\n",
+    "- SQL PAYG uses settings.sql_payg and no resources. Map visible Enterprise, Enterprise Edition, or EE licensed/core counts to enterprise_licensed_cores; map Standard, Standard Edition, SE, or context-qualified STE licensed/core counts to standard_licensed_cores; and map visible Software Assurance, SA annual renewal, or SA annual spend to software_assurance_annual_usd. Never replace a visible value with a host default.\n",
     "- Be concise and factual. State uncertainty and anything the tools did not return.\n",
     "- Describe results as estimates based on public list prices and the entered assumptions, never as quotes.\n",
     "- Return your conclusion only, not your reasoning.\n",
@@ -129,7 +134,9 @@ pub async fn run_turn_with_image(
     }];
     let mut budget = TurnBudget::new();
     if context.classified_project_type().is_some() {
-        budget.charge_model_request()?;
+        for _ in 0..context.classification_model_requests() {
+            budget.charge_model_request()?;
+        }
         budget.charge_tool_calls(1)?;
     }
     let mut executed_call_ids: HashSet<String> = HashSet::new();
@@ -156,6 +163,7 @@ pub async fn run_turn_with_image(
             messages: transcript.clone(),
             image: image.take(),
             tools: tool_schemas.clone(),
+            required_tool: None,
             max_output_tokens: MAX_MODEL_OUTPUT_TOKENS,
             timeout,
         };
