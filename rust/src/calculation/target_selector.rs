@@ -43,7 +43,7 @@ pub struct TargetSelectionRequest<'a> {
     pub azure_region: &'a str,
     pub source_vcpu: u32,
     pub source_memory_gb: DecimalValue,
-    pub sql_data_gb: DecimalValue,
+    pub required_storage_gb: DecimalValue,
     pub source_max_iops: u64,
     pub workbook_parity_mode: bool,
 }
@@ -120,8 +120,8 @@ pub enum TargetSelectionError {
     InvalidSourceVcpu,
     #[error("source memory must be greater than zero")]
     InvalidSourceMemory,
-    #[error("SQL data size must not be negative")]
-    InvalidSqlData,
+    #[error("required storage size must not be negative")]
+    InvalidRequiredStorage,
 }
 
 struct EligibleCandidate<'a> {
@@ -191,8 +191,8 @@ fn validate_request(request: TargetSelectionRequest<'_>) -> Result<(), TargetSel
     if request.source_memory_gb.0 <= Decimal::ZERO {
         return Err(TargetSelectionError::InvalidSourceMemory);
     }
-    if request.sql_data_gb.0 < Decimal::ZERO {
-        return Err(TargetSelectionError::InvalidSqlData);
+    if request.required_storage_gb.0 < Decimal::ZERO {
+        return Err(TargetSelectionError::InvalidRequiredStorage);
     }
     Ok(())
 }
@@ -281,7 +281,7 @@ fn closest_capacity_candidate<'a>(
             candidate
                 .candidate
                 .maximum_storage_gb
-                .is_none_or(|maximum| maximum.0 >= request.sql_data_gb.0)
+                .is_none_or(|maximum| maximum.0 >= request.required_storage_gb.0)
         });
     }
 
@@ -423,13 +423,13 @@ fn evaluate_candidate(
     if enforce_storage
         && candidate
             .maximum_storage_gb
-            .is_some_and(|maximum| maximum.0 < request.sql_data_gb.0)
+            .is_some_and(|maximum| maximum.0 < request.required_storage_gb.0)
     {
         reasons.push(reason(
             SelectionReasonCode::InsufficientStorage,
             &format!(
                 "Candidate storage limit is below the required {} GB.",
-                request.sql_data_gb
+                request.required_storage_gb
             ),
         ));
     }
@@ -501,7 +501,7 @@ fn storage_escalation(
         return None;
     }
     let maximum = preferred.candidate.maximum_storage_gb?;
-    if maximum.0 >= request.sql_data_gb.0 {
+    if maximum.0 >= request.required_storage_gb.0 {
         return None;
     }
 
@@ -855,13 +855,13 @@ mod tests {
     fn request(
         source_max_iops: u64,
         source_memory_gb: &str,
-        sql_data_gb: &str,
+        required_storage_gb: &str,
     ) -> TargetSelectionRequest<'static> {
         TargetSelectionRequest {
             azure_region: "swedencentral",
             source_vcpu: 8,
             source_memory_gb: decimal(source_memory_gb),
-            sql_data_gb: decimal(sql_data_gb),
+            required_storage_gb: decimal(required_storage_gb),
             source_max_iops,
             workbook_parity_mode: true,
         }

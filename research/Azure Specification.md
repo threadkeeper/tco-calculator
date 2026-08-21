@@ -356,7 +356,7 @@ Show core inputs, selected target, source total, Azure total, savings, and parit
 
 ### 7.6 CSV Result Export
 
-After a successful calculation, the user MAY download an Excel-compatible UTF-8 CSV containing the current project settings, source inventory inputs, derived MI target, exact server-returned component costs, savings, parity values, formula version, and pricing snapshot IDs. The export MUST preserve server decimal text and one logical line per resource; it MUST NOT recalculate financial values in the browser.
+After a successful calculation, the user MAY download an Excel-compatible UTF-8 CSV containing the current project settings, source inventory inputs, derived MI target, exact server-returned component costs, savings, parity values, formula version, and pricing snapshot IDs. For every resource, the export MUST include the server-returned SQL data, persistent EBS, and derived Azure storage quantities used by the calculation. The export MUST preserve server decimal text and one logical line per resource; it MUST NOT recalculate financial values in the browser.
 
 The browser MUST create the CSV locally from the project already visible to the current user and the latest calculation response. Do not add an export API, server-side export storage, upload, analytics event, or third-party egress. The export MUST exclude owner identifiers, identity claims, display names, email/contact consent, ETags, capability secrets, and other authorization metadata. Prefix text that spreadsheet software could interpret as a formula, use a sanitized filename, and make clear that the downloaded file contains confidential business data governed by the user's managed-device and storage controls.
 
@@ -428,11 +428,11 @@ EC2 quantity is preserved exactly. A quantity of two representing an HA pair pri
 | `provisioned_iops` | optional integer | >=0; required for `gp3` and `io2` |
 | `throughput_mibps` | optional decimal | >=0; used for `gp3` |
 
-Adding or removing an EC2 volume, changing its type, or editing its capacity MUST refresh the visible `sql_data_gb_per_instance` field to the exact sum of all non-ephemeral volume capacities. The user MAY edit that explicit SQL data value afterward to represent actual data in use; its current value remains authoritative for Azure storage sizing and pricing.
+The explicit `sql_data_gb_per_instance` value and each EBS volume's provisioned capacity are independent inputs and MUST remain independently editable. Adding, removing, or editing an EC2 volume MUST NOT overwrite the SQL data value. For EC2, the server derives `persistent_ebs_gb_per_instance` as the exact sum of all non-ephemeral volume capacities and derives `azure_storage_gb_per_instance = sql_data_gb_per_instance + persistent_ebs_gb_per_instance`. The combined Azure quantity is authoritative for SQL MI storage-capacity selection and Azure storage pricing. Calculation results, the detail grid, explanations, and CSV export MUST expose all three quantities.
 
 The form pre-fills new `gp3` volumes with 3,000 IOPS and 125 MiB/s. Submitted `gp3` and `io2` volumes without explicit IOPS are invalid; the backend MUST NOT silently substitute a default. The submitted provisioned IOPS, including the 3,000 gp3 baseline, participates in source max IOPS.
 
-EC2 source max IOPS is the maximum provisioned IOPS of any non-ephemeral volume. It is not the sum. Ephemeral volumes appear in the explanation but contribute zero persistent storage cost and zero Azure SQL data-storage quantity.
+EC2 source max IOPS is the maximum provisioned IOPS of any non-ephemeral volume. It is not the sum. Ephemeral volumes appear in the explanation but contribute zero source storage cost and zero persistent-EBS capacity to the derived Azure storage quantity.
 
 ### 8.3 RDS Fields
 
@@ -647,7 +647,7 @@ A candidate is sizing-eligible only if:
 - Azure region equals the project's selected Azure target region.
 - Candidate vCores >= source vCPU.
 - At least one supported memory value >= source RAM.
-- The candidate's known maximum supported storage is >= source SQL data GB.
+- The candidate's known maximum supported storage is >= required Azure storage GB. For EC2, required Azure storage is SQL data GB plus all persistent EBS capacity; for RDS and On-prem, it is SQL data GB.
 
 Only non-zone-redundant candidates are eligible in v1. For NGGP, Premium Series and Premium Series Memory Optimized candidates are eligible in workbook-parity mode.
 
@@ -655,7 +655,7 @@ For each candidate, selected memory is that candidate's smallest supported memor
 
 If no candidate meets source CPU or RAM because the source exceeds the requested tier's reviewed capacity ceiling, select the closest storage-valid maximum-capacity candidate in that same tier. Maximize each exceeded capacity dimension first, then minimize absolute shortfall in the remaining dimensions using vCores, memory, and stable configuration key as deterministic tie-breakers. Keep the result `MAPPED`, and add a visible outcome reason for every undersized dimension naming the source requirement, selected capacity, service tier, hardware family, and need for workload validation. This bounded fallback MUST NOT activate when the requested tier contains a CPU/RAM-sufficient candidate that was rejected for storage or another eligibility rule.
 
-Storage capacity MUST be enforced during selection. Candidates that fail storage are rejected, allowing the next larger candidate in the requested service tier to be selected. When storage causes selection of a larger SKU than CPU and RAM alone require, the row explanation MUST name the rejected SKU, its storage limit, and the selected larger SKU. Storage alone MUST NOT switch NGGP to Business Critical; if no candidate in the IOPS-requested tier satisfies capacity, return `NO MAPPING`.
+Required Azure storage capacity MUST be enforced during selection. Candidates that fail storage are rejected, allowing the next larger candidate in the requested service tier to be selected. When storage causes selection of a larger SKU than CPU and RAM alone require, the row explanation MUST name the rejected SKU, its storage limit, the required Azure storage quantity, and the selected larger SKU. Storage alone MUST NOT switch NGGP to Business Critical; if no candidate in the IOPS-requested tier satisfies capacity, return `NO MAPPING`.
 
 Price completeness is evaluated after structural target selection. A usable target price set requires all eight purchase options plus the applicable storage and additional-memory prices, matching the workbook catalog gate. Missing prices produce `PRICE UNAVAILABLE`; they MUST NOT be misreported as a capacity-based `NO MAPPING`.
 
@@ -793,7 +793,7 @@ On-prem source compute and storage discounts do not apply because hardware CAPEX
 
 ### 10.8 Azure Cost Formulas
 
-Let `a_c`, `a_l`, and `a_s` be Azure compute, license, and storage discounts.
+Let `a_c`, `a_l`, and `a_s` be Azure compute, license, and storage discounts. Let `azure_storage_gb_per_instance` equal `sql_data_gb_per_instance + sum(non_ephemeral_volume.capacity_gb)` for EC2 and `sql_data_gb_per_instance` for RDS and On-prem.
 
 - `compute_gross = q * h * mi_compute_hourly`
 - `additional_ram_gb = max(0, selected_mi_ram_gb - included_mi_ram_gb)`
@@ -801,7 +801,7 @@ Let `a_c`, `a_l`, and `a_s` be Azure compute, license, and storage discounts.
 - `compute_plus_ram_net = (compute_gross + additional_ram_gross) * (1 - a_c)`
 - `license_gross = q * h * mi_license_hourly`
 - `license_net = license_gross * (1 - a_l)`
-- `storage_gross = q * sql_data_gb_per_instance * 12 * mi_storage_monthly_per_gb`
+- `storage_gross = q * azure_storage_gb_per_instance * 12 * mi_storage_monthly_per_gb`
 - `storage_net = storage_gross * (1 - a_s)`
 - `mi_net_before_parity = compute_plus_ram_net + license_net + storage_net`
 
@@ -888,8 +888,8 @@ Each row MUST expose these logical groups.
 - Quantity.
 - AWS SQL edition.
 - AWS license basis.
-- Storage summary.
 - SQL data GB per instance.
+- Persistent EBS GB per instance.
 - Source RAM GB per instance.
 - Source max IOPS.
 - Annual hours per instance.
@@ -897,6 +897,7 @@ Each row MUST expose these logical groups.
 
 ### 11.2 Automatic Azure Target
 
+- MI storage GB per instance.
 - MI RAM GB.
 - MI service tier.
 - MI hardware and storage architecture.

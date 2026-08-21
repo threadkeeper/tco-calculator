@@ -62,6 +62,8 @@ pub struct CalculationRevision {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ResourceCalculation {
     pub resource_id: Uuid,
+    #[serde(default)]
+    pub storage_inputs: StorageInputs,
     pub mapping_status: Option<MappingStatus>,
     pub aws_pricing_status: PricingStatus,
     pub azure_pricing_status: PricingStatus,
@@ -72,6 +74,13 @@ pub struct ResourceCalculation {
     pub savings: Option<SavingsBreakdown>,
     pub explanation_steps: Vec<ExplanationStep>,
     pub unresolved_components: Vec<UnresolvedComponent>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+pub struct StorageInputs {
+    pub sql_data_gb_per_instance: DecimalValue,
+    pub persistent_ebs_gb_per_instance: DecimalValue,
+    pub azure_storage_gb_per_instance: DecimalValue,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -323,6 +332,7 @@ impl CalculationEngine {
         input: &CalculationInput<'_>,
     ) -> Result<ResourceCalculation, CalculationError> {
         let shared = resource.shared();
+        let storage_inputs = storage_inputs(resource);
         let mut source = match resource {
             Resource::Ec2(resource) => resolve_ec2_source(resource, input),
             Resource::Rds(resource) => resolve_rds_source(resource, input),
@@ -339,6 +349,7 @@ impl CalculationEngine {
             });
             return Ok(ResourceCalculation {
                 resource_id: shared.id,
+                storage_inputs,
                 mapping_status: None,
                 aws_pricing_status: source.pricing_status,
                 azure_pricing_status: PricingStatus::Unavailable,
@@ -358,14 +369,17 @@ impl CalculationEngine {
                 azure_region: &input.settings.azure_region,
                 source_vcpu,
                 source_memory_gb: shared.source_ram_gb_per_instance,
-                sql_data_gb: shared.sql_data_gb_per_instance,
+                required_storage_gb: storage_inputs.azure_storage_gb_per_instance,
                 source_max_iops,
                 workbook_parity_mode: true,
             },
         )?;
-        source
-            .explanation_steps
-            .push(source_input_step(source_vcpu, source_max_iops, resource));
+        source.explanation_steps.push(source_input_step(
+            source_vcpu,
+            source_max_iops,
+            resource,
+            storage_inputs,
+        ));
         if let Some(source_costs) = source.costs.as_ref()
             && let Some(step) =
                 source_cost_formula_step(resource, source_vcpu, input.settings, source_costs)
@@ -376,6 +390,7 @@ impl CalculationEngine {
         if target_selection.mapping_status == MappingStatus::NoMapping {
             return Ok(ResourceCalculation {
                 resource_id: shared.id,
+                storage_inputs,
                 mapping_status: Some(MappingStatus::NoMapping),
                 aws_pricing_status: source.pricing_status,
                 azure_pricing_status: PricingStatus::NotRequired,
@@ -399,7 +414,12 @@ impl CalculationEngine {
             azure_pricing_status,
             azure_unresolved,
             azure_steps,
-        ) = resolve_azure_costs(selected, resource, input);
+        ) = resolve_azure_costs(
+            selected,
+            resource,
+            storage_inputs.azure_storage_gb_per_instance,
+            input,
+        );
         source.unresolved_components.extend(azure_unresolved);
         source.explanation_steps.extend(azure_steps);
         let savings =
@@ -428,6 +448,7 @@ impl CalculationEngine {
 
         Ok(ResourceCalculation {
             resource_id: shared.id,
+            storage_inputs,
             mapping_status: Some(MappingStatus::Mapped),
             aws_pricing_status: source.pricing_status,
             azure_pricing_status,
@@ -439,6 +460,30 @@ impl CalculationEngine {
             explanation_steps: source.explanation_steps,
             unresolved_components: source.unresolved_components,
         })
+    }
+}
+
+fn storage_inputs(resource: &Resource) -> StorageInputs {
+    let sql_data_gb_per_instance = resource.shared().sql_data_gb_per_instance;
+    let persistent_ebs_gb_per_instance = match resource {
+        Resource::Ec2(resource) => DecimalValue(
+            resource
+                .volumes
+                .iter()
+                .filter(|volume| {
+                    volume.volume_type != crate::domain::resource::EbsVolumeType::Ephemeral
+                })
+                .map(|volume| volume.capacity_gb.0)
+                .sum(),
+        ),
+        Resource::Rds(_) | Resource::OnPrem(_) => DecimalValue::ZERO,
+    };
+    StorageInputs {
+        sql_data_gb_per_instance,
+        persistent_ebs_gb_per_instance,
+        azure_storage_gb_per_instance: DecimalValue(
+            sql_data_gb_per_instance.0 + persistent_ebs_gb_per_instance.0,
+        ),
     }
 }
 
@@ -556,6 +601,7 @@ fn resolve_on_prem_source(
 fn resolve_azure_costs(
     selected: &super::target_selector::SelectedTarget,
     resource: &Resource,
+    azure_storage_gb_per_instance: DecimalValue,
     input: &CalculationInput<'_>,
 ) -> (
     Option<AzureCostBreakdown>,
@@ -611,7 +657,7 @@ fn resolve_azure_costs(
     match calculate_azure(
         resource.shared().quantity,
         resource.shared().annual_hours_per_instance,
-        resource.shared().sql_data_gb_per_instance,
+        azure_storage_gb_per_instance,
         selected.included_memory_gb,
         selected.selected_memory_gb,
         record.rate,
@@ -625,7 +671,14 @@ fn resolve_azure_costs(
                     &record.provenance.source_url,
                     &snapshot.metadata.retrieved_at,
                 ),
-                azure_cost_formula_step(selected, resource, record.rate, input.settings, &costs),
+                azure_cost_formula_step(
+                    selected,
+                    resource,
+                    azure_storage_gb_per_instance,
+                    record.rate,
+                    input.settings,
+                    &costs,
+                ),
             ];
             (
                 Some(costs),
@@ -778,6 +831,7 @@ fn source_input_step(
     source_vcpu: u32,
     source_max_iops: u64,
     resource: &Resource,
+    storage_inputs: StorageInputs,
 ) -> ExplanationStep {
     let shared = resource.shared();
     ExplanationStep {
@@ -791,7 +845,15 @@ fn source_input_step(
             ),
             (
                 "sql_data_gb".to_owned(),
-                shared.sql_data_gb_per_instance.to_string(),
+                storage_inputs.sql_data_gb_per_instance.to_string(),
+            ),
+            (
+                "persistent_ebs_gb".to_owned(),
+                storage_inputs.persistent_ebs_gb_per_instance.to_string(),
+            ),
+            (
+                "azure_storage_gb".to_owned(),
+                storage_inputs.azure_storage_gb_per_instance.to_string(),
             ),
             ("source_max_iops".to_owned(), source_max_iops.to_string()),
             ("quantity".to_owned(), shared.quantity.to_string()),
@@ -929,6 +991,7 @@ fn source_cost_formula_step(
 fn azure_cost_formula_step(
     selected: &super::target_selector::SelectedTarget,
     resource: &Resource,
+    azure_storage_gb_per_instance: DecimalValue,
     rate: AzureRate,
     settings: &ProjectSettings,
     costs: &AzureCostBreakdown,
@@ -1012,12 +1075,12 @@ fn azure_cost_formula_step(
             ("license_net".to_owned(), costs.license_net.to_string()),
             (
                 "storage_formula".to_owned(),
-                "storage_gross = quantity * sql_data_gb_per_instance * 12 * mi_storage_monthly_per_gb"
+                "storage_gross = quantity * azure_storage_gb_per_instance * 12 * mi_storage_monthly_per_gb"
                     .to_owned(),
             ),
             (
-                "sql_data_gb_per_instance".to_owned(),
-                shared.sql_data_gb_per_instance.to_string(),
+                "azure_storage_gb_per_instance".to_owned(),
+                azure_storage_gb_per_instance.to_string(),
             ),
             (
                 "mi_storage_monthly_per_gb".to_owned(),
@@ -1430,6 +1493,91 @@ mod tests {
             DecimalValue::ZERO
         );
         assert!(revision.portfolio_totals.aws_all_rows_total.is_some());
+    }
+
+    #[test]
+    fn ec2_sql_data_and_persistent_ebs_are_combined_for_target_storage() {
+        let engine = engine(Some("512"));
+        let settings = settings();
+        let mut resource = ec2_resource("1");
+        resource.volumes = vec![EbsVolume {
+            id: Uuid::new_v4(),
+            label: "SQL data".to_owned(),
+            aws_volume_id: None,
+            volume_type: EbsVolumeType::Gp3,
+            capacity_gb: decimal("600"),
+            provisioned_iops: Some(3000),
+            throughput_mibps: Some(decimal("125")),
+        }];
+        let aws = aws_snapshot();
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[Resource::Ec2(resource)],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: None,
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("calculation");
+
+        assert_eq!(
+            revision.resource_results[0].mapping_status,
+            Some(MappingStatus::NoMapping)
+        );
+        assert_eq!(
+            revision.resource_results[0]
+                .storage_inputs
+                .sql_data_gb_per_instance,
+            decimal("1")
+        );
+        assert_eq!(
+            revision.resource_results[0]
+                .storage_inputs
+                .persistent_ebs_gb_per_instance,
+            decimal("600")
+        );
+        assert_eq!(
+            revision.resource_results[0]
+                .storage_inputs
+                .azure_storage_gb_per_instance,
+            decimal("601")
+        );
+    }
+
+    #[test]
+    fn ec2_combined_storage_is_used_for_azure_storage_cost() {
+        let engine = engine(Some("1024"));
+        let settings = settings();
+        let mut resource = ec2_resource("1");
+        resource.volumes = vec![EbsVolume {
+            id: Uuid::new_v4(),
+            label: "SQL data".to_owned(),
+            aws_volume_id: None,
+            volume_type: EbsVolumeType::Gp3,
+            capacity_gb: decimal("600"),
+            provisioned_iops: Some(3000),
+            throughput_mibps: Some(decimal("125")),
+        }];
+        let aws = aws_snapshot();
+        let azure = azure_snapshot();
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[Resource::Ec2(resource)],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: Some(&azure),
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("calculation");
+
+        let row = &revision.resource_results[0];
+        assert_eq!(row.mapping_status, Some(MappingStatus::Mapped));
+        assert_eq!(
+            row.azure_costs.as_ref().expect("Azure costs").storage_gross,
+            decimal("721.20")
+        );
     }
 
     #[test]

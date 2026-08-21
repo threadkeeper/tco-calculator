@@ -11,6 +11,8 @@ export type CalculationResultRow = {
   sqlEdition: string | null;
   licenseBasis: string | null;
   sqlDataGbPerInstance: string | null;
+  persistentEbsGbPerInstance: string | null;
+  azureStorageGbPerInstance: string | null;
   sourceRamGbPerInstance: string | null;
   annualHoursPerInstance: string | null;
   miPurchaseOption: string | null;
@@ -64,6 +66,7 @@ export function buildCalculationResultRows(
     const sourceCosts = readRecord(result, 'source_costs');
     const azureCosts = readRecord(result, 'azure_costs');
     const savings = readRecord(result, 'savings');
+    const storageInputs = readRecord(result, 'storage_inputs');
     const sourceInputs = explanationValues(result, 'source_inputs');
 
     return {
@@ -75,7 +78,12 @@ export function buildCalculationResultRows(
       quantity: resource?.quantity ?? null,
       sqlEdition: resource?.sql_edition ?? null,
       licenseBasis: resource?.license_basis ?? null,
-      sqlDataGbPerInstance: resource?.sql_data_gb_per_instance ?? null,
+      sqlDataGbPerInstance:
+        readString(storageInputs, 'sql_data_gb_per_instance') ??
+        resource?.sql_data_gb_per_instance ??
+        null,
+      persistentEbsGbPerInstance: readString(storageInputs, 'persistent_ebs_gb_per_instance'),
+      azureStorageGbPerInstance: readString(storageInputs, 'azure_storage_gb_per_instance'),
       sourceRamGbPerInstance: resource?.source_ram_gb_per_instance ?? null,
       annualHoursPerInstance: resource?.annual_hours_per_instance ?? null,
       miPurchaseOption: resource?.mi_purchase_option ?? null,

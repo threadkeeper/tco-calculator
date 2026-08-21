@@ -39,7 +39,8 @@
         column('Qty', 'number', (row) => row.quantity),
         column('SQL edition', 'text', (row) => row.sqlEdition),
         column('License', 'text', (row) => row.licenseBasis),
-        column('Data GB', 'number', (row) => row.sqlDataGbPerInstance),
+        column('SQL data GB', 'number', (row) => row.sqlDataGbPerInstance),
+        column('Persistent EBS GB', 'number', (row) => row.persistentEbsGbPerInstance),
         column('Source RAM GB', 'number', (row) => row.sourceRamGbPerInstance),
         column('Annual hours', 'number', (row) => row.annualHoursPerInstance),
         column('MI purchase', 'text', (row) => row.miPurchaseOption)
@@ -49,6 +50,7 @@
       label: 'Derived MI SKU',
       tone: 'target',
       columns: [
+        column('MI storage GB', 'number', (row) => row.azureStorageGbPerInstance),
         column('MI RAM GB', 'number', (row) => row.selectedMemoryGb),
         column('Service tier', 'text', (row) => row.serviceTier),
         column('Hardware', 'text', (row) => row.hardwareFamily),

@@ -328,7 +328,7 @@ pub fn calculate_on_prem_source(
 pub fn calculate_azure(
     quantity: u32,
     annual_hours: DecimalValue,
-    sql_data_gb_per_instance: DecimalValue,
+    azure_storage_gb_per_instance: DecimalValue,
     included_memory_gb: DecimalValue,
     selected_memory_gb: DecimalValue,
     rate: AzureRate,
@@ -354,8 +354,10 @@ pub fn calculate_azure(
     );
     let license_gross = quantity * hours * rate.license_hourly.0;
     let license_net = apply_discount(license_gross, settings.azure_license_discount);
-    let storage_gross =
-        quantity * sql_data_gb_per_instance.0 * Decimal::from(12) * rate.storage_monthly_per_gb.0;
+    let storage_gross = quantity
+        * azure_storage_gb_per_instance.0
+        * Decimal::from(12)
+        * rate.storage_monthly_per_gb.0;
     let storage_net = apply_discount(storage_gross, settings.azure_storage_discount);
     let total_before_parity = compute_plus_ram_net + license_net + storage_net;
 

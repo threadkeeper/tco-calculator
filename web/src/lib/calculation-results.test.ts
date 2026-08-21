@@ -23,6 +23,11 @@ describe('calculation result rows', () => {
       resource_results: [
         {
           resource_id: resource.id,
+          storage_inputs: {
+            sql_data_gb_per_instance: '2048.50',
+            persistent_ebs_gb_per_instance: '512.25',
+            azure_storage_gb_per_instance: '2560.75'
+          },
           mapping_status: 'mapped',
           aws_pricing_status: 'fresh',
           azure_pricing_status: 'cached',
@@ -85,6 +90,8 @@ describe('calculation result rows', () => {
         sqlEdition: 'enterprise',
         licenseBasis: 'byol',
         sqlDataGbPerInstance: '2048.50',
+        persistentEbsGbPerInstance: '512.25',
+        azureStorageGbPerInstance: '2560.75',
         sourceRamGbPerInstance: '256',
         annualHoursPerInstance: '8760',
         miPurchaseOption: 'ahb',

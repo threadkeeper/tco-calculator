@@ -243,8 +243,8 @@ Decision: Allow an EC2 RAM override and use it as the authoritative Azure sizing
 Priority: P1  
 Question: For EC2, should Azure storage be based on the explicit SQL data GB field, the sum of persistent EBS capacity, or a selectable method?  
 Provisional default: Azure storage uses explicit SQL data GB; EBS volume capacity prices AWS storage.  
-Why it matters: The workbook intentionally distinguishes provisioned disk capacity from actual SQL data.  
-Decision: Use explicit SQL data GB for Azure storage sizing and pricing. Use each persistent EBS volume's provisioned capacity only for AWS EC2 storage cost.
+Why it matters: The workbook intentionally distinguishes provisioned disk capacity from actual SQL data, while the approved target model treats both as additive Azure storage requirements.
+Decision: Keep explicit SQL data and EBS volume capacities as independent inputs. For EC2, use `sql_data_gb_per_instance + sum(non_ephemeral_volume.capacity_gb)` for Azure SQL MI storage-capacity selection and Azure storage pricing. Continue to use each persistent EBS volume's provisioned capacity for AWS EC2 storage cost. Ephemeral capacity contributes zero to the Azure sum.
 
 ## 6. Target Selection and Calculations
 

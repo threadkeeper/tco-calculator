@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ChevronDown, Database, Plus, Trash2 } from 'lucide-svelte';
   import { readBoolean, readString, type JsonRecord } from '$lib/api';
-  import { sumPersistentEbsCapacityGb, type EbsVolumeDraft, type ResourceDraft } from '$lib/draft';
+  import type { EbsVolumeDraft, ResourceDraft } from '$lib/draft';
   import type { PurchaseOptionDiscounts } from '$lib/mi-purchase-options';
   import MiPurchasePlanSelector from './MiPurchasePlanSelector.svelte';
 
@@ -61,17 +61,6 @@
 
   let selectedRdsOptionIndex = $derived(selectedRdsOption());
 
-  function syncSqlDataToVolumes() {
-    if (resource.source_type !== 'ec2') return;
-    const capacity = sumPersistentEbsCapacityGb(resource.volumes);
-    if (capacity !== null) resource.sql_data_gb_per_instance = capacity;
-  }
-
-  function updateVolumeCapacity() {
-    syncSqlDataToVolumes();
-    onchange();
-  }
-
   function addVolume() {
     if (resource.source_type !== 'ec2') return;
     const volume: EbsVolumeDraft = {
@@ -84,14 +73,12 @@
       throughput_mibps: '125'
     };
     resource.volumes = [...resource.volumes, volume];
-    syncSqlDataToVolumes();
     onchange();
   }
 
   function removeVolume(volumeId: string) {
     if (resource.source_type !== 'ec2') return;
     resource.volumes = resource.volumes.filter((volume) => volume.id !== volumeId);
-    syncSqlDataToVolumes();
     onchange();
   }
 
@@ -105,7 +92,6 @@
       volume.throughput_mibps =
         volume.volume_type === 'gp3' ? (volume.throughput_mibps ?? '125') : null;
     }
-    syncSqlDataToVolumes();
     onchange();
   }
 
@@ -360,7 +346,7 @@
                   disabled={volume.volume_type === 'ephemeral'}
                   aria-invalid={volume.volume_type !== 'ephemeral' && isMissing(volume.capacity_gb)}
                   bind:value={volume.capacity_gb}
-                  oninput={updateVolumeCapacity}
+                  oninput={onchange}
                 />
                 {#if volume.volume_type !== 'ephemeral' && isMissing(volume.capacity_gb)}<small
                     class="field-error"

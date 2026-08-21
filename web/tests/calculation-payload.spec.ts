@@ -35,7 +35,7 @@ function expectEc2ResourceContract(payload: ProjectRequest): void {
   expect(resource.quantity).toBe(2);
   expect(resource.annual_hours_per_instance).toBe('8000.5');
   expect(resource.source_ram_gb_per_instance).toBe('384.5');
-  expect(resource.sql_data_gb_per_instance).toBe('2048.5');
+  expect(resource.sql_data_gb_per_instance).toBe('1');
 
   const volumes = resource.volumes as Array<Record<string, unknown>>;
   expect(volumes[0]).toMatchObject({
@@ -45,7 +45,7 @@ function expectEc2ResourceContract(payload: ProjectRequest): void {
   });
 }
 
-test('normalizes edited inputs and refreshes EC2 SQL data from persistent disks', async ({
+test('normalizes edited inputs while preserving EC2 SQL data and EBS capacity', async ({
   page
 }) => {
   await mockApplication(page);
@@ -98,9 +98,10 @@ test('normalizes edited inputs and refreshes EC2 SQL data from persistent disks'
   await page.getByLabel('Quantity').fill('2');
   await page.getByLabel('Annual hours / instance').fill('8000.5');
   await page.getByLabel('Source RAM / instance (GiB)').fill('384.5');
+  await page.getByLabel('SQL data / instance (GB)').fill('1');
   await page.locator('.volume-row select').first().selectOption('gp3');
   await page.getByLabel('Capacity (GB)').fill('2048.5');
-  await expect(page.getByLabel('SQL data / instance (GB)')).toHaveValue('2048.5');
+  await expect(page.getByLabel('SQL data / instance (GB)')).toHaveValue('1');
   await page.getByLabel('Provisioned IOPS').fill('6000');
   await page.getByLabel('Throughput (MiB/s)').fill('250.25');
   await page.getByRole('button', { name: 'Calculate estimate' }).click();

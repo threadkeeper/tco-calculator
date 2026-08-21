@@ -99,6 +99,10 @@ const COLUMNS: ExportColumn[] = [
   textColumn('Source details | EC2 EBS volumes', ({ resource }) =>
     resource?.source_type === 'ec2' ? JSON.stringify(resource.volumes) : null
   ),
+  decimalColumn(
+    'Source details | Persistent EBS GB / instance',
+    ({ row }) => row.persistentEbsGbPerInstance
+  ),
   textColumn('Source details | RDS deployment', ({ resource }) =>
     resource?.source_type === 'rds' ? resource.deployment : null
   ),
@@ -128,6 +132,7 @@ const COLUMNS: ExportColumn[] = [
   textColumn('Status | Mapping', ({ row }) => row.mappingStatus),
   textColumn('Status | Source pricing', ({ row }) => row.awsPricingStatus),
   textColumn('Status | Azure pricing', ({ row }) => row.azurePricingStatus),
+  decimalColumn('Derived MI | Storage GB / instance', ({ row }) => row.azureStorageGbPerInstance),
   decimalColumn('Derived MI | MI RAM GB', ({ row }) => row.selectedMemoryGb),
   textColumn('Derived MI | Service tier', ({ row }) => row.serviceTier),
   textColumn('Derived MI | Hardware family', ({ row }) => row.hardwareFamily),

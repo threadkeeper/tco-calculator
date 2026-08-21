@@ -50,6 +50,11 @@ describe('project result export', () => {
       resource_results: [
         {
           resource_id: project.resources[0].id,
+          storage_inputs: {
+            sql_data_gb_per_instance: '1024',
+            persistent_ebs_gb_per_instance: '2048.125',
+            azure_storage_gb_per_instance: '3072.125'
+          },
           mapping_status: 'mapped',
           aws_pricing_status: 'fresh',
           azure_pricing_status: 'fresh',
@@ -98,7 +103,9 @@ describe('project result export', () => {
     expect(csv).toContain('"Calculation | Formula version"');
     expect(csv).toContain('"Workload | Server name"');
     expect(csv).toContain('"Source details | EC2 EBS volumes"');
+    expect(csv).toContain('"Source details | Persistent EBS GB / instance"');
     expect(csv).not.toContain('"Derived MI | Source vCPU"');
+    expect(csv).toContain('"Derived MI | Storage GB / instance"');
     expect(csv).toContain('"Derived MI | vCores"');
     expect(csv).toContain('"Source cost | Compute gross"');
     expect(csv).toContain('"Savings | Total before parity"');
@@ -113,6 +120,7 @@ describe('project result export', () => {
     expect(csv).toContain('"azure-ddeeff"');
     expect(csv).toContain('"[{""id"":""22222222-2222-4222-8222-222222222222""');
     expect(csv).toContain('""capacity_gb"":""2048.125""');
+    expect(csv).toContain('"3072.125"');
     expect(csv).toContain('"23546.880000000000000001"');
     expect(csv).toContain('"-30740.4249600000"');
     expect(csv).toContain('"0.5662543937786223823625964725"');

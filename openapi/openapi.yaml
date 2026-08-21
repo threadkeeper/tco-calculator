@@ -1148,6 +1148,7 @@ components:
       type: object
       required:
         - resource_id
+        - storage_inputs
         - mapping_status
         - aws_pricing_status
         - azure_pricing_status
@@ -1162,6 +1163,8 @@ components:
         resource_id:
           type: string
           format: uuid
+        storage_inputs:
+          $ref: '#/components/schemas/StorageInputs'
         mapping_status:
           type: [string, 'null']
           enum: [mapped, no_mapping, null]
@@ -1197,6 +1200,19 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/UnresolvedComponent'
+    StorageInputs:
+      type: object
+      required:
+        - sql_data_gb_per_instance
+        - persistent_ebs_gb_per_instance
+        - azure_storage_gb_per_instance
+      properties:
+        sql_data_gb_per_instance:
+          $ref: '#/components/schemas/Decimal'
+        persistent_ebs_gb_per_instance:
+          $ref: '#/components/schemas/Decimal'
+        azure_storage_gb_per_instance:
+          $ref: '#/components/schemas/Decimal'
     PricingStatus:
       type: string
       enum: [fresh, cached, stale, unavailable, not_required]

@@ -633,6 +633,7 @@ export interface components {
         ResourceCalculation: {
             /** Format: uuid */
             resource_id: string;
+            storage_inputs: components["schemas"]["StorageInputs"];
             /** @enum {string|null} */
             mapping_status: "mapped" | "no_mapping" | null;
             aws_pricing_status: components["schemas"]["PricingStatus"];
@@ -644,6 +645,11 @@ export interface components {
             savings: components["schemas"]["SavingsBreakdown"] | null;
             explanation_steps: components["schemas"]["ExplanationStep"][];
             unresolved_components: components["schemas"]["UnresolvedComponent"][];
+        };
+        StorageInputs: {
+            sql_data_gb_per_instance: components["schemas"]["Decimal"];
+            persistent_ebs_gb_per_instance: components["schemas"]["Decimal"];
+            azure_storage_gb_per_instance: components["schemas"]["Decimal"];
         };
         /** @enum {string} */
         PricingStatus: "fresh" | "cached" | "stale" | "unavailable" | "not_required";
