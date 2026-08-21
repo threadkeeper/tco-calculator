@@ -82,6 +82,31 @@ export type EbsVolumeDraft = {
   throughput_mibps: string | null;
 };
 
+export function sumPersistentEbsCapacityGb(volumes: readonly EbsVolumeDraft[]): string | null {
+  const parsed: Array<{ coefficient: bigint; scale: number }> = [];
+  let maximumScale = 0;
+
+  for (const volume of volumes) {
+    if (volume.volume_type === 'ephemeral') continue;
+    const match = /^(\d+)(?:\.(\d+))?$/.exec(String(volume.capacity_gb).trim());
+    if (!match) return null;
+    const fraction = match[2] ?? '';
+    parsed.push({ coefficient: BigInt(`${match[1]}${fraction}`), scale: fraction.length });
+    maximumScale = Math.max(maximumScale, fraction.length);
+  }
+
+  const total = parsed.reduce(
+    (sum, value) => sum + value.coefficient * 10n ** BigInt(maximumScale - value.scale),
+    0n
+  );
+  if (maximumScale === 0) return total.toString();
+
+  const digits = total.toString().padStart(maximumScale + 1, '0');
+  const fraction = digits.slice(-maximumScale).replace(/0+$/, '');
+  const integer = digits.slice(0, -maximumScale);
+  return fraction === '' ? integer : `${integer}.${fraction}`;
+}
+
 export type Ec2ResourceDraft = SharedResourceDraft & {
   source_type: 'ec2';
   instance_type: string;

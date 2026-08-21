@@ -5,7 +5,8 @@ import {
   createProjectDraft,
   createResource,
   editableProject,
-  projectRequestPayload
+  projectRequestPayload,
+  sumPersistentEbsCapacityGb
 } from './draft';
 import projectWorkspaceSource from './components/ProjectWorkspace.svelte?raw';
 
@@ -19,6 +20,47 @@ afterEach(() => {
 });
 
 describe('project drafts', () => {
+  it('sums persistent EBS capacity exactly for the EC2 SQL data default', () => {
+    const resource = createResource('ec2', {
+      default_annual_hours: '8760',
+      default_mi_purchase_option: 'ahb'
+    });
+    if (resource.source_type !== 'ec2') throw new Error('Expected an EC2 resource.');
+    resource.volumes = [
+      {
+        id: crypto.randomUUID(),
+        label: 'Data',
+        aws_volume_id: null,
+        volume_type: 'gp3',
+        capacity_gb: '1024.25',
+        provisioned_iops: 3000,
+        throughput_mibps: '125'
+      },
+      {
+        id: crypto.randomUUID(),
+        label: 'Log',
+        aws_volume_id: null,
+        volume_type: 'io2',
+        capacity_gb: '512.5',
+        provisioned_iops: 1000,
+        throughput_mibps: null
+      },
+      {
+        id: crypto.randomUUID(),
+        label: 'Temporary',
+        aws_volume_id: null,
+        volume_type: 'ephemeral',
+        capacity_gb: '9999',
+        provisioned_iops: null,
+        throughput_mibps: null
+      }
+    ];
+
+    expect(sumPersistentEbsCapacityGb(resource.volumes)).toBe('1536.75');
+    resource.volumes[1].capacity_gb = '';
+    expect(sumPersistentEbsCapacityGb(resource.volumes)).toBeNull();
+  });
+
   it('keeps sourced on-premises License + SA inputs visible in project settings', () => {
     expect(projectWorkspaceSource).toContain(
       "untrack(() => workspace.project.settings.project_type === 'on_prem')"

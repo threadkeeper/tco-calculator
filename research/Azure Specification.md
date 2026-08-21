@@ -428,6 +428,8 @@ EC2 quantity is preserved exactly. A quantity of two representing an HA pair pri
 | `provisioned_iops` | optional integer | >=0; required for `gp3` and `io2` |
 | `throughput_mibps` | optional decimal | >=0; used for `gp3` |
 
+Adding or removing an EC2 volume, changing its type, or editing its capacity MUST refresh the visible `sql_data_gb_per_instance` field to the exact sum of all non-ephemeral volume capacities. The user MAY edit that explicit SQL data value afterward to represent actual data in use; its current value remains authoritative for Azure storage sizing and pricing.
+
 The form pre-fills new `gp3` volumes with 3,000 IOPS and 125 MiB/s. Submitted `gp3` and `io2` volumes without explicit IOPS are invalid; the backend MUST NOT silently substitute a default. The submitted provisioned IOPS, including the 3,000 gp3 baseline, participates in source max IOPS.
 
 EC2 source max IOPS is the maximum provisioned IOPS of any non-ephemeral volume. It is not the sum. Ephemeral volumes appear in the explanation but contribute zero persistent storage cost and zero Azure SQL data-storage quantity.
