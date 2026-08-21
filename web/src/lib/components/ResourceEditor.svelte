@@ -59,6 +59,8 @@
     return index >= 0 ? String(index) : '';
   }
 
+  let selectedRdsOptionIndex = $derived(selectedRdsOption());
+
   function addVolume() {
     if (resource.source_type !== 'ec2') return;
     const volume: EbsVolumeDraft = {
@@ -445,13 +447,13 @@
           <label>
             <span>Commercial option</span>
             <select
-              value={selectedRdsOption()}
+              bind:value={selectedRdsOptionIndex}
               onchange={(event) => selectRdsOption(event.currentTarget.value)}
             >
-              {#if selectedRdsOption() === ''}<option value=""
+              {#if selectedRdsOptionIndex === ''}<option value=""
                   >{resource.commercial_term} · {resource.storage_class}</option
                 >{/if}
-              {#each rdsOptions as option, index (index)}<option value={index}
+              {#each rdsOptions as option, index (index)}<option value={String(index)}
                   >{readString(option, 'commercial_term')} · {readString(
                     option,
                     'storage_class'

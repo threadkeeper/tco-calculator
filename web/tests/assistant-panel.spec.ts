@@ -158,6 +158,94 @@ test('opens a reviewed assistant draft with extracted values populated', async (
   await expect(page.getByText('Opened', { exact: true })).toBeVisible();
 });
 
+test('selects a staged RDS commercial option after catalog hydration', async ({ page }) => {
+  await page.unroute('**/api/v1/session');
+  await page.route('**/api/v1/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        mode: 'authenticated',
+        display_name: 'Test user',
+        privacy_consent: {
+          notice_version: 'test',
+          required: false,
+          accepted_at: '2026-08-13T12:00:00Z',
+          allow_contact: false,
+          email_address: null
+        }
+      })
+    })
+  );
+  await page.route('**/api/v1/projects', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+  );
+  await page.route('**/api/v1/assistant/turn', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        answer: 'I staged the extracted RDS values for review.',
+        references: [],
+        proposal: rdsProjectDraftProposal()
+      })
+    })
+  );
+  await page.route('**/api/v1/catalog/aws/rds/instances?*', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'fresh',
+        warnings: [],
+        items: [{ instance_type: 'db.r5.xlarge', source_vcpu: 4, memory_gib: '32' }]
+      })
+    })
+  );
+  let releaseOptions!: () => void;
+  const optionsGate = new Promise<void>((resolve) => {
+    releaseOptions = resolve;
+  });
+  await page.route('**/api/v1/catalog/aws/rds/options?*', async (route) => {
+    await optionsGate;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'fresh',
+        warnings: [],
+        items: [
+          {
+            deployment: 'single_az',
+            commercial_term: 'on-demand',
+            storage_class: 'gp2'
+          },
+          {
+            deployment: 'single_az',
+            commercial_term: 'on-demand',
+            storage_class: 'gp3'
+          }
+        ]
+      })
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Open Azure SQL TCO Copilot' }).click();
+  const composer = page.getByLabel('Ask Azure SQL TCO Copilot');
+  await composer.fill('Create an RDS estimate from the screenshot');
+  await composer.press('Enter');
+  await page.getByRole('button', { name: 'Open draft' }).click();
+
+  await expect(page.getByLabel('Commercial term', { exact: true })).toHaveValue('on-demand');
+  await expect(page.getByLabel('Storage class', { exact: true })).toHaveValue('gp3');
+  releaseOptions();
+
+  const commercialOption = page.getByLabel('Commercial option', { exact: true });
+  await expect(commercialOption).toHaveValue('1');
+  await expect(commercialOption.locator('option:checked')).toHaveText('on-demand · gp3');
+});
+
 function newProjectDraftProposal() {
   return {
     proposal_id: `sha256:${'b'.repeat(64)}`,
@@ -185,6 +273,59 @@ function newProjectDraftProposal() {
         electricity_rate_usd_per_kwh: '0.09'
       },
       resources: [],
+      aws_price_snapshot_id: null,
+      azure_price_snapshot_id: null
+    }
+  };
+}
+
+function rdsProjectDraftProposal() {
+  return {
+    proposal_id: `sha256:${'c'.repeat(64)}`,
+    action: 'open_project_draft',
+    project: {
+      name: 'RDS image draft',
+      description: null,
+      settings: {
+        project_type: 'rds',
+        aws_region: 'eu-west-1',
+        azure_region: 'swedencentral',
+        currency: 'USD',
+        source_compute_discount: '0',
+        source_license_discount: '0',
+        source_storage_discount: '0',
+        azure_compute_discount: '0',
+        azure_license_discount: '0',
+        azure_storage_discount: '0',
+        selected_parity_adjustment: '0',
+        default_annual_hours: '8760',
+        default_mi_purchase_option: 'ahb',
+        enterprise_license_sa_usd_per_two_core_pack: null,
+        standard_license_sa_usd_per_two_core_pack: null,
+        remaining_coverage_months: null,
+        electricity_rate_usd_per_kwh: null,
+        sql_payg: null
+      },
+      resources: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          source_type: 'rds',
+          workload_name: 'Instance1',
+          server_name: null,
+          quantity: 1,
+          sql_edition: 'standard',
+          license_basis: 'license_included',
+          sql_data_gb_per_instance: '2048',
+          source_ram_gb_per_instance: '32',
+          annual_hours_per_instance: '8760',
+          mi_purchase_option: 'ahb',
+          instance_type: 'db.r5.xlarge',
+          deployment: 'single_az',
+          commercial_term: 'on-demand',
+          storage_class: 'gp3',
+          source_max_iops: 0
+        }
+      ],
       aws_price_snapshot_id: null,
       azure_price_snapshot_id: null
     }
