@@ -295,7 +295,7 @@ const STAGE_NEW_PROJECT_DRAFT_SCHEMA: &str = r#"{
                     },
                     "source_ram_gb_per_instance": {
                         "type": "string",
-                        "description": "Canonical decimal string without grouping separators or units. For visible 128 GiB, send 128 without converting units."
+                        "description": "Canonical decimal string without grouping separators or units. For visible 128 GiB, send 128 without converting units. For EC2, omit this field when RAM is not visible; the host pre-fills standard RAM from the selected instance type's regional AWS metadata."
                     },
                     "annual_hours_per_instance": {
                         "type": "string",
@@ -950,7 +950,9 @@ pub async fn dispatch(state: &AppState, context: &TurnContext, input: &ToolInput
             calculate_project_draft(state, context, &input.patch).await
         }
         ToolInput::StageProjectPatch(input) => stage_project_patch(state, context, input).await,
-        ToolInput::StageNewProjectDraft(input) => stage_new_project_draft(context, input),
+        ToolInput::StageNewProjectDraft(input) => {
+            stage_new_project_draft(state, context, input).await
+        }
     }
 }
 
@@ -1126,17 +1128,51 @@ async fn stage_project_patch(
     }
 }
 
-fn stage_new_project_draft(
+async fn stage_new_project_draft(
+    state: &AppState,
     context: &TurnContext,
     input: &StageNewProjectDraftInput,
+) -> ToolOutcome {
+    let aws_region = input.settings.aws_region.as_deref().unwrap_or("eu-west-1");
+    let aws_snapshots = state.pricing.list_latest_aws().await.unwrap_or_default();
+    stage_new_project_draft_with_ec2_memory(context, input, &|instance_type| {
+        aws_snapshots
+            .iter()
+            .find(|snapshot| snapshot.matches_scope("USD", aws_region))
+            .and_then(|snapshot| snapshot.ec2_rate(instance_type))
+            .map(|record| record.rate.catalog_memory_gb)
+    })
+}
+
+fn stage_new_project_draft_with_ec2_memory(
+    context: &TurnContext,
+    input: &StageNewProjectDraftInput,
+    ec2_catalog_memory: &dyn Fn(&str) -> Option<DecimalValue>,
 ) -> ToolOutcome {
     if context.project().is_some() {
         return ToolOutcome::Unavailable {
             code: "project_already_selected",
         };
     }
+    let ec2_catalog_ram_missing = input.project_type == ProjectType::Ec2
+        && if input.resources.is_empty() {
+            ec2_catalog_memory("r6id.8xlarge").is_none()
+        } else {
+            input.resources.iter().any(|resource| {
+                resource.source_ram_gb_per_instance.is_none()
+                    && ec2_catalog_memory(
+                        resource.instance_type.as_deref().unwrap_or("r6id.8xlarge"),
+                    )
+                    .is_none()
+            })
+        };
+    if ec2_catalog_ram_missing {
+        return ToolOutcome::Unavailable {
+            code: "ec2_catalog_ram_unavailable",
+        };
+    }
 
-    let project = new_project_draft(input);
+    let project = new_project_draft(input, ec2_catalog_memory);
     let issues = project.validate();
     if !issues.is_empty() {
         return ToolOutcome::Invalid { errors: issues };
@@ -1184,7 +1220,10 @@ fn stage_new_project_draft(
     }
 }
 
-fn new_project_draft(input: &StageNewProjectDraftInput) -> EditableProject {
+fn new_project_draft(
+    input: &StageNewProjectDraftInput,
+    ec2_catalog_memory: &dyn Fn(&str) -> Option<DecimalValue>,
+) -> EditableProject {
     let on_prem = input.project_type == ProjectType::OnPrem;
     let aws_project = matches!(input.project_type, ProjectType::Ec2 | ProjectType::Rds);
     let sql_payg = (input.project_type == ProjectType::SqlPayg).then(|| {
@@ -1259,30 +1298,37 @@ fn new_project_draft(input: &StageNewProjectDraftInput) -> EditableProject {
     let resources = if input.project_type == ProjectType::SqlPayg {
         Vec::new()
     } else if input.resources.is_empty() {
-        vec![new_resource(&NewResourceInput {
-            source_type: input.project_type,
-            workload_name: None,
-            quantity: None,
-            sql_edition: None,
-            license_basis: None,
-            sql_data_gb_per_instance: None,
-            source_ram_gb_per_instance: None,
-            annual_hours_per_instance: None,
-            mi_purchase_option: None,
-            instance_type: None,
-            volumes: None,
-            deployment: None,
-            commercial_term: None,
-            storage_class: None,
-            source_vcpu: None,
-            licensable_cores: None,
-            source_max_iops: None,
-            hardware_capex_usd: None,
-            depreciation_years: None,
-            average_power_kw_override: None,
-        })]
+        vec![new_resource(
+            &NewResourceInput {
+                source_type: input.project_type,
+                workload_name: None,
+                quantity: None,
+                sql_edition: None,
+                license_basis: None,
+                sql_data_gb_per_instance: None,
+                source_ram_gb_per_instance: None,
+                annual_hours_per_instance: None,
+                mi_purchase_option: None,
+                instance_type: None,
+                volumes: None,
+                deployment: None,
+                commercial_term: None,
+                storage_class: None,
+                source_vcpu: None,
+                licensable_cores: None,
+                source_max_iops: None,
+                hardware_capex_usd: None,
+                depreciation_years: None,
+                average_power_kw_override: None,
+            },
+            ec2_catalog_memory,
+        )]
     } else {
-        input.resources.iter().map(new_resource).collect()
+        input
+            .resources
+            .iter()
+            .map(|resource| new_resource(resource, ec2_catalog_memory))
+            .collect()
     };
 
     EditableProject {
@@ -1298,7 +1344,11 @@ fn new_project_draft(input: &StageNewProjectDraftInput) -> EditableProject {
     }
 }
 
-fn new_resource(input: &NewResourceInput) -> Resource {
+fn new_resource(
+    input: &NewResourceInput,
+    ec2_catalog_memory: &dyn Fn(&str) -> Option<DecimalValue>,
+) -> Resource {
+    let ec2_instance_type = input.instance_type.as_deref().unwrap_or("r6id.8xlarge");
     let shared = SharedResource {
         id: Uuid::new_v4(),
         workload_name: input
@@ -1312,13 +1362,20 @@ fn new_resource(input: &NewResourceInput) -> Resource {
         sql_data_gb_per_instance: input
             .sql_data_gb_per_instance
             .unwrap_or_else(|| decimal(1_024)),
-        source_ram_gb_per_instance: input.source_ram_gb_per_instance.unwrap_or_else(|| {
-            decimal(if input.source_type == ProjectType::Rds {
-                128
-            } else {
-                256
+        source_ram_gb_per_instance: input
+            .source_ram_gb_per_instance
+            .or_else(|| {
+                (input.source_type == ProjectType::Ec2)
+                    .then(|| ec2_catalog_memory(ec2_instance_type))
+                    .flatten()
             })
-        }),
+            .unwrap_or_else(|| {
+                decimal(if input.source_type == ProjectType::Rds {
+                    128
+                } else {
+                    256
+                })
+            }),
         annual_hours_per_instance: input
             .annual_hours_per_instance
             .unwrap_or_else(|| decimal(8_760)),
@@ -1334,10 +1391,7 @@ fn new_resource(input: &NewResourceInput) -> Resource {
                 .unwrap_or_else(|| vec![new_volume(&NewVolumeInput::default())]);
             Resource::Ec2(Ec2Resource {
                 shared,
-                instance_type: input
-                    .instance_type
-                    .clone()
-                    .unwrap_or_else(|| "r6id.8xlarge".to_owned()),
+                instance_type: ec2_instance_type.to_owned(),
                 volumes,
             })
         }
@@ -1891,7 +1945,11 @@ mod tests {
             panic!("expected new-project input");
         };
 
-        let outcome = stage_new_project_draft(&turn_context(TurnPhase::Propose, false), &input);
+        let outcome = stage_new_project_draft_with_ec2_memory(
+            &turn_context(TurnPhase::Propose, false),
+            &input,
+            &|_| None,
+        );
         let proposal = outcome.proposal().expect("draft proposal");
         let AssistantProposal::NewProjectDraft(proposal) = proposal else {
             panic!("expected a new-project proposal");
@@ -1906,6 +1964,84 @@ mod tests {
         assert!(proposal.project.azure_price_snapshot_id.is_none());
         assert!(proposal.project.validate().is_empty());
         assert_ne!(proposal.project.resources[0].shared().id, Uuid::nil());
+    }
+
+    #[test]
+    fn ec2_drafts_use_each_instance_types_catalog_ram_and_preserve_overrides() {
+        let definition = find("stage_new_project_draft").expect("registered");
+        let input = parse_input(
+            definition,
+            r#"{
+                "project_type":"ec2",
+                "settings":{"aws_region":"eu-west-1"},
+                "resources":[
+                    {"source_type":"ec2","workload_name":"VM1","instance_type":"m6i.xlarge"},
+                    {"source_type":"ec2","workload_name":"VM2","instance_type":"r6i.xlarge"},
+                    {"source_type":"ec2","workload_name":"VM3","instance_type":"r6i.xlarge","source_ram_gb_per_instance":"48"}
+                ],
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect("typed EC2 draft input");
+        let ToolInput::StageNewProjectDraft(input) = input else {
+            panic!("expected new-project input");
+        };
+
+        let outcome = stage_new_project_draft_with_ec2_memory(
+            &turn_context(TurnPhase::Propose, false),
+            &input,
+            &|instance_type| match instance_type {
+                "m6i.xlarge" => Some(decimal(16)),
+                "r6i.xlarge" => Some(decimal(32)),
+                _ => None,
+            },
+        );
+        let AssistantProposal::NewProjectDraft(proposal) =
+            outcome.proposal().expect("catalog-hydrated draft proposal")
+        else {
+            panic!("expected a new-project proposal");
+        };
+
+        let source_ram = proposal
+            .project
+            .resources
+            .iter()
+            .map(|resource| resource.shared().source_ram_gb_per_instance)
+            .collect::<Vec<_>>();
+        assert_eq!(source_ram, vec![decimal(16), decimal(32), decimal(48)]);
+    }
+
+    #[test]
+    fn an_ec2_draft_without_visible_or_catalog_ram_is_not_staged() {
+        let definition = find("stage_new_project_draft").expect("registered");
+        let input = parse_input(
+            definition,
+            r#"{
+                "project_type":"ec2",
+                "resources":[{"source_type":"ec2","instance_type":"unknown.large"}],
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect("typed EC2 draft input");
+        let ToolInput::StageNewProjectDraft(input) = input else {
+            panic!("expected new-project input");
+        };
+
+        let outcome = stage_new_project_draft_with_ec2_memory(
+            &turn_context(TurnPhase::Propose, false),
+            &input,
+            &|_| None,
+        );
+
+        assert!(outcome.proposal().is_none());
+        assert!(matches!(
+            outcome,
+            ToolOutcome::Unavailable {
+                code: "ec2_catalog_ram_unavailable"
+            }
+        ));
     }
 
     #[test]
