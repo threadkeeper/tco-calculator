@@ -1,0 +1,33 @@
+{
+  "case_id": "rds/rds-04",
+  "project_type": "rds",
+  "minimum_confidence": "medium",
+  "research_retrieved": "2026-08-19",
+  "sources": [
+    "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.DBInstanceClass.Types.html",
+    "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_SQLServer.html"
+  ],
+  "required_visible_markers": [
+    "RDS",
+    "db.r5.xlarge",
+    "gp3 Storage"
+  ],
+  "draft_assertions": [
+    {
+      "pointer": "/settings/project_type",
+      "equals": "rds"
+    },
+    {
+      "pointer": "/resources/0/source_type",
+      "equals": "rds"
+    },
+    {
+      "pointer": "/resources/0/instance_type",
+      "equals": "db.r5.xlarge"
+    },
+    {
+      "pointer": "/resources/0/sql_edition",
+      "equals": "standard"
+    }
+  ]
+}

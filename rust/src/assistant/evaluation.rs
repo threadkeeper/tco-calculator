@@ -44,8 +44,9 @@ const IDENTITY_VARIABLE: &str = "TCO_LIVE_FOUNDRY_IDENTITY";
 const AZURE_CLI_USER_IDENTITY: &str = "azure_cli_user";
 const SYSTEM_ASSIGNED_MANAGED_IDENTITY: &str = "system_assigned_managed_identity";
 const FIXTURE_MANIFEST: &str = "cases.json";
-const EXPECTED_CASES: usize = 12;
-const EXPECTED_CASES_PER_FAMILY: usize = 3;
+const EXPECTED_CASES: usize = 15;
+const EXPECTED_CASES_BY_FAMILY: [(&str, usize); 4] =
+    [("ec2", 5), ("rds", 4), ("on_prem", 3), ("sql_payg", 3)];
 
 #[derive(Debug, Error)]
 pub enum EvaluationError {
@@ -309,10 +310,10 @@ fn validate_cases(cases: &[FixtureCase]) -> Result<(), EvaluationError> {
         }
         *family_counts.entry(&fixture.family).or_default() += 1;
     }
-    if family_counts.len() != 4
-        || family_counts
-            .values()
-            .any(|count| *count != EXPECTED_CASES_PER_FAMILY)
+    if family_counts.len() != EXPECTED_CASES_BY_FAMILY.len()
+        || EXPECTED_CASES_BY_FAMILY
+            .iter()
+            .any(|(family, count)| family_counts.get(family).copied() != Some(*count))
     {
         return Err(EvaluationError::InvalidFixtures);
     }

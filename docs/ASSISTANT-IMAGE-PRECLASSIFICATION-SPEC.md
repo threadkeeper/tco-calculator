@@ -206,7 +206,7 @@ The frontend MUST validate the untrusted response at runtime before rendering it
 
 ## 8. Synthetic Fixture Corpus
 
-The committed corpus lives under `tests/assistant-workload-classification/<family>/<case>/`. It contains exactly three initial cases per supported family, for 12 total cases. Every case contains:
+The committed corpus lives under `tests/assistant-workload-classification/<family>/<case>/`. It contains 15 cases: five EC2, four RDS, three on-premises, and three SQL PAYG fixtures. Every case contains:
 
 - `fixture.html`: deterministic synthetic source used to render the screenshot;
 - `input.png`: the retained screenshot sent to the normalizer and model;
@@ -220,9 +220,12 @@ No fixture reproduces a provider console, customer document, customer identifier
 | `ec2/ec2-01` | Amazon EC2, instance ID, `m7i.4xlarge`, EBS `gp3` | one Standard EC2 resource and visible disk/performance fields |
 | `ec2/ec2-02` | AMI, `r6i.2xlarge`, EBS `io2` | one Enterprise EC2 resource with BYOL and annual hours |
 | `ec2/ec2-03` | EC2 inventory, quantity, `r6id.8xlarge`, two EBS rows | one repeated EC2 workload with two volumes |
+| `ec2/ec2-04` | sparse spreadsheet, EC2, `r6i.8xlarge`, Windows with SQL Server Standard | one Standard EC2 resource using defaults for unspecified fields |
+| `ec2/ec2-05` | sparse spreadsheet, EC2, `r5.2xlarge`, Windows with SQL Server Standard | one Standard EC2 resource using defaults for unspecified fields |
 | `rds/rds-01` | Amazon RDS, DB identifier, `db.m6i.2xlarge`, Multi-AZ | one Standard RDS resource with storage and IOPS |
 | `rds/rds-02` | RDS for SQL Server, `db.r6i.4xlarge`, Single-AZ | one Enterprise RDS resource with visible commercial term |
 | `rds/rds-03` | DB instance class, Multi-AZ, license included | one repeated RDS resource without EC2 volumes |
+| `rds/rds-04` | sparse spreadsheet, RDS, `db.r5.xlarge`, SQL Server Standard | one Standard RDS resource using defaults for unspecified fields |
 | `on_prem/on-prem-01` | Physical server, cores, memory, disks, power | one Standard on-premises resource with hardware inputs |
 | `on_prem/on-prem-02` | VMware virtual server inventory without cloud IDs | one Enterprise on-premises resource with utilization omissions |
 | `on_prem/on-prem-03` | SQL Server edition plus generic server hardware only | one on-premises resource; SQL edition alone must not select PAYG |

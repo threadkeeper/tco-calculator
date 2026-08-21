@@ -40,6 +40,7 @@ try {
     );
     await writeInitialResult(caseDirectory, fixture);
 
+    await page.setViewportSize(fixture.viewport ?? { width: 1440, height: 1000 });
     await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'load' });
     await page.screenshot({
       path: path.join(caseDirectory, 'input.png'),
@@ -72,7 +73,21 @@ function validateManifest(fixtures) {
     if (!allowedFamilies.has(fixture.family) || !fixture.id.startsWith(`${fixture.family}/`)) {
       throw new Error(`Fixture family does not match its path: ${fixture.id}`);
     }
-    if (!Array.isArray(fixture.sections) || fixture.sections.length === 0) {
+    if (fixture.presentation === 'spreadsheet') {
+      if (
+        !Number.isInteger(fixture.viewport?.width) ||
+        !Number.isInteger(fixture.viewport?.height) ||
+        fixture.viewport.width < 320 ||
+        fixture.viewport.height < 100 ||
+        !Array.isArray(fixture.column_widths) ||
+        fixture.column_widths.length === 0 ||
+        !Array.isArray(fixture.rows) ||
+        fixture.rows.length === 0 ||
+        fixture.rows.some((row) => !Array.isArray(row) || row.length > fixture.column_widths.length)
+      ) {
+        throw new Error(`Invalid spreadsheet presentation: ${fixture.id}`);
+      }
+    } else if (!Array.isArray(fixture.sections) || fixture.sections.length === 0) {
       throw new Error(`Fixture must contain visible sections: ${fixture.id}`);
     }
     if (fixture.expected?.case_id !== fixture.id) {
@@ -105,6 +120,10 @@ Run the opt-in live evaluator after local fixture and code validation. This file
 }
 
 function renderFixture(fixture) {
+  if (fixture.presentation === 'spreadsheet') {
+    return renderSpreadsheetFixture(fixture);
+  }
+
   const sections = fixture.sections.map(renderSection).join('\n');
   const badges = fixture.badges
     .map((badge) => `<span class="badge">${escapeHtml(badge)}</span>`)
@@ -245,6 +264,64 @@ function renderFixture(fixture) {
         <span>Values are test inputs, not prices or licensing advice.</span>
       </footer>
     </main>
+  </body>
+</html>
+`;
+}
+
+function renderSpreadsheetFixture(fixture) {
+  const columns = fixture.column_widths
+    .map((width) => `<col style="width: ${Number(width)}px" />`)
+    .join('');
+  const rows = fixture.rows
+    .map((row) => {
+      const cells = Array.from({ length: fixture.column_widths.length }, (_, index) => {
+        const value = row[index] ?? '';
+        return `<td>${escapeHtml(value)}</td>`;
+      }).join('');
+      return `<tr>${cells}</tr>`;
+    })
+    .join('');
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(fixture.title)}</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #ffffff;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        color: #000000;
+        font-family: Aptos, "Segoe UI", sans-serif;
+        font-size: ${Number(fixture.font_size ?? 19)}px;
+        letter-spacing: 0;
+      }
+      td {
+        height: ${Number(fixture.row_height ?? 30)}px;
+        padding: 0 6px;
+        border: 1px solid #d9d9d9;
+        line-height: 20px;
+        white-space: nowrap;
+        vertical-align: middle;
+      }
+    </style>
+  </head>
+  <body>
+    <table aria-label="${escapeHtml(fixture.title)}">
+      <colgroup>${columns}</colgroup>
+      <tbody>${rows}</tbody>
+    </table>
   </body>
 </html>
 `;

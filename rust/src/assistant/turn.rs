@@ -176,7 +176,7 @@ pub async fn run_turn_with_image(
 
         match response.output {
             ModelOutput::Message(answer) => {
-                if budget.tool_calls_used() == 0 {
+                if executed_call_ids.is_empty() {
                     return Err(TurnError::Policy(PolicyError::UngroundedResponse));
                 }
                 return Ok(TurnOutcome {
@@ -570,6 +570,23 @@ mod tests {
         let error = run_turn(&state(), &client, &context(), "What is the Azure region?")
             .await
             .expect_err("model prose without a host tool result must be rejected");
+
+        assert_eq!(error, TurnError::Policy(PolicyError::UngroundedResponse));
+    }
+
+    #[tokio::test]
+    async fn classification_accounting_does_not_ground_a_terminal_message() {
+        let client = ScriptedModelClient::new(vec![message("I classified the image.")]);
+        let context = context().with_classified_project_type(ProjectType::Ec2);
+
+        let error = run_turn(
+            &state(),
+            &client,
+            &context,
+            "Create a project from this image",
+        )
+        .await
+        .expect_err("the draft loop must execute its own tool before returning prose");
 
         assert_eq!(error, TurnError::Policy(PolicyError::UngroundedResponse));
     }

@@ -6,7 +6,11 @@
     "kicker": "Cloud workload inventory",
     "title": "SQL compute estate - migration input",
     "subtitle": "Synthetic discovery snapshot prepared for a TCO assessment",
-    "badges": ["Source: Amazon EC2", "Region: eu-west-1", "Assessment state: ready"],
+    "badges": [
+      "Source: Amazon EC2",
+      "Region: eu-west-1",
+      "Assessment state: ready"
+    ],
     "sections": [
       {
         "kind": "facts",
@@ -32,16 +36,32 @@
         "kind": "table",
         "title": "EBS volumes",
         "wide": true,
-        "columns": ["Volume", "Type", "Capacity", "Provisioned IOPS", "Throughput"],
+        "columns": [
+          "Volume",
+          "Type",
+          "Capacity",
+          "Provisioned IOPS",
+          "Throughput"
+        ],
         "rows": [
-          ["vol-0abc1234def567890 / SQL data", "EBS gp3", "2,048 GiB", "6,000", "250 MiB/s"]
+          [
+            "vol-0abc1234def567890 / SQL data",
+            "EBS gp3",
+            "2,048 GiB",
+            "6,000",
+            "250 MiB/s"
+          ]
         ]
       },
       {
         "kind": "notes",
         "title": "Sizing notes",
         "wide": true,
-        "items": ["Source RAM: 64 GiB per instance", "SQL data in use: 1,536 GiB", "Quantity: 1"]
+        "items": [
+          "Source RAM: 64 GiB per instance",
+          "SQL data in use: 1,536 GiB",
+          "Quantity: 1"
+        ]
       }
     ],
     "expected": {
@@ -96,16 +116,32 @@
         "kind": "table",
         "title": "Attached EBS storage",
         "wide": true,
-        "columns": ["Device role", "Volume ID", "EBS type", "Capacity", "Provisioned IOPS"],
+        "columns": [
+          "Device role",
+          "Volume ID",
+          "EBS type",
+          "Capacity",
+          "Provisioned IOPS"
+        ],
         "rows": [
-          ["SQL data and log", "vol-02223333444455556", "io2", "1,024 GiB", "20,000"]
+          [
+            "SQL data and log",
+            "vol-02223333444455556",
+            "io2",
+            "1,024 GiB",
+            "20,000"
+          ]
         ]
       },
       {
         "kind": "notes",
         "title": "Observed values",
         "wide": true,
-        "items": ["SQL data in use: 880 GiB", "Storage throughput: 500 MiB/s", "Quantity: 1"]
+        "items": [
+          "SQL data in use: 880 GiB",
+          "Storage throughput: 500 MiB/s",
+          "Quantity: 1"
+        ]
       }
     ],
     "expected": {
@@ -134,7 +170,11 @@
     "kicker": "Cloud estate summary",
     "title": "EC2 SQL fleet - consolidated workload row",
     "subtitle": "Synthetic inventory showing a repeated host pattern and separate EBS roles",
-    "badges": ["Service: Amazon EC2", "Inventory: 3 instances", "Region: eu-central-1"],
+    "badges": [
+      "Service: Amazon EC2",
+      "Inventory: 3 instances",
+      "Region: eu-central-1"
+    ],
     "sections": [
       {
         "kind": "facts",
@@ -186,6 +226,78 @@
     }
   },
   {
+    "id": "ec2/ec2-04",
+    "family": "ec2",
+    "presentation": "spreadsheet",
+    "viewport": { "width": 550, "height": 153 },
+    "column_widths": [95, 116, 272, 67],
+    "row_height": 25,
+    "font_size": 18,
+    "title": "Sparse EC2 SQL Server inventory - VM6",
+    "rows": [
+      ["EC2"],
+      ["VM6", "r6i.8xlarge", "Windows with SQL Server Standard"],
+      ["1 TB EBS Storage"],
+      [],
+      ["Licence Included"],
+      ["Standard RAM"]
+    ],
+    "expected": {
+      "case_id": "ec2/ec2-04",
+      "project_type": "ec2",
+      "minimum_confidence": "medium",
+      "research_retrieved": "2026-08-19",
+      "sources": [
+        "https://docs.aws.amazon.com/ec2/latest/instancetypes/instance-type-names.html",
+        "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-volume-types.html",
+        "https://docs.aws.amazon.com/sql-server-ec2/latest/userguide/what-is.html"
+      ],
+      "required_visible_markers": ["EC2", "r6i.8xlarge", "EBS Storage"],
+      "draft_assertions": [
+        { "pointer": "/settings/project_type", "equals": "ec2" },
+        { "pointer": "/resources/0/source_type", "equals": "ec2" },
+        { "pointer": "/resources/0/instance_type", "equals": "r6i.8xlarge" },
+        { "pointer": "/resources/0/sql_edition", "equals": "standard" }
+      ]
+    }
+  },
+  {
+    "id": "ec2/ec2-05",
+    "family": "ec2",
+    "presentation": "spreadsheet",
+    "viewport": { "width": 542, "height": 159 },
+    "column_widths": [95, 116, 272, 59],
+    "row_height": 26,
+    "font_size": 18,
+    "title": "Sparse EC2 SQL Server inventory - VM5",
+    "rows": [
+      ["EC2"],
+      ["VM5", "r5.2xlarge", "Windows with SQL Server Standard"],
+      ["1 TB EBS Storage"],
+      [],
+      ["Licence Included"],
+      ["Standard RAM"]
+    ],
+    "expected": {
+      "case_id": "ec2/ec2-05",
+      "project_type": "ec2",
+      "minimum_confidence": "medium",
+      "research_retrieved": "2026-08-19",
+      "sources": [
+        "https://docs.aws.amazon.com/ec2/latest/instancetypes/instance-type-names.html",
+        "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-volume-types.html",
+        "https://docs.aws.amazon.com/sql-server-ec2/latest/userguide/what-is.html"
+      ],
+      "required_visible_markers": ["EC2", "r5.2xlarge", "EBS Storage"],
+      "draft_assertions": [
+        { "pointer": "/settings/project_type", "equals": "ec2" },
+        { "pointer": "/resources/0/source_type", "equals": "ec2" },
+        { "pointer": "/resources/0/instance_type", "equals": "r5.2xlarge" },
+        { "pointer": "/resources/0/sql_edition", "equals": "standard" }
+      ]
+    }
+  },
+  {
     "id": "rds/rds-01",
     "family": "rds",
     "accent": "#17736b",
@@ -218,7 +330,12 @@
         "kind": "table",
         "title": "RDS storage",
         "wide": true,
-        "columns": ["Storage class", "Allocated storage", "SQL data", "Maximum IOPS"],
+        "columns": [
+          "Storage class",
+          "Allocated storage",
+          "SQL data",
+          "Maximum IOPS"
+        ],
         "rows": [["gp3", "1,024 GiB", "760 GiB", "12,000"]]
       }
     ],
@@ -232,7 +349,12 @@
         "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_SQLServer.html",
         "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZSingleStandby.html"
       ],
-      "required_visible_markers": ["Amazon RDS", "DB identifier", "db.m6i.2xlarge", "Multi-AZ"],
+      "required_visible_markers": [
+        "Amazon RDS",
+        "DB identifier",
+        "db.m6i.2xlarge",
+        "Multi-AZ"
+      ],
       "draft_assertions": [
         { "pointer": "/settings/project_type", "equals": "rds" },
         { "pointer": "/resources/0/source_type", "equals": "rds" },
@@ -248,7 +370,11 @@
     "kicker": "Database migration worksheet",
     "title": "Amazon RDS SQL Server - source configuration",
     "subtitle": "Synthetic single-zone analytics database inventory",
-    "badges": ["RDS for SQL Server", "DB instance status: available", "Region: us-west-2"],
+    "badges": [
+      "RDS for SQL Server",
+      "DB instance status: available",
+      "Region: us-west-2"
+    ],
     "sections": [
       {
         "kind": "facts",
@@ -274,7 +400,12 @@
         "kind": "table",
         "title": "DB storage configuration",
         "wide": true,
-        "columns": ["RDS storage class", "Capacity", "SQL data in use", "Provisioned IOPS"],
+        "columns": [
+          "RDS storage class",
+          "Capacity",
+          "SQL data in use",
+          "Provisioned IOPS"
+        ],
         "rows": [["io1", "2,048 GiB", "1,600 GiB", "30,000"]]
       }
     ],
@@ -287,7 +418,11 @@
         "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.DBInstanceClass.Types.html",
         "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_SQLServer.html"
       ],
-      "required_visible_markers": ["RDS for SQL Server", "DB instance class", "db.r6i.4xlarge"],
+      "required_visible_markers": [
+        "RDS for SQL Server",
+        "DB instance class",
+        "db.r6i.4xlarge"
+      ],
       "draft_assertions": [
         { "pointer": "/settings/project_type", "equals": "rds" },
         { "pointer": "/resources/0/source_type", "equals": "rds" },
@@ -309,8 +444,16 @@
         "kind": "table",
         "title": "Database estate",
         "wide": true,
-        "columns": ["Engine", "DB instance class", "Quantity", "Deployment", "Annual hours"],
-        "rows": [["SQL Server Standard", "db.m5.xlarge", "2", "Multi-AZ", "8,760 each"]]
+        "columns": [
+          "Engine",
+          "DB instance class",
+          "Quantity",
+          "Deployment",
+          "Annual hours"
+        ],
+        "rows": [
+          ["SQL Server Standard", "db.m5.xlarge", "2", "Multi-AZ", "8,760 each"]
+        ]
       },
       {
         "kind": "facts",
@@ -352,13 +495,51 @@
     }
   },
   {
+    "id": "rds/rds-04",
+    "family": "rds",
+    "presentation": "spreadsheet",
+    "viewport": { "width": 505, "height": 152 },
+    "column_widths": [99, 115, 291],
+    "row_height": 30,
+    "font_size": 19,
+    "title": "Sparse RDS SQL Server inventory - Instance1",
+    "rows": [
+      ["RDS"],
+      ["Instance1", "db.r5.xlarge", "SQL Server Standard Edition"],
+      ["32 GB RAM"],
+      ["2 TB gp3 Storage"],
+      ["Licence Included"]
+    ],
+    "expected": {
+      "case_id": "rds/rds-04",
+      "project_type": "rds",
+      "minimum_confidence": "medium",
+      "research_retrieved": "2026-08-19",
+      "sources": [
+        "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.DBInstanceClass.Types.html",
+        "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_SQLServer.html"
+      ],
+      "required_visible_markers": ["RDS", "db.r5.xlarge", "gp3 Storage"],
+      "draft_assertions": [
+        { "pointer": "/settings/project_type", "equals": "rds" },
+        { "pointer": "/resources/0/source_type", "equals": "rds" },
+        { "pointer": "/resources/0/instance_type", "equals": "db.r5.xlarge" },
+        { "pointer": "/resources/0/sql_edition", "equals": "standard" }
+      ]
+    }
+  },
+  {
     "id": "on_prem/on-prem-01",
     "family": "on_prem",
     "accent": "#3b654f",
     "kicker": "Datacenter asset inventory",
     "title": "Physical SQL Server - hardware baseline",
     "subtitle": "Synthetic provider-neutral host record for migration assessment",
-    "badges": ["Server type: Physical", "Location: datacenter", "Cloud provider: none"],
+    "badges": [
+      "Server type: Physical",
+      "Location: datacenter",
+      "Cloud provider: none"
+    ],
     "sections": [
       {
         "kind": "facts",
@@ -384,14 +565,24 @@
         "kind": "table",
         "title": "Storage and facilities",
         "wide": true,
-        "columns": ["SQL data", "Disk capacity", "Maximum IOPS", "Average power", "Hardware capex"],
+        "columns": [
+          "SQL data",
+          "Disk capacity",
+          "Maximum IOPS",
+          "Average power",
+          "Hardware capex"
+        ],
         "rows": [["2,400 GiB", "4,096 GiB", "18,000", "0.72 kW", "USD 48,000"]]
       },
       {
         "kind": "notes",
         "title": "Accounting input",
         "wide": true,
-        "items": ["Depreciation period: 5 years", "Quantity: 1", "No AWS, RDS, Azure Arc, or PAYG identifier is present"]
+        "items": [
+          "Depreciation period: 5 years",
+          "Quantity: 1",
+          "No AWS, RDS, Azure Arc, or PAYG identifier is present"
+        ]
       }
     ],
     "expected": {
@@ -403,7 +594,12 @@
         "https://learn.microsoft.com/azure/migrate/tutorial-discover-import?view=migrate",
         "https://learn.microsoft.com/azure/migrate/discovered-metadata?view=migrate"
       ],
-      "required_visible_markers": ["Server type: Physical", "Processor cores", "Memory", "Hardware capex"],
+      "required_visible_markers": [
+        "Server type: Physical",
+        "Processor cores",
+        "Memory",
+        "Hardware capex"
+      ],
       "draft_assertions": [
         { "pointer": "/settings/project_type", "equals": "on_prem" },
         { "pointer": "/resources/0/source_type", "equals": "on_prem" },
@@ -419,14 +615,34 @@
     "kicker": "Virtual infrastructure discovery",
     "title": "VMware SQL workload - assessment row",
     "subtitle": "Synthetic virtual server inventory with provider-neutral utilization fields",
-    "badges": ["Server type: Virtual", "Hypervisor: VMware", "Source: private datacenter"],
+    "badges": [
+      "Server type: Virtual",
+      "Hypervisor: VMware",
+      "Source: private datacenter"
+    ],
     "sections": [
       {
         "kind": "table",
         "title": "Virtual server inventory",
         "wide": true,
-        "columns": ["Role", "vCPU", "Licensable cores", "Memory", "Disk size", "Maximum IOPS"],
-        "rows": [["Synthetic finance SQL VM", "16", "16", "128 GiB", "1,536 GiB", "8,000"]]
+        "columns": [
+          "Role",
+          "vCPU",
+          "Licensable cores",
+          "Memory",
+          "Disk size",
+          "Maximum IOPS"
+        ],
+        "rows": [
+          [
+            "Synthetic finance SQL VM",
+            "16",
+            "16",
+            "128 GiB",
+            "1,536 GiB",
+            "8,000"
+          ]
+        ]
       },
       {
         "kind": "facts",
@@ -458,7 +674,12 @@
         "https://learn.microsoft.com/azure/migrate/tutorial-discover-import?view=migrate",
         "https://learn.microsoft.com/azure/migrate/how-to-review-discovered-inventory?view=migrate"
       ],
-      "required_visible_markers": ["Server type: Virtual", "VMware", "vCPU", "Memory"],
+      "required_visible_markers": [
+        "Server type: Virtual",
+        "VMware",
+        "vCPU",
+        "Memory"
+      ],
       "draft_assertions": [
         { "pointer": "/settings/project_type", "equals": "on_prem" },
         { "pointer": "/resources/0/source_type", "equals": "on_prem" },
@@ -474,7 +695,11 @@
     "kicker": "Server licensing inventory",
     "title": "SQL Server host - edition and core record",
     "subtitle": "Synthetic hardware sheet designed to keep SQL edition separate from PAYG classification",
-    "badges": ["Physical host", "Provider-neutral inventory", "Billing model: not recorded"],
+    "badges": [
+      "Physical host",
+      "Provider-neutral inventory",
+      "Billing model: not recorded"
+    ],
     "sections": [
       {
         "kind": "facts",
@@ -507,7 +732,9 @@
         "kind": "notes",
         "title": "Classification note",
         "wide": true,
-        "items": ["This inventory has no Amazon EC2, Amazon RDS, Azure Arc, PAYG, or Software Assurance comparison label"]
+        "items": [
+          "This inventory has no Amazon EC2, Amazon RDS, Azure Arc, PAYG, or Software Assurance comparison label"
+        ]
       }
     ],
     "expected": {
@@ -519,7 +746,12 @@
         "https://learn.microsoft.com/azure/migrate/tutorial-discover-import?view=migrate",
         "https://learn.microsoft.com/azure/migrate/discovered-metadata?view=migrate"
       ],
-      "required_visible_markers": ["Physical host", "Cores per socket", "RAM", "SQL Server 2019"],
+      "required_visible_markers": [
+        "Physical host",
+        "Cores per socket",
+        "RAM",
+        "SQL Server 2019"
+      ],
       "draft_assertions": [
         { "pointer": "/settings/project_type", "equals": "on_prem" },
         { "pointer": "/resources/0/source_type", "equals": "on_prem" },
@@ -535,15 +767,29 @@
     "kicker": "License cost comparison",
     "title": "Azure Arc-enabled SQL Server PAYG worksheet",
     "subtitle": "Synthetic annual comparison inputs for SQL Server Pay-As-You-Go licensing",
-    "badges": ["SQL Server enabled by Azure Arc", "License type: PAYG", "Period: annual"],
+    "badges": [
+      "SQL Server enabled by Azure Arc",
+      "License type: PAYG",
+      "Period: annual"
+    ],
     "sections": [
       {
         "kind": "table",
         "title": "Licensed core inventory",
         "wide": true,
-        "columns": ["Edition", "Licensed cores", "PAYG usage hours", "Payment comparison"],
+        "columns": [
+          "Edition",
+          "Licensed cores",
+          "PAYG usage hours",
+          "Payment comparison"
+        ],
         "rows": [
-          ["Enterprise Edition", "32", "6,000 per year", "Hourly per-core PAYG"],
+          [
+            "Enterprise Edition",
+            "32",
+            "6,000 per year",
+            "Hourly per-core PAYG"
+          ],
           ["Standard Edition", "48", "6,000 per year", "Hourly per-core PAYG"]
         ]
       },
@@ -560,7 +806,11 @@
       {
         "kind": "notes",
         "title": "Review boundary",
-        "items": ["Input for comparison only", "No server workload rows are included", "Eligibility and licensing rights require separate verification"]
+        "items": [
+          "Input for comparison only",
+          "No server workload rows are included",
+          "Eligibility and licensing rights require separate verification"
+        ]
       }
     ],
     "expected": {
@@ -572,12 +822,26 @@
         "https://learn.microsoft.com/sql/sql-server/azure-arc/manage-license-billing?view=sql-server-ver17",
         "https://learn.microsoft.com/sql/sql-server/azure-arc/overview?view=sql-server-ver17"
       ],
-      "required_visible_markers": ["Azure Arc-enabled SQL Server", "PAYG", "Enterprise Edition", "Software Assurance"],
+      "required_visible_markers": [
+        "Azure Arc-enabled SQL Server",
+        "PAYG",
+        "Enterprise Edition",
+        "Software Assurance"
+      ],
       "draft_assertions": [
         { "pointer": "/settings/project_type", "equals": "sql_payg" },
-        { "pointer": "/settings/sql_payg/enterprise_licensed_cores", "equals": 32 },
-        { "pointer": "/settings/sql_payg/standard_licensed_cores", "equals": 48 },
-        { "pointer": "/settings/sql_payg/software_assurance_annual_usd", "equals": "72000" }
+        {
+          "pointer": "/settings/sql_payg/enterprise_licensed_cores",
+          "equals": 32
+        },
+        {
+          "pointer": "/settings/sql_payg/standard_licensed_cores",
+          "equals": 48
+        },
+        {
+          "pointer": "/settings/sql_payg/software_assurance_annual_usd",
+          "equals": "72000"
+        }
       ]
     }
   },
@@ -614,7 +878,11 @@
         "kind": "notes",
         "title": "Scope",
         "wide": true,
-        "items": ["SQL Server enabled by Azure Arc", "Compare consumption billing with current annual SA input", "Values are synthetic and not an entitlement statement"]
+        "items": [
+          "SQL Server enabled by Azure Arc",
+          "Compare consumption billing with current annual SA input",
+          "Values are synthetic and not an entitlement statement"
+        ]
       }
     ],
     "expected": {
@@ -626,12 +894,26 @@
         "https://learn.microsoft.com/sql/sql-server/azure-arc/manage-license-billing?view=sql-server-ver17",
         "https://learn.microsoft.com/sql/sql-server/azure-arc/overview?view=sql-server-ver17"
       ],
-      "required_visible_markers": ["Azure Arc SQL PAYG", "EE licensed cores", "SE licensed cores", "SA annual renewal"],
+      "required_visible_markers": [
+        "Azure Arc SQL PAYG",
+        "EE licensed cores",
+        "SE licensed cores",
+        "SA annual renewal"
+      ],
       "draft_assertions": [
         { "pointer": "/settings/project_type", "equals": "sql_payg" },
-        { "pointer": "/settings/sql_payg/enterprise_licensed_cores", "equals": 16 },
-        { "pointer": "/settings/sql_payg/standard_licensed_cores", "equals": 64 },
-        { "pointer": "/settings/sql_payg/software_assurance_annual_usd", "equals": "50000" }
+        {
+          "pointer": "/settings/sql_payg/enterprise_licensed_cores",
+          "equals": 16
+        },
+        {
+          "pointer": "/settings/sql_payg/standard_licensed_cores",
+          "equals": 64
+        },
+        {
+          "pointer": "/settings/sql_payg/software_assurance_annual_usd",
+          "equals": "50000"
+        }
       ]
     }
   },
@@ -642,7 +924,11 @@
     "kicker": "OCR review sample",
     "title": "Azure Arc SQL PAYG - scanned comparison extract",
     "subtitle": "Synthetic noisy text case for edition abbreviations in a complete PAYG context",
-    "badges": ["Arc-enabled SQL Server", "PAYG billing worksheet", "OCR confidence: review"],
+    "badges": [
+      "Arc-enabled SQL Server",
+      "PAYG billing worksheet",
+      "OCR confidence: review"
+    ],
     "sections": [
       {
         "kind": "table",
@@ -653,7 +939,11 @@
           ["EE core count", "8", "Enterprise Edition"],
           ["STE core count", "24", "Standard Edition row; OCR text reads STE"],
           ["SA annual spend", "USD 18,500", "Software Assurance input"],
-          ["PAYG usage hours", "2,920 per year", "Hourly consumption comparison"]
+          [
+            "PAYG usage hours",
+            "2,920 per year",
+            "Hourly consumption comparison"
+          ]
         ]
       },
       {
@@ -669,7 +959,10 @@
       {
         "kind": "notes",
         "title": "Review warning",
-        "items": ["STE is intentionally noisy fixture text, not official Microsoft terminology", "Map it only because explicit Standard Edition and complete Arc PAYG context are also visible"]
+        "items": [
+          "STE is intentionally noisy fixture text, not official Microsoft terminology",
+          "Map it only because explicit Standard Edition and complete Arc PAYG context are also visible"
+        ]
       }
     ],
     "expected": {
@@ -681,12 +974,26 @@
         "https://learn.microsoft.com/sql/sql-server/azure-arc/manage-license-billing?view=sql-server-ver17",
         "https://learn.microsoft.com/sql/sql-server/azure-arc/overview?view=sql-server-ver17"
       ],
-      "required_visible_markers": ["Arc-enabled SQL Server", "PAYG", "STE core count", "SA annual spend"],
+      "required_visible_markers": [
+        "Arc-enabled SQL Server",
+        "PAYG",
+        "STE core count",
+        "SA annual spend"
+      ],
       "draft_assertions": [
         { "pointer": "/settings/project_type", "equals": "sql_payg" },
-        { "pointer": "/settings/sql_payg/enterprise_licensed_cores", "equals": 8 },
-        { "pointer": "/settings/sql_payg/standard_licensed_cores", "equals": 24 },
-        { "pointer": "/settings/sql_payg/software_assurance_annual_usd", "equals": "18500" }
+        {
+          "pointer": "/settings/sql_payg/enterprise_licensed_cores",
+          "equals": 8
+        },
+        {
+          "pointer": "/settings/sql_payg/standard_licensed_cores",
+          "equals": 24
+        },
+        {
+          "pointer": "/settings/sql_payg/software_assurance_annual_usd",
+          "equals": "18500"
+        }
       ]
     }
   }

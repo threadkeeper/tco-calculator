@@ -557,7 +557,7 @@
       </button>
       <button class="primary" type="button" onclick={calculate} disabled={calculating || resolving}>
         <Calculator size={17} />
-        {calculating ? 'Calculating…' : isSqlPayg ? 'Calculate savings' : 'Calculate estimate'}
+        {calculating ? 'Calculating…' : isSqlPayg ? 'Calculate discount' : 'Calculate estimate'}
       </button>
     </div>
   </div>

@@ -117,7 +117,7 @@ describe('project drafts', () => {
     });
   });
 
-  it('creates a licensing-only SQL PAYG project with utilization and discount defaults', () => {
+  it('creates a licensing-only SQL PAYG project with exactly three baseline inputs', () => {
     const project = createProjectDraft('sql_payg', 'PAYG comparison', null);
 
     expect(project).toMatchObject({
@@ -125,8 +125,6 @@ describe('project drafts', () => {
         project_type: 'sql_payg',
         aws_region: null,
         azure_region: 'global',
-        default_annual_hours: '8760',
-        selected_parity_adjustment: '0',
         sql_payg: {
           enterprise_licensed_cores: 0,
           standard_licensed_cores: 0,
