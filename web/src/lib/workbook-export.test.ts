@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe('project result export', () => {
-  it('creates a formatted XLSX workbook with exact server decimal text', () => {
+  it('creates a formatted XLSX workbook with numeric currency cells and exact decimals', () => {
     const project = createProjectDraft('ec2', '=Finance, estate', null);
     project.description = '+Confidential model';
     project.settings.source_compute_discount = '0.123456789';
@@ -125,8 +125,9 @@ describe('project result export', () => {
     expect(worksheet).toContain('<mergeCell ref="AJ6:AM6"/>');
     expect(worksheet).toContain('<mergeCell ref="AN6:AQ6"/>');
     expect(worksheet).toContain('<mergeCells count="26">');
-    expect(worksheet).toContain('<autoFilter ref="A7:AQ8"/>');
-    expect(worksheet.indexOf('<autoFilter ')).toBeLessThan(worksheet.indexOf('<mergeCells '));
+    expect(worksheet).not.toContain('<autoFilter ');
+    expect(worksheet.indexOf('<sheetData>')).toBeLessThan(worksheet.indexOf('<mergeCells '));
+    expect(worksheet.indexOf('<mergeCells ')).toBeLessThan(worksheet.indexOf('<printOptions '));
     expect(worksheet).toContain('<col min="1" max="1" width="27" customWidth="1"/>');
     expect(worksheet).toContain('<col min="43" max="43" width="17" customWidth="1"/>');
     expect(worksheet).toContain('RESOURCE LINE ITEMS');
@@ -156,7 +157,14 @@ describe('project result export', () => {
     expect(worksheet).toContain('<c r="AJ6" s="12" t="inlineStr">');
     expect(worksheet).toContain('<c r="AN6" s="13" t="inlineStr">');
     expect(worksheet).toContain('<c r="A8" s="27" t="inlineStr">');
-    expect(worksheet).toContain('<c r="AQ8" s="28" t="inlineStr">');
+    expect(worksheet).toContain('<c r="R8" s="23"><v>1</v></c>');
+    expect(worksheet).toContain('<c r="Z8" s="23"><v>23546.880000000000000001</v></c>');
+    expect(worksheet).toContain('<c r="AA8" s="30"><v>4</v></c>');
+    expect(worksheet).toContain('<c r="AB8" s="24" t="inlineStr">');
+    expect(worksheet).toContain('<c r="AI8" s="30" t="inlineStr">');
+    expect(worksheet).toContain('<c r="AJ8" s="25"><v>-3</v></c>');
+    expect(worksheet).toContain('<c r="AP8" s="31"><v>54287.304960</v></c>');
+    expect(worksheet).toContain('<c r="AQ8" s="28"><v>30740.4249600000</v></c>');
     expect(worksheet).toContain('=Finance, estate');
     expect(worksheet).toContain('+Confidential model');
     expect(worksheet).toContain('@Quarterly "SQL"');
@@ -174,6 +182,9 @@ describe('project result export', () => {
     expect(worksheet).not.toContain('<f>');
     expect(styles).toContain('<name val="Bahnschrift"/>');
     expect(styles).toContain('<name val="Aptos"/>');
+    expect(styles).toContain(
+      '<numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00;-&quot;$&quot;#,##0.00"/>'
+    );
     expect(styles).toContain('FF202A2E');
     expect(styles).toContain('FF182D3D');
     expect(styles).toContain('FF38291F');
@@ -187,7 +198,7 @@ describe('project result export', () => {
     expect(styles).toContain('FF64C994');
     expect(styles).toContain('FFC898FD');
     expect(inputsWorksheet).not.toContain('<pane ');
-    expect(inputsWorksheet).toMatch(/<autoFilter ref="A1:D\d+"\/>/);
+    expect(inputsWorksheet).not.toContain('<autoFilter ');
     expect(inputsWorksheet).toContain('Section');
     expect(inputsWorksheet).toContain('Workload');
     expect(inputsWorksheet).toContain('Input');

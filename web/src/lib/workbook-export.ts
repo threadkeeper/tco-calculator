@@ -8,7 +8,7 @@ type ResultTone = 'workload' | 'target' | 'source' | 'azure' | 'savings' | 'pari
 type ExportColumn = {
   header: string;
   value: (row: CalculationResultRow) => ExportValue;
-  kind: 'text' | 'decimal';
+  kind: 'text' | 'decimal' | 'money';
 };
 
 type ResultGroup = {
@@ -69,7 +69,9 @@ const STYLE = {
   bodyParity: 26,
   bodyWorkloadName: 27,
   differenceHigher: 28,
-  differenceLower: 29
+  differenceLower: 29,
+  bodyAzureMoney: 30,
+  bodyParityMoney: 31
 } as const;
 
 const GROUP_STYLE_IDS: Record<ResultTone, number> = {
@@ -97,6 +99,13 @@ const BODY_STYLE_IDS: Record<ResultTone, number> = {
   azure: STYLE.bodyAzure,
   savings: STYLE.bodySavings,
   parity: STYLE.bodyParity
+};
+
+const MONEY_BODY_STYLE_IDS: Partial<Record<ResultTone, number>> = {
+  source: STYLE.bodySource,
+  azure: STYLE.bodyAzureMoney,
+  savings: STYLE.bodySavings,
+  parity: STYLE.bodyParityMoney
 };
 
 const XLSX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -137,40 +146,40 @@ const RESULT_GROUPS: ResultGroup[] = [
     label: 'Source cost',
     tone: 'source',
     columns: [
-      decimalColumn('Compute gross', (row) => row.sourceComputeGross),
-      decimalColumn('Compute net', (row) => row.sourceComputeNet),
-      decimalColumn('License gross', (row) => row.sourceLicenseGross),
-      decimalColumn('License net', (row) => row.sourceLicenseNet),
-      decimalColumn('Storage gross', (row) => row.sourceStorageGross),
-      decimalColumn('Storage net', (row) => row.sourceStorageNet),
-      decimalColumn('Hardware annual', (row) => row.sourceHardwareAnnual),
-      decimalColumn('Electricity annual', (row) => row.sourceElectricityAnnual),
-      decimalColumn('Net total', (row) => row.sourceTotal)
+      moneyColumn('Compute gross', (row) => row.sourceComputeGross),
+      moneyColumn('Compute net', (row) => row.sourceComputeNet),
+      moneyColumn('License gross', (row) => row.sourceLicenseGross),
+      moneyColumn('License net', (row) => row.sourceLicenseNet),
+      moneyColumn('Storage gross', (row) => row.sourceStorageGross),
+      moneyColumn('Storage net', (row) => row.sourceStorageNet),
+      moneyColumn('Hardware annual', (row) => row.sourceHardwareAnnual),
+      moneyColumn('Electricity annual', (row) => row.sourceElectricityAnnual),
+      moneyColumn('Net total', (row) => row.sourceTotal)
     ]
   },
   {
     label: 'Azure SQL MI cost',
     tone: 'azure',
     columns: [
-      decimalColumn('Compute gross', (row) => row.azureComputeGross),
+      moneyColumn('Compute gross', (row) => row.azureComputeGross),
       decimalColumn('Additional RAM GB', (row) => row.azureAdditionalRamGb),
-      decimalColumn('Additional RAM gross', (row) => row.azureAdditionalRamGross),
-      decimalColumn('Compute + RAM net', (row) => row.azureComputePlusRamNet),
-      decimalColumn('License gross', (row) => row.azureLicenseGross),
-      decimalColumn('License net', (row) => row.azureLicenseNet),
-      decimalColumn('Storage gross', (row) => row.azureStorageGross),
-      decimalColumn('Storage net', (row) => row.azureStorageNet),
-      decimalColumn('MI net before parity', (row) => row.azureTotalBeforeParity)
+      moneyColumn('Additional RAM gross', (row) => row.azureAdditionalRamGross),
+      moneyColumn('Compute + RAM net', (row) => row.azureComputePlusRamNet),
+      moneyColumn('License gross', (row) => row.azureLicenseGross),
+      moneyColumn('License net', (row) => row.azureLicenseNet),
+      moneyColumn('Storage gross', (row) => row.azureStorageGross),
+      moneyColumn('Storage net', (row) => row.azureStorageNet),
+      moneyColumn('MI net before parity', (row) => row.azureTotalBeforeParity)
     ]
   },
   {
     label: 'Savings before parity',
     tone: 'savings',
     columns: [
-      decimalColumn('Compute', (row) => row.computeSavings),
-      decimalColumn('License', (row) => row.licenseSavings),
-      decimalColumn('Storage', (row) => row.storageSavings),
-      decimalColumn('Total', (row) => row.totalSavings)
+      moneyColumn('Compute', (row) => row.computeSavings),
+      moneyColumn('License', (row) => row.licenseSavings),
+      moneyColumn('Storage', (row) => row.storageSavings),
+      moneyColumn('Total', (row) => row.totalSavings)
     ]
   },
   {
@@ -179,8 +188,8 @@ const RESULT_GROUPS: ResultGroup[] = [
     columns: [
       decimalColumn('Required adjustment', (row) => row.requiredAdjustment),
       decimalColumn('Selected adjustment', (row) => row.selectedAdjustment),
-      decimalColumn('MI after parity', (row) => row.azureAfterSelectedParity),
-      decimalColumn('Difference (Azure - source)', (row) => row.difference)
+      moneyColumn('MI after parity', (row) => row.azureAfterSelectedParity),
+      moneyColumn('Difference (Azure - source)', (row) => row.difference)
     ]
   }
 ];
@@ -246,6 +255,13 @@ function decimalColumn(
   return { header, value, kind: 'decimal' };
 }
 
+function moneyColumn(
+  header: string,
+  value: (row: CalculationResultRow) => ExportValue
+): ExportColumn {
+  return { header, value, kind: 'money' };
+}
+
 function worksheetXml(
   project: ProjectDraft,
   calculation: JsonRecord | null,
@@ -274,11 +290,11 @@ function worksheetXml(
     .map((row, rowIndex) => {
       const cells = RESULT_COLUMNS.map((column, columnIndex) => {
         const value = column.value(row);
-        return inlineStringCellXml(
-          `${columnName(columnIndex + 1)}${rowIndex + 8}`,
-          value,
-          resultBodyStyleId(column, columnIndex, value)
-        );
+        const reference = `${columnName(columnIndex + 1)}${rowIndex + 8}`;
+        const styleId = resultBodyStyleId(column, columnIndex, value);
+        return column.kind === 'money'
+          ? moneyCellXml(reference, value, styleId)
+          : inlineStringCellXml(reference, value, styleId);
       }).join('');
       return `<row r="${rowIndex + 8}" ht="26" customHeight="1">${cells}</row>`;
     })
@@ -296,7 +312,6 @@ function worksheetXml(
   <sheetFormatPr defaultRowHeight="26"/>
   <cols>${columns}</cols>
   <sheetData>${metadata}${groups}<row r="7" ht="44" customHeight="1">${header}</row>${body}</sheetData>
-  <autoFilter ref="A7:${lastColumn}${lastRow}"/>
   <mergeCells count="${mergeRefs.length}">${mergedCells}</mergeCells>
   <printOptions horizontalCentered="0" verticalCentered="0"/>
   <pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>
@@ -431,10 +446,12 @@ function mergedCellRefs(row: number, spans: SheetSpan[]): string[] {
 function resultBodyStyleId(column: ResultColumn, columnIndex: number, value: ExportValue): number {
   if (columnIndex === 0) return STYLE.bodyWorkloadName;
   if (column.header === 'Difference (Azure - source)') {
-    const number = Number(value);
-    if (Number.isFinite(number) && number > 0) return STYLE.differenceHigher;
-    if (Number.isFinite(number) && number < 0) return STYLE.differenceLower;
+    const sign = decimalSign(value);
+    if (sign === 1) return STYLE.differenceHigher;
+    if (sign === -1) return STYLE.differenceLower;
   }
+  const moneyStyleId = MONEY_BODY_STYLE_IDS[column.tone];
+  if (column.kind === 'money' && moneyStyleId !== undefined) return moneyStyleId;
   return BODY_STYLE_IDS[column.tone];
 }
 
@@ -480,7 +497,6 @@ function inputsWorksheetXml(rows: InputRow[]): string {
   <sheetFormatPr defaultRowHeight="15"/>
   <cols>${columns}</cols>
   <sheetData><row r="1" ht="24" customHeight="1">${header}</row>${body}</sheetData>
-  <autoFilter ref="A1:D${lastRow}"/>
   <printOptions horizontalCentered="0" verticalCentered="0"/>
   <pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>
   <pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0" paperSize="9"/>
@@ -564,6 +580,25 @@ function inlineStringCellXml(reference: string, value: ExportValue, styleId: num
   return `<c r="${reference}" s="${styleId}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(String(value))}</t></is></c>`;
 }
 
+function moneyCellXml(reference: string, value: ExportValue, styleId: number): string {
+  const decimal = decimalLexeme(value);
+  if (decimal === null) return inlineStringCellXml(reference, value, styleId);
+  return `<c r="${reference}" s="${styleId}"><v>${decimal}</v></c>`;
+}
+
+function decimalLexeme(value: ExportValue): string | null {
+  if (value === null || typeof value === 'boolean') return null;
+  const text = String(value);
+  return /^-?\d+(?:\.\d+)?$/.test(text) ? text : null;
+}
+
+function decimalSign(value: ExportValue): -1 | 0 | 1 | null {
+  const decimal = decimalLexeme(value);
+  if (decimal === null) return null;
+  if (!/[1-9]/.test(decimal)) return 0;
+  return decimal.startsWith('-') ? -1 : 1;
+}
+
 function inputBodyStyleId(rowIndex: number): number {
   return rowIndex % 2 === 1 ? STYLE.inputBodyAlternate : STYLE.inputBody;
 }
@@ -644,6 +679,7 @@ function workbookRelationshipsXml(): string {
 
 function stylesXml(): string {
   return xmlDocument(`<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00;-&quot;$&quot;#,##0.00"/></numFmts>
   <fonts count="20">
     <font><sz val="9"/><color rgb="FFEEF5F7"/><name val="Aptos"/><family val="2"/><scheme val="minor"/></font>
     <font><sz val="11"/><color rgb="FF242424"/><name val="Aptos"/><family val="2"/><scheme val="minor"/></font>
@@ -685,7 +721,7 @@ function stylesXml(): string {
     <border><left style="thin"><color rgb="FF2D3E47"/></left><right style="thin"><color rgb="FF2D3E47"/></right><top style="thin"><color rgb="FF2D3E47"/></top><bottom style="thin"><color rgb="FF2D3E47"/></bottom><diagonal/></border>
   </borders>
   <cellStyleXfs count="1"><xf numFmtId="0" fontId="1" fillId="0" borderId="0"/></cellStyleXfs>
-  <cellXfs count="30">
+  <cellXfs count="32">
     <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/>
     <xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
     <xf numFmtId="49" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
@@ -709,13 +745,15 @@ function stylesXml(): string {
     <xf numFmtId="0" fontId="16" fillId="10" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
     <xf numFmtId="49" fontId="0" fillId="5" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
     <xf numFmtId="49" fontId="0" fillId="6" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
-    <xf numFmtId="49" fontId="0" fillId="7" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="164" fontId="0" fillId="7" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
     <xf numFmtId="49" fontId="0" fillId="8" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
-    <xf numFmtId="49" fontId="0" fillId="9" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="164" fontId="0" fillId="9" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
     <xf numFmtId="49" fontId="0" fillId="10" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
     <xf numFmtId="49" fontId="17" fillId="5" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
-    <xf numFmtId="49" fontId="18" fillId="10" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
-    <xf numFmtId="49" fontId="19" fillId="10" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="164" fontId="18" fillId="10" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="164" fontId="19" fillId="10" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="164" fontId="0" fillId="8" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="164" fontId="0" fillId="10" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
   </cellXfs>
   <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
   <dxfs count="0"/>
