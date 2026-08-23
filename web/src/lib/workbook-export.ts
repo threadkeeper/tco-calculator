@@ -1,21 +1,23 @@
 import { buildCalculationResultRows, type CalculationResultRow } from './calculation-results';
 import { asRecord, readString, type JsonRecord } from './api';
-import { projectRequestPayload, type ProjectDraft, type ResourceDraft } from './draft';
-
-type ExportContext = {
-  project: ProjectDraft;
-  calculation: JsonRecord | null;
-  resource: ResourceDraft | null;
-  row: CalculationResultRow;
-};
+import { projectRequestPayload, type ProjectDraft } from './draft';
 
 type ExportValue = string | number | boolean | null;
+type ResultTone = 'workload' | 'target' | 'source' | 'azure' | 'savings' | 'parity';
 
 type ExportColumn = {
   header: string;
-  value: (context: ExportContext) => ExportValue;
+  value: (row: CalculationResultRow) => ExportValue;
   kind: 'text' | 'decimal';
 };
+
+type ResultGroup = {
+  label: string;
+  tone: ResultTone;
+  columns: ExportColumn[];
+};
+
+type ResultColumn = ExportColumn & { tone: ResultTone };
 
 type ZipEntry = {
   name: string;
@@ -31,158 +33,161 @@ type InputRow = {
   value: ExportValue;
 };
 
+type SheetSpan = {
+  start: number;
+  end: number;
+  value: ExportValue;
+  styleId: number;
+};
+
+const STYLE = {
+  inputHeader: 1,
+  inputBody: 2,
+  inputBodyAlternate: 3,
+  eyebrow: 4,
+  title: 5,
+  metadataLabel: 6,
+  metadataValue: 7,
+  groupWorkload: 8,
+  groupTarget: 9,
+  groupSource: 10,
+  groupAzure: 11,
+  groupSavings: 12,
+  groupParity: 13,
+  columnWorkloadFirst: 14,
+  columnWorkload: 15,
+  columnTarget: 16,
+  columnSource: 17,
+  columnAzure: 18,
+  columnSavings: 19,
+  columnParity: 20,
+  bodyWorkload: 21,
+  bodyTarget: 22,
+  bodySource: 23,
+  bodyAzure: 24,
+  bodySavings: 25,
+  bodyParity: 26,
+  bodyWorkloadName: 27,
+  differenceHigher: 28,
+  differenceLower: 29
+} as const;
+
+const GROUP_STYLE_IDS: Record<ResultTone, number> = {
+  workload: STYLE.groupWorkload,
+  target: STYLE.groupTarget,
+  source: STYLE.groupSource,
+  azure: STYLE.groupAzure,
+  savings: STYLE.groupSavings,
+  parity: STYLE.groupParity
+};
+
+const COLUMN_STYLE_IDS: Record<ResultTone, number> = {
+  workload: STYLE.columnWorkload,
+  target: STYLE.columnTarget,
+  source: STYLE.columnSource,
+  azure: STYLE.columnAzure,
+  savings: STYLE.columnSavings,
+  parity: STYLE.columnParity
+};
+
+const BODY_STYLE_IDS: Record<ResultTone, number> = {
+  workload: STYLE.bodyWorkload,
+  target: STYLE.bodyTarget,
+  source: STYLE.bodySource,
+  azure: STYLE.bodyAzure,
+  savings: STYLE.bodySavings,
+  parity: STYLE.bodyParity
+};
+
 const XLSX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const UTF8_ENCODER = new TextEncoder();
 const CRC32_TABLE = createCrc32Table();
 
-const COLUMNS: ExportColumn[] = [
-  textColumn('Project | Name', ({ project }) => project.name),
-  textColumn('Project | Description', ({ project }) => project.description),
-  textColumn('Project | Source type', ({ project }) => project.settings.project_type),
-  textColumn('Project | Source region', ({ project }) => project.settings.aws_region),
-  textColumn('Project | Azure region', ({ project }) => project.settings.azure_region),
-  textColumn('Project | Currency', ({ project }) => project.settings.currency),
-  decimalColumn(
-    'Settings | Source compute discount',
-    ({ project }) => project.settings.source_compute_discount
-  ),
-  decimalColumn(
-    'Settings | Source SQL license discount',
-    ({ project }) => project.settings.source_license_discount
-  ),
-  decimalColumn(
-    'Settings | Source storage discount',
-    ({ project }) => project.settings.source_storage_discount
-  ),
-  decimalColumn(
-    'Settings | Azure compute discount',
-    ({ project }) => project.settings.azure_compute_discount
-  ),
-  decimalColumn(
-    'Settings | Azure SQL license discount',
-    ({ project }) => project.settings.azure_license_discount
-  ),
-  decimalColumn(
-    'Settings | Azure storage discount',
-    ({ project }) => project.settings.azure_storage_discount
-  ),
-  decimalColumn(
-    'Settings | Selected parity adjustment',
-    ({ project }) => project.settings.selected_parity_adjustment
-  ),
-  decimalColumn(
-    'Settings | Default annual hours',
-    ({ project }) => project.settings.default_annual_hours
-  ),
-  textColumn(
-    'Settings | Default MI purchase option',
-    ({ project }) => project.settings.default_mi_purchase_option
-  ),
-  decimalColumn(
-    'Settings | Enterprise License + SA / 2-core pack',
-    ({ project }) => project.settings.enterprise_license_sa_usd_per_two_core_pack
-  ),
-  decimalColumn(
-    'Settings | Standard License + SA / 2-core pack',
-    ({ project }) => project.settings.standard_license_sa_usd_per_two_core_pack
-  ),
-  decimalColumn(
-    'Settings | Remaining coverage months',
-    ({ project }) => project.settings.remaining_coverage_months
-  ),
-  decimalColumn(
-    'Settings | Electricity rate USD/kWh',
-    ({ project }) => project.settings.electricity_rate_usd_per_kwh
-  ),
-  textColumn('Calculation | Formula version', ({ calculation }) =>
-    readString(calculation, 'formula_version')
-  ),
-  textColumn('Calculation | AWS snapshot ID', ({ calculation }) =>
-    readString(calculation, 'aws_snapshot_id')
-  ),
-  textColumn('Calculation | Azure snapshot ID', ({ calculation }) =>
-    readString(calculation, 'azure_snapshot_id')
-  ),
-  textColumn('Workload | Name', ({ row }) => row.workloadName),
-  textColumn('Workload | Server name', ({ row }) => row.serverName),
-  textColumn('Workload | Resource ID', ({ row }) => row.resourceId),
-  textColumn('Workload | Source SKU', ({ row }) => row.sourceSku),
-  decimalColumn('Workload | Quantity', ({ row }) => row.quantity),
-  textColumn('Workload | SQL edition', ({ row }) => row.sqlEdition),
-  textColumn('Workload | License basis', ({ row }) => row.licenseBasis),
-  decimalColumn('Workload | SQL data GB / instance', ({ row }) => row.sqlDataGbPerInstance),
-  decimalColumn('Workload | Source RAM GB / instance', ({ row }) => row.sourceRamGbPerInstance),
-  decimalColumn('Workload | Annual hours / instance', ({ row }) => row.annualHoursPerInstance),
-  textColumn('Workload | MI purchase option', ({ row }) => row.miPurchaseOption),
-  textColumn('Source details | EC2 EBS volumes', ({ resource }) =>
-    resource?.source_type === 'ec2' ? JSON.stringify(resource.volumes) : null
-  ),
-  decimalColumn(
-    'Source details | Persistent EBS GB / instance',
-    ({ row }) => row.persistentEbsGbPerInstance
-  ),
-  textColumn('Source details | RDS deployment', ({ resource }) =>
-    resource?.source_type === 'rds' ? resource.deployment : null
-  ),
-  textColumn('Source details | RDS commercial term', ({ resource }) =>
-    resource?.source_type === 'rds' ? resource.commercial_term : null
-  ),
-  textColumn('Source details | RDS storage class', ({ resource }) =>
-    resource?.source_type === 'rds' ? resource.storage_class : null
-  ),
-  decimalColumn('Source details | Source max IOPS', ({ resource }) =>
-    resource?.source_type === 'rds' || resource?.source_type === 'on_prem'
-      ? resource.source_max_iops
-      : null
-  ),
-  decimalColumn('Source details | On-prem licensable cores', ({ resource }) =>
-    resource?.source_type === 'on_prem' ? resource.licensable_cores : null
-  ),
-  decimalColumn('Source details | On-prem hardware CAPEX USD', ({ resource }) =>
-    resource?.source_type === 'on_prem' ? resource.hardware_capex_usd : null
-  ),
-  decimalColumn('Source details | On-prem depreciation years', ({ resource }) =>
-    resource?.source_type === 'on_prem' ? resource.depreciation_years : null
-  ),
-  decimalColumn('Source details | On-prem average power kW override', ({ resource }) =>
-    resource?.source_type === 'on_prem' ? resource.average_power_kw_override : null
-  ),
-  textColumn('Status | Mapping', ({ row }) => row.mappingStatus),
-  textColumn('Status | Source pricing', ({ row }) => row.awsPricingStatus),
-  textColumn('Status | Azure pricing', ({ row }) => row.azurePricingStatus),
-  decimalColumn('Derived MI | Storage GB / instance', ({ row }) => row.azureStorageGbPerInstance),
-  decimalColumn('Derived MI | MI RAM GB', ({ row }) => row.selectedMemoryGb),
-  textColumn('Derived MI | Service tier', ({ row }) => row.serviceTier),
-  textColumn('Derived MI | Hardware family', ({ row }) => row.hardwareFamily),
-  textColumn('Derived MI | Storage architecture', ({ row }) => row.storageArchitecture),
-  decimalColumn('Derived MI | vCores', ({ row }) => row.vcores),
-  decimalColumn('Source cost | Compute gross', ({ row }) => row.sourceComputeGross),
-  decimalColumn('Source cost | Compute net', ({ row }) => row.sourceComputeNet),
-  decimalColumn('Source cost | SQL license gross', ({ row }) => row.sourceLicenseGross),
-  decimalColumn('Source cost | SQL license net', ({ row }) => row.sourceLicenseNet),
-  decimalColumn('Source cost | Storage gross', ({ row }) => row.sourceStorageGross),
-  decimalColumn('Source cost | Storage net', ({ row }) => row.sourceStorageNet),
-  decimalColumn('Source cost | Hardware annual', ({ row }) => row.sourceHardwareAnnual),
-  decimalColumn('Source cost | Electricity annual', ({ row }) => row.sourceElectricityAnnual),
-  decimalColumn('Source cost | Net total', ({ row }) => row.sourceTotal),
-  decimalColumn('Azure cost | Compute gross', ({ row }) => row.azureComputeGross),
-  decimalColumn('Azure cost | Additional RAM GB', ({ row }) => row.azureAdditionalRamGb),
-  decimalColumn('Azure cost | Additional RAM gross', ({ row }) => row.azureAdditionalRamGross),
-  decimalColumn('Azure cost | Compute + RAM net', ({ row }) => row.azureComputePlusRamNet),
-  decimalColumn('Azure cost | SQL license gross', ({ row }) => row.azureLicenseGross),
-  decimalColumn('Azure cost | SQL license net', ({ row }) => row.azureLicenseNet),
-  decimalColumn('Azure cost | Storage gross', ({ row }) => row.azureStorageGross),
-  decimalColumn('Azure cost | Storage net', ({ row }) => row.azureStorageNet),
-  decimalColumn('Azure cost | MI net before parity', ({ row }) => row.azureTotalBeforeParity),
-  decimalColumn('Savings | Compute', ({ row }) => row.computeSavings),
-  decimalColumn('Savings | License', ({ row }) => row.licenseSavings),
-  decimalColumn('Savings | Storage', ({ row }) => row.storageSavings),
-  decimalColumn('Savings | Total before parity', ({ row }) => row.totalSavings),
-  decimalColumn('Parity | Required adjustment', ({ row }) => row.requiredAdjustment),
-  decimalColumn('Parity | Selected adjustment', ({ row }) => row.selectedAdjustment),
-  decimalColumn('Parity | MI after parity', ({ row }) => row.azureAfterSelectedParity),
-  decimalColumn('Parity | Difference (Azure - source)', ({ row }) => row.difference)
+const RESULT_GROUPS: ResultGroup[] = [
+  {
+    label: 'Workload',
+    tone: 'workload',
+    columns: [
+      textColumn('Name', (row) => row.workloadName),
+      textColumn('Server name', (row) => row.serverName),
+      textColumn('Source SKU', (row) => row.sourceSku),
+      decimalColumn('Qty', (row) => row.quantity),
+      textColumn('SQL edition', (row) => row.sqlEdition),
+      textColumn('License', (row) => row.licenseBasis),
+      decimalColumn('SQL data GB', (row) => row.sqlDataGbPerInstance),
+      decimalColumn('Persistent EBS GB', (row) => row.persistentEbsGbPerInstance),
+      decimalColumn('Source RAM GB', (row) => row.sourceRamGbPerInstance),
+      decimalColumn('Annual hours', (row) => row.annualHoursPerInstance),
+      textColumn('MI purchase', (row) => row.miPurchaseOption)
+    ]
+  },
+  {
+    label: 'Derived MI SKU',
+    tone: 'target',
+    columns: [
+      decimalColumn('MI storage GB', (row) => row.azureStorageGbPerInstance),
+      decimalColumn('MI RAM GB', (row) => row.selectedMemoryGb),
+      textColumn('Service tier', (row) => row.serviceTier),
+      textColumn('Hardware', (row) => row.hardwareFamily),
+      textColumn('Storage architecture', (row) => row.storageArchitecture),
+      decimalColumn('vCores', (row) => row.vcores)
+    ]
+  },
+  {
+    label: 'Source cost',
+    tone: 'source',
+    columns: [
+      decimalColumn('Compute gross', (row) => row.sourceComputeGross),
+      decimalColumn('Compute net', (row) => row.sourceComputeNet),
+      decimalColumn('License gross', (row) => row.sourceLicenseGross),
+      decimalColumn('License net', (row) => row.sourceLicenseNet),
+      decimalColumn('Storage gross', (row) => row.sourceStorageGross),
+      decimalColumn('Storage net', (row) => row.sourceStorageNet),
+      decimalColumn('Hardware annual', (row) => row.sourceHardwareAnnual),
+      decimalColumn('Electricity annual', (row) => row.sourceElectricityAnnual),
+      decimalColumn('Net total', (row) => row.sourceTotal)
+    ]
+  },
+  {
+    label: 'Azure SQL MI cost',
+    tone: 'azure',
+    columns: [
+      decimalColumn('Compute gross', (row) => row.azureComputeGross),
+      decimalColumn('Additional RAM GB', (row) => row.azureAdditionalRamGb),
+      decimalColumn('Additional RAM gross', (row) => row.azureAdditionalRamGross),
+      decimalColumn('Compute + RAM net', (row) => row.azureComputePlusRamNet),
+      decimalColumn('License gross', (row) => row.azureLicenseGross),
+      decimalColumn('License net', (row) => row.azureLicenseNet),
+      decimalColumn('Storage gross', (row) => row.azureStorageGross),
+      decimalColumn('Storage net', (row) => row.azureStorageNet),
+      decimalColumn('MI net before parity', (row) => row.azureTotalBeforeParity)
+    ]
+  },
+  {
+    label: 'Savings before parity',
+    tone: 'savings',
+    columns: [
+      decimalColumn('Compute', (row) => row.computeSavings),
+      decimalColumn('License', (row) => row.licenseSavings),
+      decimalColumn('Storage', (row) => row.storageSavings),
+      decimalColumn('Total', (row) => row.totalSavings)
+    ]
+  },
+  {
+    label: 'Parity',
+    tone: 'parity',
+    columns: [
+      decimalColumn('Required adjustment', (row) => row.requiredAdjustment),
+      decimalColumn('Selected adjustment', (row) => row.selectedAdjustment),
+      decimalColumn('MI after parity', (row) => row.azureAfterSelectedParity),
+      decimalColumn('Difference (Azure - source)', (row) => row.difference)
+    ]
+  }
 ];
+
+const RESULT_COLUMNS: ResultColumn[] = RESULT_GROUPS.flatMap((group) =>
+  group.columns.map((column) => ({ ...column, tone: group.tone }))
+);
 
 export function createProjectExportXlsx(
   project: ProjectDraft,
@@ -190,15 +195,6 @@ export function createProjectExportXlsx(
 ): Uint8Array<ArrayBuffer> {
   const rows = buildCalculationResultRows(calculation, project.resources);
   const calculationRecord = asRecord(calculation);
-  const values = rows.map((row) => {
-    const context = {
-      project,
-      calculation: calculationRecord,
-      resource: project.resources.find((resource) => resource.id === row.resourceId) ?? null,
-      row
-    };
-    return COLUMNS.map((column) => column.value(context));
-  });
 
   return createStoredZip([
     ['[Content_Types].xml', contentTypesXml()],
@@ -208,7 +204,7 @@ export function createProjectExportXlsx(
     ['xl/workbook.xml', workbookXml()],
     ['xl/_rels/workbook.xml.rels', workbookRelationshipsXml()],
     ['xl/styles.xml', stylesXml()],
-    ['xl/worksheets/sheet1.xml', worksheetXml(values)],
+    ['xl/worksheets/sheet1.xml', worksheetXml(project, calculationRecord, rows)],
     ['xl/worksheets/sheet2.xml', inputsWorksheetXml(buildInputRows(project))]
   ]);
 }
@@ -236,52 +232,214 @@ export function downloadProjectExport(project: ProjectDraft, calculation: unknow
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function textColumn(header: string, value: (context: ExportContext) => ExportValue): ExportColumn {
+function textColumn(
+  header: string,
+  value: (row: CalculationResultRow) => ExportValue
+): ExportColumn {
   return { header, value, kind: 'text' };
 }
 
 function decimalColumn(
   header: string,
-  value: (context: ExportContext) => ExportValue
+  value: (row: CalculationResultRow) => ExportValue
 ): ExportColumn {
   return { header, value, kind: 'decimal' };
 }
 
-function worksheetXml(rows: ExportValue[][]): string {
-  const lastColumn = columnName(COLUMNS.length);
-  const lastRow = rows.length + 1;
-  const columns = COLUMNS.map(
-    (column, index) =>
-      `<col min="${index + 1}" max="${index + 1}" width="${columnWidth(column)}" customWidth="1"/>`
+function worksheetXml(
+  project: ProjectDraft,
+  calculation: JsonRecord | null,
+  rows: CalculationResultRow[]
+): string {
+  const lastColumn = columnName(RESULT_COLUMNS.length);
+  const lastRow = Math.max(7, rows.length + 7);
+  const columns = RESULT_COLUMNS.map(
+    (_, index) =>
+      `<col min="${index + 1}" max="${index + 1}" width="${resultColumnWidth(index)}" customWidth="1"/>`
   ).join('');
-  const header = COLUMNS.map((column, index) =>
-    inlineStringCellXml(`${columnName(index + 1)}1`, column.header, headerStyleId(column.header))
+  const metadataRows = resultMetadataRows(project, calculation);
+  const groupSpans = resultGroupSpans();
+  const metadata = metadataRows
+    .map(({ row, height, spans }) => sheetRowXml(row, height, spans))
+    .join('');
+  const groups = sheetRowXml(6, 24, groupSpans);
+  const header = RESULT_COLUMNS.map((column, index) =>
+    inlineStringCellXml(
+      `${columnName(index + 1)}7`,
+      column.header.toUpperCase(),
+      index === 0 ? STYLE.columnWorkloadFirst : COLUMN_STYLE_IDS[column.tone]
+    )
   ).join('');
   const body = rows
     .map((row, rowIndex) => {
-      const cells = COLUMNS.map((column, columnIndex) =>
-        inlineStringCellXml(
-          `${columnName(columnIndex + 1)}${rowIndex + 2}`,
-          row[columnIndex] ?? null,
-          bodyStyleId(column.kind, rowIndex)
-        )
-      ).join('');
-      return `<row r="${rowIndex + 2}">${cells}</row>`;
+      const cells = RESULT_COLUMNS.map((column, columnIndex) => {
+        const value = column.value(row);
+        return inlineStringCellXml(
+          `${columnName(columnIndex + 1)}${rowIndex + 8}`,
+          value,
+          resultBodyStyleId(column, columnIndex, value)
+        );
+      }).join('');
+      return `<row r="${rowIndex + 8}" ht="26" customHeight="1">${cells}</row>`;
     })
     .join('');
+  const mergeRefs = [
+    ...metadataRows.flatMap(({ row, spans }) => mergedCellRefs(row, spans)),
+    ...mergedCellRefs(6, groupSpans)
+  ];
+  const mergedCells = mergeRefs.map((reference) => `<mergeCell ref="${reference}"/>`).join('');
 
   return xmlDocument(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
+  <sheetPr><tabColor rgb="FF86C8ED"/><pageSetUpPr fitToPage="1"/></sheetPr>
   <dimension ref="A1:${lastColumn}${lastRow}"/>
-  <sheetViews><sheetView tabSelected="1" workbookViewId="0"><pane xSplit="3" ySplit="1" topLeftCell="D2" activePane="bottomRight" state="frozen"/><selection pane="bottomRight" activeCell="D2" sqref="D2"/></sheetView></sheetViews>
-  <sheetFormatPr defaultRowHeight="15"/>
+  <sheetViews><sheetView tabSelected="1" workbookViewId="0" showGridLines="0" zoomScale="85" zoomScaleNormal="85"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="26"/>
   <cols>${columns}</cols>
-  <sheetData><row r="1" ht="42" customHeight="1">${header}</row>${body}</sheetData>
-  <autoFilter ref="A1:${lastColumn}${lastRow}"/>
+  <sheetData>${metadata}${groups}<row r="7" ht="44" customHeight="1">${header}</row>${body}</sheetData>
+  <mergeCells count="${mergeRefs.length}">${mergedCells}</mergeCells>
+  <autoFilter ref="A7:${lastColumn}${lastRow}"/>
   <printOptions horizontalCentered="0" verticalCentered="0"/>
   <pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>
   <pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0" paperSize="9"/>
 </worksheet>`);
+}
+
+function resultMetadataRows(
+  project: ProjectDraft,
+  calculation: JsonRecord | null
+): Array<{ row: number; height: number; spans: SheetSpan[] }> {
+  return [
+    {
+      row: 1,
+      height: 18,
+      spans: [{ start: 1, end: 43, value: 'RESOURCE LINE ITEMS', styleId: STYLE.eyebrow }]
+    },
+    {
+      row: 2,
+      height: 26,
+      spans: [{ start: 1, end: 43, value: 'Workbook-level detail', styleId: STYLE.title }]
+    },
+    {
+      row: 3,
+      height: 30,
+      spans: [
+        { start: 1, end: 2, value: 'PROJECT', styleId: STYLE.metadataLabel },
+        { start: 3, end: 11, value: project.name, styleId: STYLE.metadataValue },
+        { start: 12, end: 13, value: 'DESCRIPTION', styleId: STYLE.metadataLabel },
+        { start: 14, end: 43, value: project.description, styleId: STYLE.metadataValue }
+      ]
+    },
+    {
+      row: 4,
+      height: 28,
+      spans: [
+        { start: 1, end: 2, value: 'SOURCE TYPE', styleId: STYLE.metadataLabel },
+        {
+          start: 3,
+          end: 6,
+          value: project.settings.project_type,
+          styleId: STYLE.metadataValue
+        },
+        { start: 7, end: 8, value: 'SOURCE REGION', styleId: STYLE.metadataLabel },
+        {
+          start: 9,
+          end: 13,
+          value: project.settings.aws_region,
+          styleId: STYLE.metadataValue
+        },
+        { start: 14, end: 15, value: 'AZURE REGION', styleId: STYLE.metadataLabel },
+        {
+          start: 16,
+          end: 20,
+          value: project.settings.azure_region,
+          styleId: STYLE.metadataValue
+        },
+        { start: 21, end: 22, value: 'CURRENCY', styleId: STYLE.metadataLabel },
+        {
+          start: 23,
+          end: 24,
+          value: project.settings.currency,
+          styleId: STYLE.metadataValue
+        },
+        { start: 25, end: 27, value: 'FORMULA', styleId: STYLE.metadataLabel },
+        {
+          start: 28,
+          end: 43,
+          value: readString(calculation, 'formula_version'),
+          styleId: STYLE.metadataValue
+        }
+      ]
+    },
+    {
+      row: 5,
+      height: 28,
+      spans: [
+        { start: 1, end: 4, value: 'AWS SNAPSHOT', styleId: STYLE.metadataLabel },
+        {
+          start: 5,
+          end: 21,
+          value: readString(calculation, 'aws_snapshot_id'),
+          styleId: STYLE.metadataValue
+        },
+        { start: 22, end: 25, value: 'AZURE SNAPSHOT', styleId: STYLE.metadataLabel },
+        {
+          start: 26,
+          end: 43,
+          value: readString(calculation, 'azure_snapshot_id'),
+          styleId: STYLE.metadataValue
+        }
+      ]
+    }
+  ];
+}
+
+function resultGroupSpans(): SheetSpan[] {
+  let start = 1;
+  return RESULT_GROUPS.map((group) => {
+    const span = {
+      start,
+      end: start + group.columns.length - 1,
+      value: group.label.toUpperCase(),
+      styleId: GROUP_STYLE_IDS[group.tone]
+    };
+    start = span.end + 1;
+    return span;
+  });
+}
+
+function sheetRowXml(row: number, height: number, spans: SheetSpan[]): string {
+  const cells = spans
+    .flatMap((span) =>
+      Array.from({ length: span.end - span.start + 1 }, (_, offset) =>
+        inlineStringCellXml(
+          `${columnName(span.start + offset)}${row}`,
+          offset === 0 ? span.value : null,
+          span.styleId
+        )
+      )
+    )
+    .join('');
+  return `<row r="${row}" ht="${height}" customHeight="1">${cells}</row>`;
+}
+
+function mergedCellRefs(row: number, spans: SheetSpan[]): string[] {
+  return spans
+    .filter((span) => span.end > span.start)
+    .map((span) => `${columnName(span.start)}${row}:${columnName(span.end)}${row}`);
+}
+
+function resultBodyStyleId(column: ResultColumn, columnIndex: number, value: ExportValue): number {
+  if (columnIndex === 0) return STYLE.bodyWorkloadName;
+  if (column.header === 'Difference (Azure - source)') {
+    const number = Number(value);
+    if (Number.isFinite(number) && number > 0) return STYLE.differenceHigher;
+    if (Number.isFinite(number) && number < 0) return STYLE.differenceLower;
+  }
+  return BODY_STYLE_IDS[column.tone];
+}
+
+function resultColumnWidth(columnIndex: number): string {
+  return columnIndex === 0 ? '27' : '17';
 }
 
 function inputsWorksheetXml(rows: InputRow[]): string {
@@ -295,7 +453,9 @@ function inputsWorksheetXml(rows: InputRow[]): string {
     )
     .join('');
   const header = headers
-    .map((value, index) => inlineStringCellXml(`${columnName(index + 1)}1`, value, 1))
+    .map((value, index) =>
+      inlineStringCellXml(`${columnName(index + 1)}1`, value, STYLE.inputHeader)
+    )
     .join('');
   const body = rows
     .map((row, rowIndex) => {
@@ -305,7 +465,7 @@ function inputsWorksheetXml(rows: InputRow[]): string {
           inlineStringCellXml(
             `${columnName(columnIndex + 1)}${rowIndex + 2}`,
             value,
-            bodyStyleId('text', rowIndex)
+            inputBodyStyleId(rowIndex)
           )
         )
         .join('');
@@ -316,7 +476,7 @@ function inputsWorksheetXml(rows: InputRow[]): string {
   return xmlDocument(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
   <dimension ref="A1:D${lastRow}"/>
-  <sheetViews><sheetView workbookViewId="0"><pane xSplit="2" ySplit="1" topLeftCell="C2" activePane="bottomRight" state="frozen"/><selection pane="bottomRight" activeCell="C2" sqref="C2"/></sheetView></sheetViews>
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
   <sheetFormatPr defaultRowHeight="15"/>
   <cols>${columns}</cols>
   <sheetData><row r="1" ht="24" customHeight="1">${header}</row>${body}</sheetData>
@@ -404,24 +564,8 @@ function inlineStringCellXml(reference: string, value: ExportValue, styleId: num
   return `<c r="${reference}" s="${styleId}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(String(value))}</t></is></c>`;
 }
 
-function headerStyleId(header: string): number {
-  if (header.startsWith('Source ')) return 2;
-  if (header.startsWith('Derived MI') || header.startsWith('Azure cost')) return 3;
-  if (header.startsWith('Savings')) return 4;
-  if (header.startsWith('Parity')) return 5;
-  return 1;
-}
-
-function bodyStyleId(kind: ExportColumn['kind'], rowIndex: number): number {
-  const alternateRow = rowIndex % 2 === 1;
-  if (kind === 'decimal') return alternateRow ? 9 : 7;
-  return alternateRow ? 8 : 6;
-}
-
-function columnWidth(column: ExportColumn): string {
-  if (column.header === 'Source details | EC2 EBS volumes') return '42';
-  const minimum = column.kind === 'decimal' ? 16 : 14;
-  return String(Math.min(28, Math.max(minimum, Math.ceil(column.header.length * 0.72))));
+function inputBodyStyleId(rowIndex: number): number {
+  return rowIndex % 2 === 1 ? STYLE.inputBodyAlternate : STYLE.inputBody;
 }
 
 function columnName(index: number): string {
@@ -500,36 +644,78 @@ function workbookRelationshipsXml(): string {
 
 function stylesXml(): string {
   return xmlDocument(`<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <fonts count="2">
+  <fonts count="20">
+    <font><sz val="9"/><color rgb="FFEEF5F7"/><name val="Aptos"/><family val="2"/><scheme val="minor"/></font>
     <font><sz val="11"/><color rgb="FF242424"/><name val="Aptos"/><family val="2"/><scheme val="minor"/></font>
-    <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Aptos Display"/><family val="2"/><scheme val="minor"/></font>
+    <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Aptos"/><family val="2"/><scheme val="minor"/></font>
+    <font><b/><sz val="7.5"/><color rgb="FFA8B7BD"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="14"/><color rgb="FFF5F9FA"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="7.5"/><color rgb="FFC3D0D5"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><sz val="9"/><color rgb="FFEEF5F7"/><name val="Aptos"/><family val="2"/><scheme val="minor"/></font>
+    <font><b/><sz val="9"/><color rgb="FFF5F9FA"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="9"/><color rgb="FF86C8ED"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="9"/><color rgb="FFEFAD52"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="9"/><color rgb="FF64C994"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="9"/><color rgb="FFC898FD"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="8"/><color rgb="FFC3D0D5"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="8"/><color rgb="FF86C8ED"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="8"/><color rgb="FFEFAD52"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="8"/><color rgb="FF64C994"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="8"/><color rgb="FFC898FD"/><name val="Bahnschrift"/><family val="2"/></font>
+    <font><b/><sz val="9.5"/><color rgb="FFF5F9FA"/><name val="Aptos"/><family val="2"/><scheme val="minor"/></font>
+    <font><b/><sz val="9"/><color rgb="FFEF8A80"/><name val="Aptos"/><family val="2"/><scheme val="minor"/></font>
+    <font><b/><sz val="9"/><color rgb="FF64C994"/><name val="Aptos"/><family val="2"/><scheme val="minor"/></font>
   </fonts>
-  <fills count="8">
+  <fills count="11">
     <fill><patternFill patternType="none"/></fill>
     <fill><patternFill patternType="gray125"/></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/><bgColor indexed="64"/></patternFill></fill>
-    <fill><patternFill patternType="solid"><fgColor rgb="FFED7D31"/><bgColor indexed="64"/></patternFill></fill>
-    <fill><patternFill patternType="solid"><fgColor rgb="FF008C95"/><bgColor indexed="64"/></patternFill></fill>
-    <fill><patternFill patternType="solid"><fgColor rgb="FF70AD47"/><bgColor indexed="64"/></patternFill></fill>
-    <fill><patternFill patternType="solid"><fgColor rgb="FF7030A0"/><bgColor indexed="64"/></patternFill></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FFF2F2F2"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF1D292F"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF202A2E"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF182D3D"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF38291F"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF183239"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF1B3425"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF30243A"/><bgColor indexed="64"/></patternFill></fill>
   </fills>
-  <borders count="2">
+  <borders count="3">
     <border><left/><right/><top/><bottom/><diagonal/></border>
     <border><left style="thin"><color rgb="FFD9E2F3"/></left><right style="thin"><color rgb="FFD9E2F3"/></right><top style="thin"><color rgb="FFD9E2F3"/></top><bottom style="thin"><color rgb="FFD9E2F3"/></bottom><diagonal/></border>
+    <border><left style="thin"><color rgb="FF2D3E47"/></left><right style="thin"><color rgb="FF2D3E47"/></right><top style="thin"><color rgb="FF2D3E47"/></top><bottom style="thin"><color rgb="FF2D3E47"/></bottom><diagonal/></border>
   </borders>
-  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-  <cellXfs count="10">
-    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
-    <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
-    <xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
-    <xf numFmtId="0" fontId="1" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
-    <xf numFmtId="0" fontId="1" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
-    <xf numFmtId="0" fontId="1" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
-    <xf numFmtId="49" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
-    <xf numFmtId="49" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="top"/></xf>
-    <xf numFmtId="49" fontId="0" fillId="7" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
-    <xf numFmtId="49" fontId="0" fillId="7" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="top"/></xf>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="1" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="30">
+    <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="3" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left" vertical="bottom"/></xf>
+    <xf numFmtId="0" fontId="4" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="5" fillId="4" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="6" fillId="4" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="7" fillId="5" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="8" fillId="6" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="9" fillId="7" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="8" fillId="8" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="10" fillId="9" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="11" fillId="10" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="12" fillId="5" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="12" fillId="5" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="13" fillId="6" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="14" fillId="7" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="13" fillId="8" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="15" fillId="9" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="16" fillId="10" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="0" fillId="5" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="0" fillId="6" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="0" fillId="7" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="0" fillId="8" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="0" fillId="9" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="0" fillId="10" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="17" fillId="5" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="18" fillId="10" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="49" fontId="19" fillId="10" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf>
   </cellXfs>
   <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
   <dxfs count="0"/>
