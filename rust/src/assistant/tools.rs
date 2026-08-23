@@ -161,7 +161,7 @@ const PROJECT_PATCH_SCHEMA: &str = r#"{
           "type": "array",
           "maxItems": 100,
           "items": { "type": "object" },
-          "description": "Complete replacement workload list using the documented project schema."
+                    "description": "Complete replacement workload list using the documented project schema. For image-extracted sql_data_gb_per_instance, source_ram_gb_per_instance, or capacity_gb values, send the visible measurement as {\"value\":\"1\",\"unit\":\"tb\"}; supported units are gb, gib, tb, and tib. The host normalizes it to GB."
         }
       }
     }
@@ -188,7 +188,7 @@ const STAGE_PROJECT_PATCH_SCHEMA: &str = r#"{
                     "type": "array",
                     "maxItems": 100,
                     "items": { "type": "object" },
-                    "description": "Complete replacement workload list using the documented project schema."
+                    "description": "Complete replacement workload list using the documented project schema. For image-extracted sql_data_gb_per_instance, source_ram_gb_per_instance, or capacity_gb values, send the visible measurement as {\"value\":\"1\",\"unit\":\"tb\"}; supported units are gb, gib, tb, and tib. The host normalizes it to GB."
                 }
             }
         },
@@ -290,12 +290,38 @@ const STAGE_NEW_PROJECT_DRAFT_SCHEMA: &str = r#"{
                     "sql_edition": { "type": "string", "enum": ["standard", "enterprise"] },
                     "license_basis": { "type": "string", "enum": ["license_included", "byol"] },
                     "sql_data_gb_per_instance": {
-                        "type": "string",
-                        "description": "Canonical decimal string without grouping separators or units. For visible 1,024 GiB, send 1024 without converting units."
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["value", "unit"],
+                        "properties": {
+                            "value": {
+                                "type": "string",
+                                "description": "Visible decimal value without grouping separators or whitespace. Preserve the visible number without converting it."
+                            },
+                            "unit": {
+                                "type": "string",
+                                "enum": ["gb", "gib", "tb", "tib"],
+                                "description": "Visible storage unit, normalized only to this lowercase enum."
+                            }
+                        },
+                        "description": "Visible SQL data capacity with its source unit. The host deterministically normalizes TB and TiB values to GB."
                     },
                     "source_ram_gb_per_instance": {
-                        "type": "string",
-                        "description": "Canonical decimal string without grouping separators or units. For visible 128 GiB, send 128 without converting units. For EC2, omit this field when RAM is not visible; the host pre-fills standard RAM from the selected instance type's regional AWS metadata."
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["value", "unit"],
+                        "properties": {
+                            "value": {
+                                "type": "string",
+                                "description": "Visible decimal value without grouping separators or whitespace. Preserve the visible number without converting it."
+                            },
+                            "unit": {
+                                "type": "string",
+                                "enum": ["gb", "gib", "tb", "tib"],
+                                "description": "Visible memory unit, normalized only to this lowercase enum."
+                            }
+                        },
+                        "description": "Visible source RAM with its source unit. The host deterministically normalizes TB and TiB values to GB. For EC2, omit this field when RAM is not visible; the host pre-fills standard RAM from the selected instance type's regional AWS metadata."
                     },
                     "annual_hours_per_instance": {
                         "type": "string",
@@ -321,8 +347,21 @@ const STAGE_NEW_PROJECT_DRAFT_SCHEMA: &str = r#"{
                                 "aws_volume_id": { "type": ["string", "null"], "maxLength": 128 },
                                 "volume_type": { "type": "string", "enum": ["gp3", "io2", "ephemeral"] },
                                 "capacity_gb": {
-                                    "type": "string",
-                                    "description": "Canonical decimal string without grouping separators or units. For visible 1,024 GiB, send 1024 without converting units."
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": ["value", "unit"],
+                                    "properties": {
+                                        "value": {
+                                            "type": "string",
+                                            "description": "Visible decimal value without grouping separators or whitespace. Preserve the visible number without converting it."
+                                        },
+                                        "unit": {
+                                            "type": "string",
+                                            "enum": ["gb", "gib", "tb", "tib"],
+                                            "description": "Visible volume-capacity unit, normalized only to this lowercase enum."
+                                        }
+                                    },
+                                    "description": "Visible EBS volume capacity with its source unit. The host deterministically normalizes TB and TiB values to GB."
                                 },
                                 "provisioned_iops": { "type": ["integer", "null"], "minimum": 0 },
                                 "throughput_mibps": {
@@ -705,6 +744,39 @@ pub struct StageNewProjectDraftInput {
     pub uncertainties: Vec<String>,
 }
 
+const STORAGE_MEASUREMENT_FIELDS: &[&str] = &[
+    "sql_data_gb_per_instance",
+    "source_ram_gb_per_instance",
+    "capacity_gb",
+];
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum StorageUnit {
+    Gb,
+    Gib,
+    Tb,
+    Tib,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StorageMeasurement {
+    value: DecimalValue,
+    unit: StorageUnit,
+}
+
+impl StorageMeasurement {
+    fn into_gb(self) -> DecimalValue {
+        match self.unit {
+            StorageUnit::Gb | StorageUnit::Gib => self.value,
+            StorageUnit::Tb | StorageUnit::Tib => {
+                DecimalValue(self.value.0 * Decimal::from(1_024_u32))
+            }
+        }
+    }
+}
+
 /// Typed, validated arguments for one registered tool.
 #[derive(Clone, Debug)]
 pub enum ToolInput {
@@ -777,20 +849,20 @@ pub fn parse_input(
             let _input: CurrentProjectInput = parse_json_input(arguments)?;
             Ok(ToolInput::CurrentProject)
         }
-        "validate_project_patch" => {
-            parse_json_input(arguments).map(ToolInput::ValidateProjectPatch)
-        }
-        "calculate_project_draft" => {
-            parse_json_input(arguments).map(ToolInput::CalculateProjectDraft)
-        }
+        "validate_project_patch" => parse_json_input_with_storage_normalization(arguments)
+            .map(ToolInput::ValidateProjectPatch),
+        "calculate_project_draft" => parse_json_input_with_storage_normalization(arguments)
+            .map(ToolInput::CalculateProjectDraft),
         "stage_project_patch" => {
-            let mut input: StageProjectPatchInput = parse_json_input(arguments)?;
+            let mut input: StageProjectPatchInput =
+                parse_json_input_with_storage_normalization(arguments)?;
             normalize_extraction_notes(&mut input.omissions)?;
             normalize_extraction_notes(&mut input.uncertainties)?;
             Ok(ToolInput::StageProjectPatch(input))
         }
         "stage_new_project_draft" => {
-            let mut input: StageNewProjectDraftInput = parse_json_input(arguments)?;
+            let mut input: StageNewProjectDraftInput =
+                parse_json_input_with_storage_normalization(arguments)?;
             normalize_extraction_notes(&mut input.omissions)?;
             normalize_extraction_notes(&mut input.uncertainties)?;
             if input.resources.iter().any(|resource| {
@@ -806,6 +878,38 @@ pub fn parse_input(
 
 fn parse_json_input<T: DeserializeOwned>(arguments: &str) -> Result<T, InvalidToolArguments> {
     serde_json::from_str(arguments).map_err(classify_json_input_error)
+}
+
+fn parse_json_input_with_storage_normalization<T: DeserializeOwned>(
+    arguments: &str,
+) -> Result<T, InvalidToolArguments> {
+    let mut value: Value = serde_json::from_str(arguments).map_err(classify_json_input_error)?;
+    normalize_storage_measurements(&mut value)?;
+    serde_json::from_value(value).map_err(classify_json_input_error)
+}
+
+fn normalize_storage_measurements(value: &mut Value) -> Result<(), InvalidToolArguments> {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                normalize_storage_measurements(value)?;
+            }
+        }
+        Value::Object(fields) => {
+            for (field, value) in fields {
+                if STORAGE_MEASUREMENT_FIELDS.contains(&field.as_str()) && value.is_object() {
+                    let measurement: StorageMeasurement =
+                        serde_json::from_value(value.clone()).map_err(classify_json_input_error)?;
+                    *value = serde_json::to_value(measurement.into_gb())
+                        .map_err(|_| InvalidToolArguments::InvalidShape)?;
+                } else {
+                    normalize_storage_measurements(value)?;
+                }
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+    Ok(())
 }
 
 fn classify_json_input_error(error: serde_json::Error) -> InvalidToolArguments {
@@ -2081,6 +2185,127 @@ mod tests {
         .expect_err("grouping separators are not accepted by the domain decimal type");
 
         assert_eq!(error, InvalidToolArguments::InvalidScalarValue);
+    }
+
+    #[test]
+    fn image_storage_measurements_are_normalized_to_gb_by_the_host() {
+        let definition = find("stage_new_project_draft").expect("registered");
+        let input = parse_input(
+            definition,
+            r#"{
+                "project_type":"ec2",
+                "resources":[{
+                    "source_type":"ec2",
+                    "instance_type":"r5.2xlarge",
+                    "sql_data_gb_per_instance":{"value":"1.5","unit":"tb"},
+                    "volumes":[{
+                        "volume_type":"gp3",
+                        "capacity_gb":{"value":"2","unit":"tib"},
+                        "provisioned_iops":3000
+                    }]
+                }],
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect("typed image draft input");
+        let ToolInput::StageNewProjectDraft(input) = input else {
+            panic!("expected new-project input");
+        };
+
+        let outcome = stage_new_project_draft_with_ec2_memory(
+            &turn_context(TurnPhase::Propose, false),
+            &input,
+            &|_| Some(decimal(64)),
+        );
+        let AssistantProposal::NewProjectDraft(proposal) =
+            outcome.proposal().expect("normalized draft proposal")
+        else {
+            panic!("expected a new-project proposal");
+        };
+        let Resource::Ec2(resource) = &proposal.project.resources[0] else {
+            panic!("expected an EC2 resource");
+        };
+
+        assert_eq!(resource.shared.sql_data_gb_per_instance, decimal(1_536));
+        assert_eq!(resource.volumes[0].capacity_gb, decimal(2_048));
+    }
+
+    #[test]
+    fn selected_project_image_storage_measurements_use_the_same_normalization() {
+        let definition = find("stage_project_patch").expect("registered");
+        let input = parse_input(
+            definition,
+            r#"{
+                "patch":{
+                    "resources":[{
+                        "source_type":"ec2",
+                        "id":"11111111-1111-1111-1111-111111111111",
+                        "workload_name":"SQL workload",
+                        "server_name":null,
+                        "quantity":1,
+                        "sql_edition":"standard",
+                        "license_basis":"byol",
+                        "sql_data_gb_per_instance":{"value":"2","unit":"tb"},
+                        "source_ram_gb_per_instance":"64",
+                        "annual_hours_per_instance":"8760",
+                        "mi_purchase_option":"ahb",
+                        "instance_type":"r5.2xlarge",
+                        "volumes":[{
+                            "id":"22222222-2222-2222-2222-222222222222",
+                            "label":"Data volume",
+                            "aws_volume_id":null,
+                            "volume_type":"gp3",
+                            "capacity_gb":{"value":"1","unit":"tb"},
+                            "provisioned_iops":3000,
+                            "throughput_mibps":null
+                        }]
+                    }]
+                },
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect("typed selected-project image patch");
+        let ToolInput::StageProjectPatch(input) = input else {
+            panic!("expected staged project patch input");
+        };
+        let Resource::Ec2(resource) = &input.patch.resources.expect("replacement resources")[0]
+        else {
+            panic!("expected an EC2 resource");
+        };
+
+        assert_eq!(resource.shared.sql_data_gb_per_instance, decimal(2_048));
+        assert_eq!(resource.volumes[0].capacity_gb, decimal(1_024));
+    }
+
+    #[test]
+    fn image_storage_schema_preserves_units_and_unsupported_units_fail_closed() {
+        let schema = classified_draft_schema(ProjectType::Ec2);
+        let measurement =
+            &schema["properties"]["resources"]["items"]["properties"]["sql_data_gb_per_instance"];
+        assert_eq!(measurement["type"], json!("object"));
+        assert_eq!(
+            measurement["properties"]["unit"]["enum"],
+            json!(["gb", "gib", "tb", "tib"])
+        );
+
+        let definition = find("stage_new_project_draft").expect("registered");
+        let error = parse_input(
+            definition,
+            r#"{
+                "project_type":"rds",
+                "resources":[{
+                    "source_type":"rds",
+                    "sql_data_gb_per_instance":{"value":"512","unit":"mb"}
+                }],
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect_err("unsupported source units must not be guessed");
+
+        assert_eq!(error, InvalidToolArguments::UnknownVariant);
     }
 
     #[test]

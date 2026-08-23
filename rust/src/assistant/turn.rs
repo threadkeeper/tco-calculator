@@ -31,7 +31,7 @@ use super::{
 };
 
 /// Version of the system instruction, recorded in audit metadata.
-pub const PROMPT_VERSION: &str = "tco-assistant-system/1.3.3";
+pub const PROMPT_VERSION: &str = "tco-assistant-system/1.3.4";
 
 /// Neutral, reviewed system instruction.
 pub const SYSTEM_INSTRUCTION: &str = concat!(
@@ -50,7 +50,7 @@ pub const SYSTEM_INSTRUCTION: &str = concat!(
     "- Before every answer, call at least one available tool. Answer only from tool results. Use get_agent_capabilities for questions about your abilities, tools, autonomy, programming, memory, or operation. Use get_application_help only for visible application controls and workflows. When a tool has no answer, state that limitation without inventing behaviour.\n",
     "- When the user requests a project change and a project is selected, read it, validate or calculate when relevant, then call stage_project_patch. When no project is selected and the user requests a new project, call stage_new_project_draft. For image-assisted drafts, use the host pre-draft classification exactly and never choose a different project type. Tell the user every staged result requires review. Persisted changes require explicit confirmation; natural-language intent is never confirmation.\n",
     "- Every staging call must report omissions and uncertainties as bounded arrays. Use empty arrays when none were observed.\n",
-    "- For image extraction, normalize visible numeric display text to the tool schema's canonical JSON form: remove grouping separators, currency symbols, and displayed units from numeric strings while preserving the visible digits, sign, and decimal point. For example, send 6,240 hours as \"6240\", 1,024 GiB as \"1024\", and USD 50,000 as \"50000\". Do not convert units, calculate derived values, or infer missing values.\n",
+    "- For image extraction, normalize visible numeric display text to the tool schema's canonical JSON form. Remove grouping separators and currency symbols while preserving the visible digits, sign, and decimal point. For ordinary scalar fields, remove the displayed unit: send 6,240 hours as \"6240\" and USD 50,000 as \"50000\". For sql_data_gb_per_instance, source_ram_gb_per_instance, and volume capacity_gb, never discard the visible unit. Send a measurement object containing the unchanged visible number and its lowercase unit: 1,024 GiB becomes {\"value\":\"1024\",\"unit\":\"gib\"}, and 1 TB becomes {\"value\":\"1\",\"unit\":\"tb\"}. Supported capacity units are gb, gib, tb, and tib. Never multiply or otherwise convert these values; the host deterministically normalizes them to GB. Do not calculate derived values or infer missing values.\n",
     "- Follow each tool field's JSON type exactly. Integer fields are unquoted JSON numbers after removing display formatting: send source_vcpu 24, licensable_cores 24, quantity 2, source_max_iops 3000, enterprise_licensed_cores 16, and standard_licensed_cores 64. Use quoted canonical numeric strings only where the schema type is string.\n",
     "- In a new image-assisted draft, every resource source_type must exactly match the host project classification. Use only that source type's fields: EC2 supports instance_type and volumes; RDS supports instance_type, deployment, commercial_term, storage_class, and source_max_iops; on-premises supports source_vcpu, licensable_cores, source_max_iops, hardware_capex_usd, depreciation_years, and average_power_kw_override. Shared workload fields are supported for all three. Do not place another source type's fields in a resource; report visible unsupported values as omissions.\n",
     "- For on-premises images, map a visible vCPU or logical CPU count to source_vcpu. When only a physical Processor cores or CPU cores value is visible, map that value to source_vcpu; keep a separately visible Licensable cores value in licensable_cores. Never substitute quantity, RAM, utilization percentages, or unrelated numbers for either field.\n",
@@ -1003,5 +1003,8 @@ mod tests {
         assert!(SYSTEM_INSTRUCTION.contains("text visible in images"));
         assert!(SYSTEM_INSTRUCTION.contains("never as quotes"));
         assert!(SYSTEM_INSTRUCTION.contains("natural-language intent is never confirmation"));
+        assert!(SYSTEM_INSTRUCTION.contains("never discard the visible unit"));
+        assert!(SYSTEM_INSTRUCTION.contains("the host deterministically normalizes them to GB"));
+        assert!(SYSTEM_INSTRUCTION.contains(r#"{"value":"1","unit":"tb"}"#));
     }
 }

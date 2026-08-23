@@ -1,7 +1,7 @@
 # Assistant Image Preclassification Specification
 
 - Status: implemented contract and evaluation baseline
-- Prompt contracts: `tco-assistant-image-classifier/1.2.0` and `tco-assistant-system/1.3.3`
+- Prompt contracts: `tco-assistant-image-classifier/1.2.0` and `tco-assistant-system/1.3.4`
 Research retrieval date: 2026-08-19
 
 ## 1. Outcome
@@ -116,6 +116,8 @@ The draft loop receives:
 - the existing instruction to extract visible supported fields, use host defaults for missing fields, and report omissions and uncertainties.
 
 The model MUST call `stage_new_project_draft` with the exact host-classified `project_type`. Host preflight MUST reject the entire proposed tool batch when the type differs. The tool then constructs domain types, supplies deterministic defaults, and runs `EditableProject::validate`. The model cannot supply IDs, owner data, revisions, prices, rates, totals, mappings, or persisted state.
+
+For image-extracted SQL data, source RAM, and EC2 volume capacity, the model MUST preserve the visible decimal value and source unit in a closed measurement object. Supported source units are `gb`, `gib`, `tb`, and `tib`. The model MUST NOT discard or convert the unit. Before normal typed project validation, the Rust host deterministically treats GB/GiB values as already canonical and multiplies TB/TiB values by `1024`. Missing or unsupported measurement units fail closed rather than being guessed. The same normalization runs for new drafts and selected-project patch validation, calculation, and staging.
 
 The successful response contains the full unsaved `EditableProject` in an `open_project_draft` proposal. It MUST NOT persist the project or trigger a calculation.
 
@@ -277,7 +279,8 @@ The feature is complete when:
 7. the opt-in evaluator compiles with the locked dependency graph, rejects missing acknowledgement or a non-user Azure CLI identity in its default mode, and accepts only the explicit host system-assigned identity as its alternate mode;
 8. a controlled live run attempts every fixture and writes one sanitized `result.md` beside each screenshot;
 9. formatting, Clippy, locked Rust tests, frontend lint/test/build, and applicable dependency checks pass or precise environmental blockers are recorded;
-10. no customer data, secret, credential, private endpoint, tenant/subscription identifier, or production value enters the corpus or results.
+10. image extraction tests prove GB/GiB identity normalization, TB/TiB conversion to GB by the Rust host, selected-project parity, and fail-closed unsupported units;
+11. no customer data, secret, credential, private endpoint, tenant/subscription identifier, or production value enters the corpus or results.
 
 ## 13. Sources
 
