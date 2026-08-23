@@ -265,9 +265,9 @@ h1 {
 }
 
 .table-header {
-  min-width: 1160px;
+  min-width: 1280px;
   display: grid;
-  grid-template-columns: 1.8fr 0.75fr 1fr 1fr 1fr 0.65fr 1fr 1fr 0.7fr;
+  grid-template-columns: 1.8fr 0.75fr 1fr 1fr 1fr 0.65fr 1fr 1fr 1fr 0.7fr;
   gap: 14px;
   padding: 11px 14px;
   color: var(--ink-soft);

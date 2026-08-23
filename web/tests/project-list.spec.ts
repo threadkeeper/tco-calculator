@@ -66,4 +66,19 @@ test('shows signed Azure savings with positive and negative tints', async ({ pag
   await expect(negative).toHaveText('-$12,500.00');
   await expect(negative).toHaveCSS('color', 'rgb(242, 170, 164)');
   await expect(negative).toHaveCSS('background-color', 'rgb(58, 35, 33)');
+
+  const columnOffsets = await page.locator('.project-table').evaluate((table) => {
+    const headings = [...table.querySelectorAll('.table-header > span')];
+    const cells = [...table.querySelectorAll('.table-row:first-child > *')];
+    return headings.map((heading, index) => ({
+      heading: heading.getBoundingClientRect().left,
+      cell: cells[index]?.getBoundingClientRect().left
+    }));
+  });
+
+  expect(columnOffsets).toHaveLength(10);
+  for (const { heading, cell } of columnOffsets) {
+    expect(cell).toBeDefined();
+    expect(Math.abs(heading - (cell ?? 0))).toBeLessThan(0.5);
+  }
 });
