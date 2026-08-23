@@ -391,9 +391,6 @@ fn normalize_retail_rates(
                 let Some(tier) = parse_retail_tier(&item.product_name) else {
                     continue;
                 };
-                if !item.unit_of_measure.contains("Month") {
-                    continue;
-                }
                 let rate = retail_rate(&item)?;
                 merge_minimum_rate(&mut rates.storage, (tier, zone_redundant), rate)?;
             } else if is_additional_memory(&item) {
@@ -472,6 +469,8 @@ fn is_data_storage(item: &RetailItem) -> bool {
     !item.product_name.contains("PITR Backup")
         && !item.product_name.contains("LTR Backup")
         && item.product_name.contains("Storage")
+        && item.meter_name.contains("Data Stored")
+        && item.unit_of_measure == "1 GB/Month"
 }
 
 fn is_additional_memory(item: &RetailItem) -> bool {
@@ -835,6 +834,19 @@ mod tests {
                     "retailPrice": "0.13685",
                     "effectiveStartDate": "2026-01-01T00:00:00Z",
                     "meterId": "storage-meter"
+                },
+                {
+                    "serviceName": "SQL Managed Instance",
+                    "armRegionName": "swedencentral",
+                    "currencyCode": "USD",
+                    "productName": "SQL Managed Instance General Purpose - Storage",
+                    "skuName": "Additional IOPS",
+                    "meterName": "Additional IOPS",
+                    "unitOfMeasure": "1 IOPS/Month",
+                    "type": "Consumption",
+                    "retailPrice": "0.0494",
+                    "effectiveStartDate": "2026-01-01T00:00:00Z",
+                    "meterId": "additional-iops-meter"
                 },
                 {
                     "serviceName": "SQL Managed Instance",

@@ -2,7 +2,7 @@ use reqwest::Url;
 
 use super::provider::ProviderError;
 
-pub const PARSER_SCHEMA_VERSION: &str = "pricing-v1";
+pub const PARSER_SCHEMA_VERSION: &str = "pricing-v2";
 
 const EC2_CALCULATOR_BASE: &str =
     "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/";

@@ -5,7 +5,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub const APP_VERSION: &str = include_str!("../../VERSION").trim_ascii();
-pub const FORMULA_VERSION: &str = "1.2.0";
+pub const FORMULA_VERSION: &str = "1.3.0";
 pub const SCHEMA_VERSION: &str = "1.0.0";
 pub const FOUNDRY_API_VERSION: &str = "2024-10-21";
 pub const MAX_PROVIDER_REFRESHES_PER_HOUR: u32 = 10_000;

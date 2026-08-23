@@ -225,7 +225,7 @@ mod tests {
         let azure_costs = result.azure_costs.as_ref().expect("Azure costs");
         assert_eq!(azure_costs.additional_ram_gb, decimal("32"));
         assert_eq!(azure_costs.additional_ram_gross, decimal("3269.3721600000"));
-        assert_eq!(azure_costs.total_before_parity, decimal("54287.3049600000"));
+        assert_eq!(azure_costs.total_before_parity, decimal("54234.754560"));
     }
 
     #[test]
@@ -327,7 +327,7 @@ mod tests {
         );
         let azure_costs = result.azure_costs.as_ref().expect("Azure costs");
         assert_eq!(azure_costs.additional_ram_gb, DecimalValue::ZERO);
-        assert_eq!(azure_costs.total_before_parity, decimal("51017.9328000000"));
+        assert_eq!(azure_costs.total_before_parity, decimal("50965.38240"));
     }
 
     fn decimal(value: &str) -> DecimalValue {

@@ -106,6 +106,22 @@ pub struct AzureRate {
     pub additional_memory_per_gb_hourly: DecimalValue,
 }
 
+const AZURE_MI_STORAGE_UNIT_GB: i64 = 32;
+
+pub fn azure_mi_configured_storage_gb(required_storage_gb: DecimalValue) -> DecimalValue {
+    let storage_unit_gb = Decimal::from(AZURE_MI_STORAGE_UNIT_GB);
+    let storage_units = (required_storage_gb.0 / storage_unit_gb)
+        .ceil()
+        .max(Decimal::ONE);
+    DecimalValue(storage_units * storage_unit_gb)
+}
+
+pub fn azure_mi_billable_storage_gb(configured_storage_gb: DecimalValue) -> DecimalValue {
+    DecimalValue(
+        (configured_storage_gb.0 - Decimal::from(AZURE_MI_STORAGE_UNIT_GB)).max(Decimal::ZERO),
+    )
+}
+
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum CostError {
     #[error("a required source SQL license rate is unavailable")]
@@ -354,10 +370,9 @@ pub fn calculate_azure(
     );
     let license_gross = quantity * hours * rate.license_hourly.0;
     let license_net = apply_discount(license_gross, settings.azure_license_discount);
-    let storage_gross = quantity
-        * azure_storage_gb_per_instance.0
-        * Decimal::from(12)
-        * rate.storage_monthly_per_gb.0;
+    let billable_storage_gb = azure_mi_billable_storage_gb(azure_storage_gb_per_instance);
+    let storage_gross =
+        quantity * billable_storage_gb.0 * Decimal::from(12) * rate.storage_monthly_per_gb.0;
     let storage_net = apply_discount(storage_gross, settings.azure_storage_discount);
     let total_before_parity = compute_plus_ram_net + license_net + storage_net;
 
@@ -669,6 +684,40 @@ mod tests {
         assert_eq!(azure.additional_ram_gb, decimal("32"));
         assert_eq!(azure.additional_ram_gross, decimal("6538.744320"));
         assert_eq!(azure.compute_plus_ram_net, decimal("21652.869888"));
+    }
+
+    #[test]
+    fn azure_mi_storage_matches_calculator_units_and_included_capacity() {
+        let configured_storage_gb = azure_mi_configured_storage_gb(decimal("7221"));
+
+        assert_eq!(configured_storage_gb, decimal("7232"));
+        assert_eq!(
+            azure_mi_billable_storage_gb(configured_storage_gb),
+            decimal("7200")
+        );
+        assert_eq!(
+            azure_mi_billable_storage_gb(azure_mi_configured_storage_gb(DecimalValue::ZERO)),
+            DecimalValue::ZERO
+        );
+
+        let azure = calculate_azure(
+            1,
+            decimal("8760"),
+            configured_storage_gb,
+            decimal("224"),
+            decimal("256"),
+            AzureRate {
+                compute_hourly: decimal("5.632"),
+                license_hourly: decimal("3.198912"),
+                storage_monthly_per_gb: decimal("0.13685"),
+                additional_memory_per_gb_hourly: decimal("0.011663"),
+            },
+            &settings(ProjectType::Ec2),
+        )
+        .expect("Azure costs");
+
+        assert_eq!(azure.storage_gross, decimal("11823.84"));
+        assert_eq!(azure.total_before_parity, decimal("92452.00128"));
     }
 
     #[test]

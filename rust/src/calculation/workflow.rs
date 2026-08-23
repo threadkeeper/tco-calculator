@@ -23,8 +23,9 @@ use crate::{
 use super::{
     cost::{
         AzureCostBreakdown, AzureRate, CostError, OnPremExplanation, SavingsBreakdown,
-        SourceCostBreakdown, calculate_azure, calculate_ec2_source, calculate_on_prem_source,
-        calculate_rds_source, calculate_savings, source_max_iops,
+        SourceCostBreakdown, azure_mi_billable_storage_gb, azure_mi_configured_storage_gb,
+        calculate_azure, calculate_ec2_source, calculate_on_prem_source, calculate_rds_source,
+        calculate_savings, source_max_iops,
     },
     sql_payg::{self, SqlPaygAnalysis, SqlPaygInput},
     target_selector::{
@@ -481,9 +482,9 @@ fn storage_inputs(resource: &Resource) -> StorageInputs {
     StorageInputs {
         sql_data_gb_per_instance,
         persistent_ebs_gb_per_instance,
-        azure_storage_gb_per_instance: DecimalValue(
+        azure_storage_gb_per_instance: azure_mi_configured_storage_gb(DecimalValue(
             sql_data_gb_per_instance.0 + persistent_ebs_gb_per_instance.0,
-        ),
+        )),
     }
 }
 
@@ -852,7 +853,13 @@ fn source_input_step(
                 storage_inputs.persistent_ebs_gb_per_instance.to_string(),
             ),
             (
-                "azure_storage_gb".to_owned(),
+                "azure_required_storage_gb".to_owned(),
+                (storage_inputs.sql_data_gb_per_instance.0
+                    + storage_inputs.persistent_ebs_gb_per_instance.0)
+                    .to_string(),
+            ),
+            (
+                "azure_configured_storage_gb".to_owned(),
                 storage_inputs.azure_storage_gb_per_instance.to_string(),
             ),
             ("source_max_iops".to_owned(), source_max_iops.to_string()),
@@ -997,6 +1004,7 @@ fn azure_cost_formula_step(
     costs: &AzureCostBreakdown,
 ) -> ExplanationStep {
     let shared = resource.shared();
+    let billable_storage_gb = azure_mi_billable_storage_gb(azure_storage_gb_per_instance);
     ExplanationStep {
         code: "azure_cost_formula".to_owned(),
         message: "Azure component costs were calculated from the selected MI shape and resolved purchase-option rates."
@@ -1075,12 +1083,17 @@ fn azure_cost_formula_step(
             ("license_net".to_owned(), costs.license_net.to_string()),
             (
                 "storage_formula".to_owned(),
-                "storage_gross = quantity * azure_storage_gb_per_instance * 12 * mi_storage_monthly_per_gb"
+                "azure_billable_storage_gb_per_instance = max(azure_configured_storage_gb_per_instance - 32, 0); storage_gross = quantity * azure_billable_storage_gb_per_instance * 12 * mi_storage_monthly_per_gb"
                     .to_owned(),
             ),
             (
-                "azure_storage_gb_per_instance".to_owned(),
+                "azure_configured_storage_gb_per_instance".to_owned(),
                 azure_storage_gb_per_instance.to_string(),
+            ),
+            ("azure_included_storage_gb_per_instance".to_owned(), "32".to_owned()),
+            (
+                "azure_billable_storage_gb_per_instance".to_owned(),
+                billable_storage_gb.to_string(),
             ),
             (
                 "mi_storage_monthly_per_gb".to_owned(),
@@ -1541,7 +1554,7 @@ mod tests {
             revision.resource_results[0]
                 .storage_inputs
                 .azure_storage_gb_per_instance,
-            decimal("601")
+            decimal("608")
         );
     }
 
@@ -1576,7 +1589,7 @@ mod tests {
         assert_eq!(row.mapping_status, Some(MappingStatus::Mapped));
         assert_eq!(
             row.azure_costs.as_ref().expect("Azure costs").storage_gross,
-            decimal("721.20")
+            decimal("691.20")
         );
     }
 
