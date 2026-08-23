@@ -97,7 +97,7 @@ Useful engineering practices reviewed in `C:\Repos\gaia-robot` and adopted here 
 - Model-generated financial calculations, sizing decisions, target selections, prices, or licensing advice. Explanations remain deterministic calculation traces.
 - Application administrator UI, privileged project access, and global price-cache controls.
 - Collaboration, organization workspaces, invitations, role assignment, and ownership transfer. Authenticated capability-link sharing is included only as specified in section 6.5.
-- CSV, Excel, and PDF import, native Excel workbook export, and project duplication. Client-side CSV result export is included only as specified in section 7.6. JPEG and PNG assisted input is included only as specified in section 4.2.
+- CSV, Excel, and PDF import and project duplication. Client-side native Excel workbook result export is included only as specified in section 7.6. JPEG and PNG assisted input is included only as specified in section 4.2.
 - AWS or Azure write access.
 - Provider-console login in MVP. Public price feeds are sufficient for the modeled retail prices.
 
@@ -354,11 +354,13 @@ Show core inputs, selected target, source total, Azure total, savings, and parit
 - No decorative orbs, bokeh, oversized hero, or one-color palette.
 - No text or control overlap at 360px, 768px, 1280px, and 1920px widths.
 
-### 7.6 CSV Result Export
+### 7.6 Excel Workbook Result Export
 
-After a successful calculation, the user MAY download an Excel-compatible UTF-8 CSV containing the current project settings, source inventory inputs, derived MI target, exact server-returned component costs, savings, parity values, formula version, and pricing snapshot IDs. For every resource, the export MUST include the server-returned SQL data, persistent EBS, and derived Azure storage quantities used by the calculation. The export MUST preserve server decimal text and one logical line per resource; it MUST NOT recalculate financial values in the browser.
+After a successful calculation, the user MAY download a native `.xlsx` workbook. The `TCO Results` worksheet MUST contain the current project context, derived MI target, exact server-returned component costs, savings, parity values, formula version, and pricing snapshot IDs with one logical row per resource. For every resource, it MUST include the server-returned SQL data, persistent EBS, and derived Azure storage quantities used by the calculation.
 
-The browser MUST create the CSV locally from the project already visible to the current user and the latest calculation response. Do not add an export API, server-side export storage, upload, analytics event, or third-party egress. The export MUST exclude owner identifiers, identity claims, display names, email/contact consent, ETags, capability secrets, and other authorization metadata. Prefix text that spreadsheet software could interpret as a formula, use a sanitized filename, and make clear that the downloaded file contains confidential business data governed by the user's managed-device and storage controls.
+The `Inputs` worksheet MUST contain the normalized project request used for target mapping and calculation: project name and description, selected price snapshot IDs, every project setting including nested SQL PAYG settings, every source-resource input, and every nested EBS volume input. It MUST expose each leaf value in a filterable row with its section, workload, stable input path, and exact value. Null inputs MUST remain represented as blank values, and empty collections MUST remain explicit. Both worksheets MUST preserve exact decimal text and MUST NOT recalculate financial values in the browser. Use native worksheet formatting for readable headers, semantic result groups, alternating rows, widths, frozen panes, filters, and print layout.
+
+The browser MUST create the workbook locally from the project already visible to the current user and the latest calculation response. Do not add an export API, server-side export storage, upload, analytics event, or third-party egress. The export MUST exclude owner identifiers, identity claims, display names, email/contact consent, ETags, capability secrets, and other authorization metadata. Store formula-like values as explicit text cells, use a sanitized `.xlsx` filename, and make clear that the downloaded file contains confidential business data governed by the user's managed-device and storage controls.
 
 ### 7.7 Accessibility
 
@@ -428,7 +430,7 @@ EC2 quantity is preserved exactly. A quantity of two representing an HA pair pri
 | `provisioned_iops` | optional integer | >=0; required for `gp3` and `io2` |
 | `throughput_mibps` | optional decimal | >=0; used for `gp3` |
 
-The explicit `sql_data_gb_per_instance` value and each EBS volume's provisioned capacity are independent inputs and MUST remain independently editable. Adding, removing, or editing an EC2 volume MUST NOT overwrite the SQL data value. For EC2, the server derives `persistent_ebs_gb_per_instance` as the exact sum of all non-ephemeral volume capacities and derives `azure_storage_gb_per_instance = sql_data_gb_per_instance + persistent_ebs_gb_per_instance`. The combined Azure quantity is authoritative for SQL MI storage-capacity selection and Azure storage pricing. Calculation results, the detail grid, explanations, and CSV export MUST expose all three quantities.
+The explicit `sql_data_gb_per_instance` value and each EBS volume's provisioned capacity are independent inputs and MUST remain independently editable. Adding, removing, or editing an EC2 volume MUST NOT overwrite the SQL data value. For EC2, the server derives `persistent_ebs_gb_per_instance` as the exact sum of all non-ephemeral volume capacities and derives `azure_storage_gb_per_instance = sql_data_gb_per_instance + persistent_ebs_gb_per_instance`. The combined Azure quantity is authoritative for SQL MI storage-capacity selection and Azure storage pricing. Calculation results, the detail grid, explanations, and Excel workbook export MUST expose all three quantities.
 
 The form pre-fills new `gp3` volumes with 3,000 IOPS and 125 MiB/s. Submitted `gp3` and `io2` volumes without explicit IOPS are invalid; the backend MUST NOT silently substitute a default. The submitted provisioned IOPS, including the 3,000 gp3 baseline, participates in source max IOPS.
 
@@ -1220,7 +1222,7 @@ Do not implement financial calculations in TypeScript. Formatting and view-only 
 - Disable the ACR admin account. Grant only `AcrPull` to the Container App SAMI.
 - Every deployed Azure environment, including development, MUST use a VNet-integrated Container Apps environment, a Cosmos private endpoint, and private DNS. Cosmos public network access MUST be disabled. Local workstation development MAY use the Cosmos emulator.
 - Treat project settings, workload names, server identifiers, and cost assumptions as confidential business data. Do not log workload names or server identifiers. Use Azure encryption at rest with Microsoft-managed keys; customer-managed keys and application field encryption are not required for v1.
-- Client-side CSV result export is an explicit user-initiated disclosure to the user's device. Generate it only from the authorized project already loaded in that browser, exclude personal and authorization metadata, harden cells against spreadsheet formula injection, and do not send or retain the file server-side.
+- Client-side Excel workbook result export is an explicit user-initiated disclosure to the user's device. Generate it only from the authorized project already loaded in that browser, exclude personal and authorization metadata, store formula-like values as text cells, and do not send or retain the file server-side.
 - Treat display names, email addresses, notice acceptance, and contact choices as personal data. Do not place them in application logs, telemetry, provider requests, share documents, or project API responses.
 - Persist contact email only with an affirmative, separate Azure SQL contact choice. Do not add a contact export endpoint, CRM integration, analytics destination, or other egress without written Privacy, Security, architecture, and service-owner approval.
 - Retain the consent profile while the signed-in pilot profile is in use. Delete or correct it through the approved Microsoft privacy-request process, or delete it when pilot data is decommissioned. A fixed production retention period and accountable policy owner require Privacy/Legal approval before external use.

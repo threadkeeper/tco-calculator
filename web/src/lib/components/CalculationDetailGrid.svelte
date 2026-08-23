@@ -167,11 +167,11 @@
     <button
       class="export-button"
       type="button"
-      title="Export result rows for Excel"
+      title="Export formatted Excel workbook"
       onclick={() => downloadProjectExport(project, calculation)}
     >
       <FileSpreadsheet size={17} aria-hidden="true" />
-      Export for Excel
+      Export XLSX
     </button>
   </header>
 
