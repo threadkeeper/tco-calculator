@@ -133,3 +133,8 @@ appsettings.*.local.json
 /test-results/
 /web/test-results/
 /playwright-report/
+/companion/**/bin/
+/companion/**/obj/
+/companion/TestResults/
+/companion/restore-diagnostic.txt
+/companion/artifacts/

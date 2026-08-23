@@ -13,6 +13,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:browser": "playwright test",
+    "spike:calculator-handoff": "node scripts/calculator-handoff-spike.mjs",
     "fixtures:render": "node scripts/render-assistant-classification-fixtures.mjs",
     "api:generate": "openapi-typescript ../openapi/openapi.yaml -o src/lib/api/generated.ts && prettier --write src/lib/api/generated.ts",
     "lockfile:check": "node scripts/validate-lockfile.mjs"

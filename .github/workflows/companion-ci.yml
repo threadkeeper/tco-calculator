@@ -1,0 +1,113 @@
+name: Companion CI
+
+on:
+  pull_request:
+    paths:
+      - companion/**
+      - .github/workflows/companion-ci.yml
+  push:
+    branches:
+      - main
+    paths:
+      - companion/**
+      - .github/workflows/companion-ci.yml
+  workflow_dispatch:
+
+concurrency:
+  group: companion-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows companion
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: 10.0.300
+          cache: false
+
+      - name: Verify toolchain
+        shell: pwsh
+        run: |
+          if ((dotnet --version) -cne '10.0.300') {
+            throw 'Companion builds require .NET SDK 10.0.300.'
+          }
+
+      - name: Restore locked dependency graph
+        shell: pwsh
+        run: >-
+          dotnet restore companion/AzureTcoCalculator.Companion.sln
+          --locked-mode
+          --configfile companion/NuGet.config
+
+      - name: Build release binaries
+        shell: pwsh
+        run: >-
+          dotnet build companion/AzureTcoCalculator.Companion.sln
+          --configuration Release
+          --no-restore
+
+      - name: Run unit tests
+        shell: pwsh
+        run: >-
+          dotnet test companion/AzureTcoCalculator.Companion.sln
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=companion-tests.trx"
+          --results-directory companion/TestResults
+
+      - name: Check transitive vulnerabilities
+        shell: pwsh
+        run: |
+          $reportJson = & dotnet package list `
+            --project companion/AzureTcoCalculator.Companion.sln `
+            --vulnerable `
+            --include-transitive `
+            --format json `
+            --output-version 1 `
+            --no-restore
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Companion dependency vulnerability inspection failed.'
+          }
+          $reportJson | Out-File `
+            -FilePath companion/TestResults/dependency-vulnerabilities.json `
+            -Encoding utf8
+          $report = $reportJson | ConvertFrom-Json
+          $vulnerablePackages = @(
+            foreach ($project in @($report.projects)) {
+              foreach ($framework in @($project.frameworks)) {
+                if ($null -eq $framework) {
+                  continue
+                }
+                foreach ($package in @($framework.topLevelPackages) + @($framework.transitivePackages)) {
+                  if ($null -ne $package -and @($package.vulnerabilities | Where-Object { $null -ne $_ }).Count -gt 0) {
+                    $package
+                  }
+                }
+              }
+            }
+          )
+          if ($vulnerablePackages.Count -ne 0) {
+            throw 'The companion dependency graph contains a known vulnerability.'
+          }
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: companion-validation-${{ github.sha }}
+          path: |
+            companion/TestResults
+            companion/src/AzureTcoCalculator.Companion/packages.lock.json
+            companion/tests/AzureTcoCalculator.Companion.UnitTests/packages.lock.json
+          if-no-files-found: error
+          retention-days: 7

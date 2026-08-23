@@ -2,6 +2,27 @@
 
 Azure SQL TCO sends only public catalog selectors required to resolve prices. It never sends project names, workload names, quantities, customer inventories, totals, tenant identifiers, subscription identifiers, or commercial agreements to pricing providers.
 
+The separately installed attended Azure Pricing Calculator companion is the narrow exception for project-derived target configuration. After explicit user activation, it enters only the approved de-identified Azure target fields below into Microsoft's public Calculator. It does not send source inventory, project identity, owner identity, calculated totals, credentials, or commercial terms. This flow was approved by the authorized Privacy, Security, Legal/Terms, Product, and Architecture owner on 2026-08-23.
+
+## Attended Azure Pricing Calculator Companion
+
+- Destination: `https://azure.microsoft.com/en-us/pricing/calculator/` and Microsoft-operated requests initiated by that page.
+- Data sent: anonymous ordinal item label; Azure region; SQL Managed Instance product/deployment choice; service tier; hardware family; vCores; selected memory; zone-redundancy setting; quantity; monthly usage hours; purchase plan/term; Azure Hybrid Benefit assumption; data storage; and approved neutral backup-storage values.
+- Data never sent by the companion: project names/descriptions; workload/server names; source cloud SKUs, capacity, costs, or inventory labels; project discounts; parity adjustments; expected or calculated amounts; tenant, subscription, billing, owner, or contact identifiers; commercial agreements; credentials; tokens; cookies; browser storage; screenshots; traces; page captures; or resulting Save/Share URLs.
+- Credentials: the companion authenticates only to the TCO API through WAM and one delegated API scope. Calculator sign-in happens later in ordinary Edge after Playwright and controlled Edge are closed. The companion does not receive or inspect Calculator credentials, cookies, or tokens.
+- Retention: the server manifest is purged when the companion acknowledges strict receipt. A minimal consumed idempotency tombstone may remain for 24 hours. The isolated Edge profile is deleted after ordinary Edge exits when possible, with app-root-only startup recovery for abandoned profiles. The TCO application stores no Calculator estimate or URL.
+- User control: the attended user initiates transfer and performs Microsoft sign-in, agreement selection, Save, Share, and Export directly on Microsoft's origin. The feature stops on Calculator drift, challenge, value mismatch, or failure to preserve anonymous state through handoff/sign-in.
+
+The Calculator page was observed making Microsoft-operated analytics and experience-configuration requests. Do not claim that entered target values remain solely in local browser storage or that Microsoft retains nothing. Microsoft's applicable service terms and privacy commitments govern processing after the user and companion enter data on that site.
+
+## Companion GitHub Release Download
+
+- Destination: this repository's fixed HTTPS GitHub Releases page or a server-selected immutable versioned MSIX asset under that release boundary.
+- Data sent by the application: no project, launch, workload, owner, tenant, subscription, calculation, or customer data. Download URLs contain no application context.
+- Data observed by GitHub: ordinary web and download metadata such as source IP address, user agent, requested asset, timestamp, and applicable GitHub account/session information under GitHub's terms and privacy statement.
+- Credentials and retention: the companion sends no TCO or Microsoft access token to GitHub. GitHub controls retention of its service metadata. The TCO application does not persist download telemetry.
+- User control: the repository owner explicitly opens the release page, downloads the owner-only self-signed development MSIX, verifies its SHA-256 and exact development publisher, and chooses whether to install it on the one machine where the matching public certificate was explicitly trusted. GitHub release authorship or attestation establishes provenance only; it does not make the development certificate publicly trusted or verify a GitHub identity in Windows. There is no `ms-appinstaller:` invocation, silent install, background updater, distribution to another person, or endpoint-policy bypass.
+
 ## Client-Side CSV Export
 
 The user can explicitly download the currently visible project and latest calculation as an Excel-compatible CSV. The browser constructs the file locally; no export API, server-side export copy, telemetry event, upload, or third-party destination is involved. The CSV contains confidential project settings, inventory inputs, server-returned results, and non-secret pricing provenance, but excludes owner and identity claims, display names, contact/consent data, ETags, capability secrets, and authorization metadata. Cells are quoted and text is hardened against spreadsheet formula injection. After download, the file is governed by the user's managed-device and storage controls.
