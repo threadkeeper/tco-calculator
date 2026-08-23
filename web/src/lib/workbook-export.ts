@@ -296,8 +296,8 @@ function worksheetXml(
   <sheetFormatPr defaultRowHeight="26"/>
   <cols>${columns}</cols>
   <sheetData>${metadata}${groups}<row r="7" ht="44" customHeight="1">${header}</row>${body}</sheetData>
-  <mergeCells count="${mergeRefs.length}">${mergedCells}</mergeCells>
   <autoFilter ref="A7:${lastColumn}${lastRow}"/>
+  <mergeCells count="${mergeRefs.length}">${mergedCells}</mergeCells>
   <printOptions horizontalCentered="0" verticalCentered="0"/>
   <pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>
   <pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0" paperSize="9"/>

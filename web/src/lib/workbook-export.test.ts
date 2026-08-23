@@ -126,6 +126,7 @@ describe('project result export', () => {
     expect(worksheet).toContain('<mergeCell ref="AN6:AQ6"/>');
     expect(worksheet).toContain('<mergeCells count="26">');
     expect(worksheet).toContain('<autoFilter ref="A7:AQ8"/>');
+    expect(worksheet.indexOf('<autoFilter ')).toBeLessThan(worksheet.indexOf('<mergeCells '));
     expect(worksheet).toContain('<col min="1" max="1" width="27" customWidth="1"/>');
     expect(worksheet).toContain('<col min="43" max="43" width="17" customWidth="1"/>');
     expect(worksheet).toContain('RESOURCE LINE ITEMS');
