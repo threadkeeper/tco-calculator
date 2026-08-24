@@ -39,9 +39,9 @@ public sealed class CalculatorAutomationService
             await AssertCalculatorPageAsync(page).ConfigureAwait(true);
 
             reportStatus($"Creating {plan.Items.Count} SQL Managed Instance lines...");
+            await CreateItemsAsync(page, plan.Items).ConfigureAwait(true);
             await FillAndVerifyAsync(page.GetByPlaceholder("Your Estimate").First, "Azure TCO Estimate")
                 .ConfigureAwait(true);
-            await CreateItemsAsync(page, plan.Items).ConfigureAwait(true);
             await VerifyAsync(page, plan.Items).ConfigureAwait(true);
 
             reportStatus("Reloading the Calculator and verifying every value...");
