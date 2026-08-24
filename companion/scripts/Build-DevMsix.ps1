@@ -1,6 +1,15 @@
 [CmdletBinding()]
 param(
     [string] $OutputDirectory,
+  [Parameter(Mandatory)]
+  [ValidatePattern('^https://[a-z0-9.-]+\.azurecontainerapps\.io$')]
+  [string] $ApiOrigin,
+  [Parameter(Mandatory)]
+  [ValidatePattern('^[0-9a-fA-F-]{36}$')]
+  [string] $CompanionClientId,
+  [Parameter(Mandatory)]
+  [ValidatePattern('^api://\S+$')]
+  [string] $ApiScope,
     [switch] $Sign
 )
 
@@ -100,6 +109,9 @@ New-Item -ItemType Directory -Path $assetsDirectory -Force | Out-Null
     --self-contained false `
     --no-restore `
     -p:WindowsAppSDKSelfContained=true `
+    -p:CalculatorApiOrigin=$ApiOrigin `
+    -p:CalculatorCompanionClientId=$CompanionClientId `
+    -p:CalculatorApiScope=$ApiScope `
     --output $publishDirectory
 if ($LASTEXITCODE -ne 0) {
     throw 'The locked companion publish failed.'

@@ -53,6 +53,26 @@ impl Problem {
         )
     }
 
+    pub fn forbidden(instance: &str, detail: &str) -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "urn:azure-sql-tco:problem:forbidden",
+            "Forbidden",
+            instance,
+            detail,
+        )
+    }
+
+    pub fn conflict(instance: &str, detail: &str) -> Self {
+        Self::new(
+            StatusCode::CONFLICT,
+            "urn:azure-sql-tco:problem:conflict",
+            "Conflict",
+            instance,
+            detail,
+        )
+    }
+
     pub fn not_found(instance: &str, detail: &str) -> Self {
         Self::new(
             StatusCode::NOT_FOUND,
@@ -172,6 +192,46 @@ impl Problem {
         )
     }
 
+    pub fn calculator_unavailable(instance: &str) -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "urn:azure-sql-tco:problem:calculator-unavailable",
+            "Calculator Unavailable",
+            instance,
+            "Calculator estimate creation is currently unavailable.",
+        )
+    }
+
+    pub fn calculator_ineligible(instance: &str) -> Self {
+        Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "urn:azure-sql-tco:problem:calculator-ineligible",
+            "Calculator Estimate Unavailable",
+            instance,
+            "The saved project cannot be represented exactly by the supported Calculator contract.",
+        )
+    }
+
+    pub fn companion_update_required(instance: &str) -> Self {
+        Self::new(
+            StatusCode::UPGRADE_REQUIRED,
+            "urn:azure-sql-tco:problem:companion-update-required",
+            "Companion Update Required",
+            instance,
+            "The installed companion does not support the required launch contract.",
+        )
+    }
+
+    pub fn launch_precondition_failed(instance: &str) -> Self {
+        Self::new(
+            StatusCode::PRECONDITION_FAILED,
+            "urn:azure-sql-tco:problem:precondition-failed",
+            "Precondition Failed",
+            instance,
+            "The Calculator launch has changed; restart the handoff.",
+        )
+    }
+
     pub fn assistant_unavailable(instance: &str) -> Self {
         Self::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -266,6 +326,9 @@ impl IntoResponse for Problem {
         )
             .into_response();
         response.headers_mut().extend(headers);
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         response
     }
 }

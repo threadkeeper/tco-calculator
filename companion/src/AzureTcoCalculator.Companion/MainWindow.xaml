@@ -5,8 +5,19 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:AzureTcoCalculator.Companion"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
-
+        Title="Azure TCO Calculator Companion" Height="360" Width="620"
+        MinHeight="320" MinWidth="520" WindowStartupLocation="CenterScreen">
+    <Grid Margin="32">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel VerticalAlignment="Center">
+            <TextBlock FontSize="24" FontWeight="SemiBold" Text="Azure Pricing Calculator" />
+            <TextBlock x:Name="StatusText" Margin="0,16,0,0" FontSize="15" TextWrapping="Wrap" />
+            <ProgressBar x:Name="Progress" Margin="0,24,0,0" Height="4" IsIndeterminate="True" />
+        </StackPanel>
+        <Button x:Name="CloseButton" Grid.Row="1" Width="96" Height="32" HorizontalAlignment="Right"
+                Content="Cancel" Click="CloseButton_Click" />
     </Grid>
 </Window>

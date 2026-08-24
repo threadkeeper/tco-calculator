@@ -24,6 +24,7 @@ pub struct Config {
     pub local_auth: Option<LocalAuthSettings>,
     pub cosmos: Option<CosmosSettings>,
     pub assistant: Option<AssistantSettings>,
+    pub calculator_companion: Option<CalculatorCompanionSettings>,
     pub web_asset_dir: PathBuf,
     pub guest_requests_per_minute: u32,
     pub provider_refreshes_per_hour: u32,
@@ -51,6 +52,13 @@ pub struct AssistantSettings {
     pub deployment: String,
     pub api_version: String,
     pub concurrency: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CalculatorCompanionSettings {
+    pub client_application_id: Uuid,
+    pub delegated_scope: String,
+    pub application_origin: String,
 }
 
 #[derive(Debug, Error)]
@@ -93,6 +101,20 @@ pub enum ConfigError {
     InvalidAssistantConcurrency,
     #[error("ASSISTANT_REQUESTS_PER_MINUTE must be between 1 and 60")]
     InvalidAssistantRequestQuota,
+    #[error("CALCULATOR_COMPANION_ENABLED must be true or false")]
+    InvalidCalculatorCompanionEnabled,
+    #[error("Calculator companion settings require CALCULATOR_COMPANION_ENABLED=true")]
+    CalculatorCompanionSettingsWhileDisabled,
+    #[error(
+        "enabled Calculator companion requires client ID, delegated scope, and application origin together"
+    )]
+    IncompleteCalculatorCompanionSettings,
+    #[error("CALCULATOR_COMPANION_CLIENT_ID must be a non-nil UUID")]
+    InvalidCalculatorCompanionClientId,
+    #[error("CALCULATOR_COMPANION_SCOPE must be a single bounded delegated scope")]
+    InvalidCalculatorCompanionScope,
+    #[error("APPLICATION_ORIGIN must be an HTTPS origin, or loopback HTTP in local mode")]
+    InvalidApplicationOrigin,
     #[error("request quota settings must be within supported positive ranges")]
     InvalidQuota,
     #[error("PROVIDER_MAX_RESPONSE_BYTES must be between 1 MiB and 256 MiB")]
@@ -155,6 +177,13 @@ impl Config {
             env::var("FOUNDRY_API_VERSION").ok(),
             env::var("ASSISTANT_CONCURRENCY").ok().as_deref(),
         )?;
+        let calculator_companion = calculator_companion_settings(
+            environment,
+            env::var("CALCULATOR_COMPANION_ENABLED").ok().as_deref(),
+            env::var("CALCULATOR_COMPANION_CLIENT_ID").ok(),
+            env::var("CALCULATOR_COMPANION_SCOPE").ok(),
+            env::var("APPLICATION_ORIGIN").ok(),
+        )?;
         let web_asset_dir = env::var_os("WEB_ASSET_DIR")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
@@ -178,6 +207,7 @@ impl Config {
             local_auth,
             cosmos,
             assistant,
+            calculator_companion,
             web_asset_dir,
             guest_requests_per_minute,
             provider_refreshes_per_hour,
@@ -186,6 +216,74 @@ impl Config {
             assistant_requests_per_minute,
         })
     }
+}
+
+fn calculator_companion_settings(
+    environment: AppEnvironment,
+    enabled: Option<&str>,
+    client_application_id: Option<String>,
+    delegated_scope: Option<String>,
+    application_origin: Option<String>,
+) -> Result<Option<CalculatorCompanionSettings>, ConfigError> {
+    let enabled = match enabled.unwrap_or("false") {
+        "true" => true,
+        "false" => false,
+        _ => return Err(ConfigError::InvalidCalculatorCompanionEnabled),
+    };
+    let has_setting = client_application_id.is_some()
+        || delegated_scope.is_some()
+        || application_origin.is_some();
+    if !enabled {
+        return if has_setting {
+            Err(ConfigError::CalculatorCompanionSettingsWhileDisabled)
+        } else {
+            Ok(None)
+        };
+    }
+    let (client_application_id, delegated_scope, application_origin) =
+        match (client_application_id, delegated_scope, application_origin) {
+            (Some(client_application_id), Some(delegated_scope), Some(application_origin)) => {
+                (client_application_id, delegated_scope, application_origin)
+            }
+            _ => return Err(ConfigError::IncompleteCalculatorCompanionSettings),
+        };
+    let client_application_id = Uuid::parse_str(&client_application_id)
+        .ok()
+        .filter(|value| !value.is_nil())
+        .ok_or(ConfigError::InvalidCalculatorCompanionClientId)?;
+    if delegated_scope.is_empty()
+        || delegated_scope.len() > 100
+        || !delegated_scope
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(ConfigError::InvalidCalculatorCompanionScope);
+    }
+    let origin = application_origin
+        .parse::<Url>()
+        .map_err(|_| ConfigError::InvalidApplicationOrigin)?;
+    let local_loopback = environment == AppEnvironment::Local
+        && origin.scheme() == "http"
+        && origin.host_str().is_some_and(|host| {
+            host.eq_ignore_ascii_case("localhost")
+                || host == "127.0.0.1"
+                || host == "[::1]"
+                || host == "::1"
+        });
+    if (origin.scheme() != "https" && !local_loopback)
+        || origin.username() != ""
+        || origin.password().is_some()
+        || origin.path() != "/"
+        || origin.query().is_some()
+        || origin.fragment().is_some()
+    {
+        return Err(ConfigError::InvalidApplicationOrigin);
+    }
+    Ok(Some(CalculatorCompanionSettings {
+        client_application_id,
+        delegated_scope,
+        application_origin: origin.origin().ascii_serialization(),
+    }))
 }
 
 fn assistant_settings(

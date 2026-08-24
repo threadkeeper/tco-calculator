@@ -29,10 +29,14 @@ Set-Location companion
 
 The initializer creates a non-exportable code-signing private key in `CurrentUser\My`, exports only its public `.cer` under the current user's local application-data directory, and imports that public certificate into `LocalMachine\TrustedPeople`. It never creates a PFX.
 
-After locked restore and validation, build and sign the package from a normal PowerShell session:
+After locked restore and validation, build and sign the package from a normal PowerShell session. Supply the approved public native-client ID, delegated API scope, and exact Container Apps origin; these non-secret values are embedded in the signed package so runtime input cannot redirect a bearer token.
 
 ```powershell
-.\scripts\Build-DevMsix.ps1 -Sign
+.\scripts\Build-DevMsix.ps1 `
+	-ApiOrigin 'https://<approved-app>.azurecontainerapps.io' `
+	-CompanionClientId '<approved-public-client-id>' `
+	-ApiScope 'api://<approved-api-client-id>/calculator.launch' `
+	-Sign
 ```
 
 Generated MSIX and SHA-256 files remain under ignored `companion/artifacts`. The package identity ends in `.Dev`, uses publisher `CN=Azure TCO Calculator Development`, runs `asInvoker`, and is trusted only on machines where the matching public certificate was explicitly installed. The certificate label is not a verified GitHub identity. Do not distribute this owner-only package to another person.

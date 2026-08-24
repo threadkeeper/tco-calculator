@@ -13,4 +13,10 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" />
   </ItemGroup>
 
+  <ItemGroup>
+    <AssemblyMetadata Include="CalculatorApiOrigin" Value="$(CalculatorApiOrigin)" />
+    <AssemblyMetadata Include="CalculatorCompanionClientId" Value="$(CalculatorCompanionClientId)" />
+    <AssemblyMetadata Include="CalculatorApiScope" Value="$(CalculatorApiScope)" />
+  </ItemGroup>
+
 </Project>

@@ -99,6 +99,18 @@ pub async fn router(mut config: crate::config::Config) -> Result<Router, ServerE
             post(api::project_shares::create),
         )
         .route(
+            "/projects/{project_id}/calculator-launches",
+            post(api::calculator_launches::create),
+        )
+        .route(
+            "/calculator-launches/{launch_id}/claim",
+            post(api::calculator_launches::claim),
+        )
+        .route(
+            "/calculator-launches/{launch_id}/acknowledge",
+            post(api::calculator_launches::acknowledge),
+        )
+        .route(
             "/projects/{project_id}/shares/{share_id}",
             axum::routing::delete(api::project_shares::revoke),
         )
@@ -358,6 +370,7 @@ mod tests {
             }),
             cosmos: None,
             assistant: None,
+            calculator_companion: None,
             web_asset_dir: PathBuf::from("rust/static"),
             guest_requests_per_minute: 60,
             provider_refreshes_per_hour: 8,

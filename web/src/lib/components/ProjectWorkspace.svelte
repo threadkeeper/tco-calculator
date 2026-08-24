@@ -6,6 +6,7 @@
     CloudCog,
     Database,
     DollarSign,
+    ExternalLink,
     Plus,
     RotateCw,
     Save,
@@ -41,6 +42,7 @@
   import { readRegionOptions, type RegionOption } from '$lib/regions';
   import CalculationDetailGrid from './CalculationDetailGrid.svelte';
   import CalculationResults from './CalculationResults.svelte';
+  import CalculatorLaunchDialog from './CalculatorLaunchDialog.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import MiPurchasePlanSelector from './MiPurchasePlanSelector.svelte';
   import ProblemBanner from './ProblemBanner.svelte';
@@ -100,6 +102,12 @@
   let shareExpiresAt = $state('');
   let shareCopied = $state(false);
   let revokingShare = $state(false);
+  let launchingCalculator = $state(false);
+  let calculatorLaunchOpen = $state(false);
+  let calculatorLaunchState = $state<'starting' | 'ready' | 'error'>('starting');
+  let calculatorLaunchMessage = $state('');
+  let calculatorLaunchUri = $state<string | null>(null);
+  let companionLink = $state<HTMLAnchorElement>();
   let settingsOpen = $state(untrack(() => workspace.project.settings.project_type === 'on_prem'));
   let settingsValidationAttempted = $state(false);
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -110,6 +118,14 @@
       : workspace.project.settings.project_type.toUpperCase()
   );
   const isSqlPayg = $derived(workspace.project.settings.project_type === 'sql_payg');
+  const calculatorLaunchEligible = $derived(
+    mode === 'authenticated' &&
+      currentProjectId !== null &&
+      currentEtag !== null &&
+      !dirty &&
+      !isSqlPayg &&
+      workspace.calculation !== null
+  );
 
   $effect(() => {
     currentProjectId = projectId;
@@ -302,6 +318,62 @@
     shareId = null;
     shareExpiresAt = '';
     shareCopied = false;
+  }
+
+  function createCalculatorEstimate() {
+    if (!calculatorLaunchEligible || !currentProjectId || !currentEtag || !companionLink) return;
+    const launchId = crypto.randomUUID();
+    const protocolUri = `azure-tco-calculator://launch?v=1&id=${launchId}`;
+    const headers = new Headers({ 'if-match': currentEtag });
+    calculatorLaunchUri = protocolUri;
+    calculatorLaunchOpen = true;
+    calculatorLaunchState = 'starting';
+    calculatorLaunchMessage = 'Creating a secure handoff and opening the companion.';
+    launchingCalculator = true;
+
+    const creation = requestJson(
+      `/api/v1/projects/${encodeURIComponent(currentProjectId)}/calculator-launches`,
+      {
+        method: 'POST',
+        headers,
+        credentials: 'same-origin',
+        cache: 'no-store',
+        keepalive: true,
+        body: JSON.stringify({ launch_id: launchId, protocol_version: 1 })
+      }
+    );
+    companionLink.setAttribute('href', protocolUri);
+    companionLink.click();
+
+    void creation
+      .then((payload) => {
+        const launch = asRecord(payload);
+        if (
+          readString(launch, 'launch_id') !== launchId ||
+          readString(launch, 'status') !== 'ready'
+        ) {
+          throw new Error('The Calculator launch response was not recognized.');
+        }
+        calculatorLaunchState = 'ready';
+        calculatorLaunchMessage =
+          'Continue in the companion window. This page does not track local automation progress.';
+      })
+      .catch((error: unknown) => {
+        calculatorLaunchState = 'error';
+        calculatorLaunchMessage = messageFromError(
+          error,
+          'The secure Calculator handoff could not be created.'
+        );
+      })
+      .finally(() => {
+        launchingCalculator = false;
+      });
+  }
+
+  function openCalculatorCompanion() {
+    if (!calculatorLaunchUri || !companionLink) return;
+    companionLink.setAttribute('href', calculatorLaunchUri);
+    companionLink.click();
   }
 
   function addResource() {
@@ -543,6 +615,18 @@
         <button
           class="secondary"
           type="button"
+          title={calculatorLaunchEligible
+            ? 'Create Azure Calculator estimate'
+            : 'Save and calculate this project before creating a Calculator estimate'}
+          onclick={createCalculatorEstimate}
+          disabled={!calculatorLaunchEligible || saving || launchingCalculator}
+        >
+          <ExternalLink size={17} />
+          {launchingCalculator ? 'Opening…' : 'Create Calculator estimate'}
+        </button>
+        <button
+          class="secondary"
+          type="button"
           title={dirty ? 'Save changes before sharing' : 'Share project'}
           onclick={createShare}
           disabled={dirty || saving || sharing}
@@ -561,6 +645,16 @@
       </button>
     </div>
   </div>
+
+  <!-- eslint-disable svelte/no-navigation-without-resolve -->
+  <a
+    class="companion-link"
+    bind:this={companionLink}
+    href="azure-tco-calculator://launch?v=1&id=00000000-0000-4000-8000-000000000000"
+    tabindex="-1"
+    aria-hidden="true">Open companion</a
+  >
+  <!-- eslint-enable svelte/no-navigation-without-resolve -->
 
   <main>
     {#if problem}<ProblemBanner message={problem} ondismiss={() => (problem = null)} />{/if}
@@ -947,10 +1041,26 @@
   onclose={closeShare}
 />
 
+<CalculatorLaunchDialog
+  open={calculatorLaunchOpen}
+  state={calculatorLaunchState}
+  message={calculatorLaunchMessage}
+  onopen={openCalculatorCompanion}
+  onclose={() => (calculatorLaunchOpen = false)}
+/>
+
 <style>
   .workspace {
     min-height: calc(100vh - 56px);
     background: var(--page);
+  }
+  .companion-link {
+    position: fixed;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .workspace-bar {
     position: sticky;

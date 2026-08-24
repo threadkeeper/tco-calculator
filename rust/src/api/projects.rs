@@ -187,6 +187,11 @@ pub async fn delete(
         .await
         .map_err(|_| Problem::internal(ITEM_INSTANCE))?;
     state
+        .calculator_launches
+        .purge_project(&principal.owner_id(), project_id)
+        .await
+        .map_err(|_| Problem::internal(ITEM_INSTANCE))?;
+    state
         .projects
         .delete(&principal.owner_id(), project_id)
         .await

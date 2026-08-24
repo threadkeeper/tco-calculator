@@ -46,6 +46,10 @@ jobs:
       FOUNDRY_ENDPOINT: ${{ vars.FOUNDRY_ENDPOINT }}
       FOUNDRY_MODEL_DEPLOYMENT: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT }}
       ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
+      CALCULATOR_COMPANION_ENABLED: ${{ vars.CALCULATOR_COMPANION_ENABLED }}
+      CALCULATOR_COMPANION_CLIENT_ID: ${{ vars.CALCULATOR_COMPANION_CLIENT_ID }}
+      CALCULATOR_COMPANION_SCOPE: ${{ vars.CALCULATOR_COMPANION_SCOPE }}
+      APPLICATION_ORIGIN: ${{ vars.APPLICATION_ORIGIN }}
       ENTRA_CLIENT_SECRET_URI: ${{ secrets.ENTRA_CLIENT_SECRET_URI }}
       WEB_BUILD_IMAGE: ${{ vars.WEB_BUILD_IMAGE }}
       RUST_BUILD_IMAGE: ${{ vars.RUST_BUILD_IMAGE }}
@@ -87,6 +91,10 @@ jobs:
             'FOUNDRY_ENDPOINT',
             'FOUNDRY_MODEL_DEPLOYMENT',
             'ENTRA_CLIENT_ID',
+            'CALCULATOR_COMPANION_ENABLED',
+            'CALCULATOR_COMPANION_CLIENT_ID',
+            'CALCULATOR_COMPANION_SCOPE',
+            'APPLICATION_ORIGIN',
             'ENTRA_CLIENT_SECRET_URI',
             'WEB_BUILD_IMAGE',
             'RUST_BUILD_IMAGE',
@@ -98,10 +106,19 @@ jobs:
             }
           }
 
-          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'ENTRA_CLIENT_ID')) {
+          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'ENTRA_CLIENT_ID', 'CALCULATOR_COMPANION_CLIENT_ID')) {
             if ([Environment]::GetEnvironmentVariable($name) -notmatch '^[0-9a-fA-F-]{36}$') {
               throw "$name must be a UUID."
             }
+          }
+          if ($env:CALCULATOR_COMPANION_ENABLED -cne 'true') {
+            throw 'The approved dev deployment requires the Calculator companion feature flag.'
+          }
+          if ($env:CALCULATOR_COMPANION_SCOPE -notmatch '^[A-Za-z0-9._-]{1,100}$') {
+            throw 'CALCULATOR_COMPANION_SCOPE must be one bounded delegated scope claim.'
+          }
+          if ($env:APPLICATION_ORIGIN -notmatch '^https://[a-z0-9.-]+\.azurecontainerapps\.io$') {
+            throw 'APPLICATION_ORIGIN must be an exact HTTPS Azure Container Apps origin.'
           }
           if ($env:AZURE_DEPLOYMENT_ENVIRONMENT -ne 'dev') {
             throw 'Only the approved dev environment may be deployed.'
@@ -680,6 +697,18 @@ jobs:
           }
           if ($app.properties.template.containers[0].image -ne $env:CONTAINER_IMAGE) {
             throw 'The deployed Container App does not use the reviewed immutable image digest.'
+          }
+          $runtimeEnvironment = @{}
+          foreach ($setting in @($app.properties.template.containers[0].env)) {
+            $runtimeEnvironment[[string]$setting.name] = [string]$setting.value
+          }
+          if (
+            $runtimeEnvironment.CALCULATOR_COMPANION_ENABLED -cne 'true' -or
+            $runtimeEnvironment.CALCULATOR_COMPANION_CLIENT_ID -cne $env:CALCULATOR_COMPANION_CLIENT_ID -or
+            $runtimeEnvironment.CALCULATOR_COMPANION_SCOPE -cne $env:CALCULATOR_COMPANION_SCOPE -or
+            $runtimeEnvironment.APPLICATION_ORIGIN -cne $env:APPLICATION_ORIGIN
+          ) {
+            throw 'The deployed Calculator companion configuration does not match the reviewed dev settings.'
           }
           $auth = az resource show --ids "$appId/authConfigs/current" --api-version 2024-03-01 --only-show-errors --output json | ConvertFrom-Json
           if ($auth.properties.platform.enabled -ne $true -or $auth.properties.globalValidation.unauthenticatedClientAction -ne 'AllowAnonymous') {

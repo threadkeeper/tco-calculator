@@ -73,6 +73,7 @@ pub struct SelectedTarget {
     pub service_tier: ServiceTier,
     pub hardware_family: String,
     pub vcores: u32,
+    pub zone_redundant: bool,
     pub included_memory_gb: DecimalValue,
     pub selected_memory_gb: DecimalValue,
     pub additional_memory_gb: DecimalValue,
@@ -479,6 +480,7 @@ fn selected_target(candidate: &EligibleCandidate<'_>) -> SelectedTarget {
         service_tier: candidate.candidate.service_tier,
         hardware_family: candidate.candidate.hardware_family.clone(),
         vcores: candidate.candidate.vcores,
+        zone_redundant: candidate.candidate.zone_redundant,
         included_memory_gb: candidate.candidate.included_memory_gb,
         selected_memory_gb: candidate.selected_memory_gb,
         additional_memory_gb: DecimalValue(
@@ -843,6 +845,26 @@ mod tests {
 
         assert_eq!(selected.selected_memory_gb, decimal("256"));
         assert_eq!(selected.additional_memory_gb, decimal("32"));
+    }
+
+    #[test]
+    fn selected_target_preserves_zone_redundancy() {
+        let mut target = candidate(
+            "nggp-zr",
+            ServiceTier::NextGenerationGeneralPurpose,
+            8,
+            "64",
+            &["64"],
+            None,
+        );
+        target.zone_redundant = true;
+
+        let selected = selected_target(&EligibleCandidate {
+            candidate: &target,
+            selected_memory_gb: decimal("64"),
+        });
+
+        assert!(selected.zone_redundant);
     }
 
     fn catalog(candidates: Vec<TargetCandidate>) -> CapabilityCatalog {

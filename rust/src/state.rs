@@ -13,6 +13,7 @@ use crate::{
     },
     config::{AppEnvironment, Config, FORMULA_VERSION},
     persistence::{
+        calculator_launch::{CalculatorLaunchRepository, InMemoryCalculatorLaunchRepository},
         cosmos::{CosmosProjectRepository, CosmosSnapshotRepository},
         privacy_consent::{InMemoryPrivacyConsentRepository, PrivacyConsentRepository},
         project_share::{InMemoryProjectShareRepository, ProjectShareRepository},
@@ -72,6 +73,7 @@ pub struct AppState {
     pub assistant_slots: Arc<tokio::sync::Semaphore>,
     pub assistant_rate_limit: TokenBucket,
     pub calculations: CalculationEngine,
+    pub calculator_launches: Arc<dyn CalculatorLaunchRepository>,
     pub projects: Arc<dyn ProjectRepository>,
     pub privacy_consents: Arc<dyn PrivacyConsentRepository>,
     pub project_shares: Arc<dyn ProjectShareRepository>,
@@ -199,6 +201,7 @@ impl AppState {
             assistant_slots: Arc::new(tokio::sync::Semaphore::new(assistant_concurrency)),
             assistant_rate_limit,
             calculations,
+            calculator_launches: Arc::new(InMemoryCalculatorLaunchRepository::new()),
             projects,
             privacy_consents,
             project_shares,

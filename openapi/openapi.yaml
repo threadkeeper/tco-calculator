@@ -16,6 +16,7 @@ tags:
   - name: Calculations
   - name: Projects
   - name: Project Shares
+  - name: Calculator Companion
 paths:
   /session:
     get:
@@ -510,6 +511,112 @@ paths:
                 $ref: '#/components/schemas/CreatedProjectShare'
         default:
           $ref: '#/components/responses/Problem'
+  /projects/{project_id}/calculator-launches:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      operationId: createCalculatorLaunch
+      tags: [Calculator Companion]
+      security:
+        - containerAppsAuth: []
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCalculatorLaunchRequest'
+      responses:
+        '200':
+          description: Existing idempotent launch bound to the same project revision.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalculatorLaunch'
+        '201':
+          description: One-time owner-scoped Calculator launch created.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalculatorLaunch'
+        default:
+          $ref: '#/components/responses/Problem'
+  /calculator-launches/{launch_id}/claim:
+    parameters:
+      - $ref: '#/components/parameters/LaunchId'
+    post:
+      operationId: claimCalculatorLaunch
+      tags: [Calculator Companion]
+      security:
+        - containerAppsAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimCalculatorLaunchRequest'
+      responses:
+        '200':
+          description: Immutable manifest claimed by the authorized companion instance.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimedCalculatorLaunch'
+        default:
+          $ref: '#/components/responses/Problem'
+  /calculator-launches/{launch_id}/acknowledge:
+    parameters:
+      - $ref: '#/components/parameters/LaunchId'
+    post:
+      operationId: acknowledgeCalculatorLaunch
+      tags: [Calculator Companion]
+      security:
+        - containerAppsAuth: []
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcknowledgeCalculatorLaunchRequest'
+      responses:
+        '204':
+          description: Manifest receipt acknowledged and manifest payload purged.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+        default:
+          $ref: '#/components/responses/Problem'
   /projects/{project_id}/shares/{share_id}:
     parameters:
       - $ref: '#/components/parameters/ProjectId'
@@ -577,10 +684,21 @@ components:
       schema:
         type: string
         format: uuid
+    LaunchId:
+      name: launch_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   responses:
     Problem:
       description: RFC 9457 Problem Details response.
       headers:
+        Cache-Control:
+          schema:
+            type: string
+            const: no-store
         Retry-After:
           description: Seconds to wait when the request quota is exceeded.
           schema:
@@ -1366,7 +1484,7 @@ components:
       enum: [next_generation_general_purpose, business_critical]
     SelectedTarget:
       type: object
-      required: [configuration_key, azure_region, service_tier, hardware_family, vcores, included_memory_gb, selected_memory_gb, additional_memory_gb, storage_architecture, maximum_storage_gb]
+      required: [configuration_key, azure_region, service_tier, hardware_family, vcores, zone_redundant, included_memory_gb, selected_memory_gb, additional_memory_gb, storage_architecture, maximum_storage_gb]
       properties:
         configuration_key:
           type: string
@@ -1379,6 +1497,8 @@ components:
         vcores:
           type: integer
           minimum: 1
+        zone_redundant:
+          type: boolean
         included_memory_gb:
           $ref: '#/components/schemas/Decimal'
         selected_memory_gb:
@@ -1477,6 +1597,185 @@ components:
               type: string
               format: date-time
       unevaluatedProperties: false
+    CreateCalculatorLaunchRequest:
+      type: object
+      additionalProperties: false
+      required: [launch_id, protocol_version]
+      properties:
+        launch_id:
+          type: string
+          format: uuid
+        protocol_version:
+          type: integer
+          const: 1
+    CalculatorLaunch:
+      type: object
+      additionalProperties: false
+      required: [launch_id, status, claim_expires_at, minimum_companion_version, protocol_version]
+      properties:
+        launch_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: ready
+        claim_expires_at:
+          type: string
+          format: date-time
+        minimum_companion_version:
+          type: string
+          pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+        protocol_version:
+          type: integer
+          const: 1
+    ClaimCalculatorLaunchRequest:
+      type: object
+      additionalProperties: false
+      required: [companion_instance_id, companion_version, supported_protocol_versions, supported_manifest_versions, supported_calculator_contracts]
+      properties:
+        companion_instance_id:
+          type: string
+          format: uuid
+        companion_version:
+          type: string
+          pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+        supported_protocol_versions:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: integer
+            minimum: 1
+        supported_manifest_versions:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: integer
+            minimum: 1
+        supported_calculator_contracts:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: string
+            pattern: '^20[0-9]{2}-[0-9]{2}-[0-9]{2}$'
+    ClaimedCalculatorLaunch:
+      type: object
+      additionalProperties: false
+      required: [manifest_sha256, manifest]
+      properties:
+        manifest_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        manifest:
+          $ref: '#/components/schemas/CalculatorManifest'
+    AcknowledgeCalculatorLaunchRequest:
+      type: object
+      additionalProperties: false
+      required: [companion_instance_id]
+      properties:
+        companion_instance_id:
+          type: string
+          format: uuid
+    CalculatorManifest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, calculator_contract_version, calculator_url, generated_at, currency, locale, items]
+      properties:
+        schema_version:
+          type: integer
+          const: 1
+        calculator_contract_version:
+          type: string
+          const: '2026-08-23'
+        calculator_url:
+          type: string
+          format: uri
+          const: https://azure.microsoft.com/en-us/pricing/calculator/
+        generated_at:
+          type: string
+          format: date-time
+        currency:
+          type: string
+          const: USD
+        locale:
+          type: string
+          const: en-US
+        items:
+          type: array
+          minItems: 1
+          maxItems: 25
+          items:
+            $ref: '#/components/schemas/CalculatorManifestItem'
+    CalculatorManifestItem:
+      type: object
+      additionalProperties: false
+      required: [item_key, display_name, product, region, deployment_model, service_tier, hardware_family, vcores, selected_memory_gb, zone_redundant, quantity, hours_per_month, purchase_option, azure_hybrid_benefit, data_storage_gb, backup_storage_gb, expected_public_annual]
+      properties:
+        item_key:
+          type: string
+          pattern: '^[0-9]{3}$'
+        display_name:
+          type: string
+          pattern: '^Workload [0-9]{3}$'
+        product:
+          type: string
+          const: azure_sql_managed_instance
+        region:
+          type: string
+          pattern: '^[a-z0-9]+$'
+        deployment_model:
+          type: string
+          const: single_instance
+        service_tier:
+          type: string
+          enum: [next_generation_general_purpose, business_critical]
+        hardware_family:
+          type: string
+          enum: [premium_series, premium_series_memory_optimized]
+        vcores:
+          type: integer
+          minimum: 1
+        selected_memory_gb:
+          $ref: '#/components/schemas/Decimal'
+        zone_redundant:
+          type: boolean
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        hours_per_month:
+          $ref: '#/components/schemas/Decimal'
+        purchase_option:
+          type: string
+          enum: [payg, one_year_reservation, three_year_reservation, one_year_savings_plan]
+        azure_hybrid_benefit:
+          type: boolean
+        data_storage_gb:
+          $ref: '#/components/schemas/Decimal'
+        backup_storage_gb:
+          $ref: '#/components/schemas/Decimal'
+        expected_public_annual:
+          $ref: '#/components/schemas/CalculatorExpectedPublicAnnual'
+    CalculatorExpectedPublicAnnual:
+      type: object
+      additionalProperties: false
+      required: [compute, additional_memory, license, storage, total_before_parity]
+      properties:
+        compute:
+          $ref: '#/components/schemas/Decimal'
+        additional_memory:
+          $ref: '#/components/schemas/Decimal'
+        license:
+          $ref: '#/components/schemas/Decimal'
+        storage:
+          $ref: '#/components/schemas/Decimal'
+        total_before_parity:
+          $ref: '#/components/schemas/Decimal'
     EditableProjectFields:
       type: object
       required: [name, settings, resources, aws_price_snapshot_id, azure_price_snapshot_id]

@@ -29,6 +29,10 @@ param assistantConcurrency int = 2
 @minValue(1)
 @maxValue(60)
 param assistantRequestsPerMinute int = 10
+param calculatorCompanionEnabled bool = false
+param calculatorCompanionClientId string = ''
+param calculatorCompanionScope string = ''
+param applicationOrigin string = ''
 param configureAuthentication bool = true
 @minValue(0)
 @maxValue(3)
@@ -74,7 +78,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
     template: {
       containers: [
         {
-          env: [
+          env: concat([
             {
               name: 'APP_ENV'
               value: 'development'
@@ -131,7 +135,29 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'CALCULATION_CONCURRENCY'
               value: string(calculationConcurrency)
             }
-          ]
+          ], calculatorCompanionEnabled ? [
+            {
+              name: 'CALCULATOR_COMPANION_ENABLED'
+              value: 'true'
+            }
+            {
+              name: 'CALCULATOR_COMPANION_CLIENT_ID'
+              value: calculatorCompanionClientId
+            }
+            {
+              name: 'CALCULATOR_COMPANION_SCOPE'
+              value: calculatorCompanionScope
+            }
+            {
+              name: 'APPLICATION_ORIGIN'
+              value: applicationOrigin
+            }
+          ] : [
+            {
+              name: 'CALCULATOR_COMPANION_ENABLED'
+              value: 'false'
+            }
+          ])
           image: containerImage
           name: 'azure-sql-tco'
           probes: [

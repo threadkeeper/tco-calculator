@@ -1492,6 +1492,7 @@ mod tests {
             }),
             cosmos: None,
             assistant: None,
+            calculator_companion: None,
             web_asset_dir: PathBuf::from("rust/static"),
             guest_requests_per_minute: 60,
             provider_refreshes_per_hour: 8,

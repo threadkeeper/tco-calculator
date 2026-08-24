@@ -1,5 +1,6 @@
 pub mod assistant;
 pub mod calculations;
+pub mod calculator_launches;
 pub mod catalog;
 pub mod pricing;
 pub mod privacy;

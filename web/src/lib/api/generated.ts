@@ -348,6 +348,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/calculator-launches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createCalculatorLaunch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calculator-launches/{launch_id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                launch_id: components["parameters"]["LaunchId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["claimCalculatorLaunch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calculator-launches/{launch_id}/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                launch_id: components["parameters"]["LaunchId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["acknowledgeCalculatorLaunch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/shares/{share_id}": {
         parameters: {
             query?: never;
@@ -722,6 +776,7 @@ export interface components {
             service_tier: components["schemas"]["ServiceTier"];
             hardware_family: string;
             vcores: number;
+            zone_redundant: boolean;
             included_memory_gb: components["schemas"]["Decimal"];
             selected_memory_gb: components["schemas"]["Decimal"];
             additional_memory_gb: components["schemas"]["Decimal"];
@@ -771,6 +826,88 @@ export interface components {
         CreatedProjectShare: components["schemas"]["ProjectShareCredentials"] & {
             /** Format: date-time */
             expires_at: string;
+        };
+        CreateCalculatorLaunchRequest: {
+            /** Format: uuid */
+            launch_id: string;
+            /** @constant */
+            protocol_version: 1;
+        };
+        CalculatorLaunch: {
+            /** Format: uuid */
+            launch_id: string;
+            /** @constant */
+            status: "ready";
+            /** Format: date-time */
+            claim_expires_at: string;
+            minimum_companion_version: string;
+            /** @constant */
+            protocol_version: 1;
+        };
+        ClaimCalculatorLaunchRequest: {
+            /** Format: uuid */
+            companion_instance_id: string;
+            companion_version: string;
+            supported_protocol_versions: number[];
+            supported_manifest_versions: number[];
+            supported_calculator_contracts: string[];
+        };
+        ClaimedCalculatorLaunch: {
+            manifest_sha256: string;
+            manifest: components["schemas"]["CalculatorManifest"];
+        };
+        AcknowledgeCalculatorLaunchRequest: {
+            /** Format: uuid */
+            companion_instance_id: string;
+        };
+        CalculatorManifest: {
+            /** @constant */
+            schema_version: 1;
+            /** @constant */
+            calculator_contract_version: "2026-08-23";
+            /**
+             * Format: uri
+             * @constant
+             */
+            calculator_url: "https://azure.microsoft.com/en-us/pricing/calculator/";
+            /** Format: date-time */
+            generated_at: string;
+            /** @constant */
+            currency: "USD";
+            /** @constant */
+            locale: "en-US";
+            items: components["schemas"]["CalculatorManifestItem"][];
+        };
+        CalculatorManifestItem: {
+            item_key: string;
+            display_name: string;
+            /** @constant */
+            product: "azure_sql_managed_instance";
+            region: string;
+            /** @constant */
+            deployment_model: "single_instance";
+            /** @enum {string} */
+            service_tier: "next_generation_general_purpose" | "business_critical";
+            /** @enum {string} */
+            hardware_family: "premium_series" | "premium_series_memory_optimized";
+            vcores: number;
+            selected_memory_gb: components["schemas"]["Decimal"];
+            zone_redundant: boolean;
+            quantity: number;
+            hours_per_month: components["schemas"]["Decimal"];
+            /** @enum {string} */
+            purchase_option: "payg" | "one_year_reservation" | "three_year_reservation" | "one_year_savings_plan";
+            azure_hybrid_benefit: boolean;
+            data_storage_gb: components["schemas"]["Decimal"];
+            backup_storage_gb: components["schemas"]["Decimal"];
+            expected_public_annual: components["schemas"]["CalculatorExpectedPublicAnnual"];
+        };
+        CalculatorExpectedPublicAnnual: {
+            compute: components["schemas"]["Decimal"];
+            additional_memory: components["schemas"]["Decimal"];
+            license: components["schemas"]["Decimal"];
+            storage: components["schemas"]["Decimal"];
+            total_before_parity: components["schemas"]["Decimal"];
         };
         EditableProjectFields: {
             name: string;
@@ -926,6 +1063,7 @@ export interface components {
         /** @description RFC 9457 Problem Details response. */
         Problem: {
             headers: {
+                "Cache-Control"?: "no-store";
                 /** @description Seconds to wait when the request quota is exceeded. */
                 "Retry-After"?: string;
                 /** @description Current project ETag after a failed precondition. */
@@ -941,6 +1079,7 @@ export interface components {
         AwsRegion: string;
         ProjectId: string;
         ShareId: string;
+        LaunchId: string;
     };
     requestBodies: never;
     headers: never;
@@ -1527,6 +1666,103 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CreatedProjectShare"];
                 };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    createCalculatorLaunch: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path: {
+                project_id: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCalculatorLaunchRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing idempotent launch bound to the same project revision. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalculatorLaunch"];
+                };
+            };
+            /** @description One-time owner-scoped Calculator launch created. */
+            201: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalculatorLaunch"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    claimCalculatorLaunch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                launch_id: components["parameters"]["LaunchId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimCalculatorLaunchRequest"];
+            };
+        };
+        responses: {
+            /** @description Immutable manifest claimed by the authorized companion instance. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimedCalculatorLaunch"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    acknowledgeCalculatorLaunch: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path: {
+                launch_id: components["parameters"]["LaunchId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcknowledgeCalculatorLaunchRequest"];
+            };
+        };
+        responses: {
+            /** @description Manifest receipt acknowledged and manifest payload purged. */
+            204: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Problem"];
         };

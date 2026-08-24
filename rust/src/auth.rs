@@ -15,6 +15,11 @@ const DISPLAY_NAME_URI_CLAIM: &str = "http://schemas.xmlsoap.org/ws/2005/05/iden
 const EMAIL_CLAIM: &str = "email";
 const EMAIL_URI_CLAIM: &str = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress";
 const PREFERRED_USERNAME_CLAIM: &str = "preferred_username";
+const SCOPE_CLAIM: &str = "scp";
+const SCOPE_URI_CLAIM: &str = "http://schemas.microsoft.com/identity/claims/scope";
+const AUTHORIZED_PARTY_CLAIM: &str = "azp";
+const APPLICATION_ID_CLAIM: &str = "appid";
+const TOKEN_TYPE_CLAIM: &str = "idtyp";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Principal {
@@ -22,11 +27,37 @@ pub struct Principal {
     pub object_id: Uuid,
     pub display_name: Option<String>,
     pub email_address: Option<String>,
+    companion_access: Option<CompanionAccessClaims>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CompanionAccessClaims {
+    authorized_party: Uuid,
+    scopes: Vec<String>,
+    app_only: bool,
 }
 
 impl Principal {
     pub fn owner_id(&self) -> String {
         format!("entra:{}:{}", self.tenant_id, self.object_id)
+    }
+
+    pub fn authorize_companion(
+        &self,
+        authorized_party: Uuid,
+        required_scope: &str,
+    ) -> Result<(), AuthError> {
+        let access = self
+            .companion_access
+            .as_ref()
+            .ok_or(AuthError::MissingDelegatedAccess)?;
+        if access.app_only
+            || access.authorized_party != authorized_party
+            || !access.scopes.iter().any(|scope| scope == required_scope)
+        {
+            return Err(AuthError::CompanionAccessDenied);
+        }
+        Ok(())
     }
 }
 
@@ -38,6 +69,10 @@ pub enum AuthError {
     MissingIdentityClaims,
     #[error("platform principal contains ambiguous identity claims")]
     AmbiguousIdentityClaims,
+    #[error("platform principal is missing delegated access claims")]
+    MissingDelegatedAccess,
+    #[error("platform principal is not authorized as the Calculator companion")]
+    CompanionAccessDenied,
 }
 
 #[derive(Deserialize)]
@@ -95,13 +130,52 @@ pub fn parse_platform_principal(header: &HeaderValue) -> Result<Principal, AuthE
     })
     .map(str::to_owned);
     let email_address = optional_email_claim(&platform.claims);
+    let companion_access = companion_access_claims(&platform.claims)?;
 
     Ok(Principal {
         tenant_id,
         object_id,
         display_name,
         email_address,
+        companion_access,
     })
+}
+
+fn companion_access_claims(
+    claims: &[PlatformClaim],
+) -> Result<Option<CompanionAccessClaims>, AuthError> {
+    let scope = unique_claim(claims, &[SCOPE_CLAIM, SCOPE_URI_CLAIM])?;
+    let authorized_party = unique_claim(claims, &[AUTHORIZED_PARTY_CLAIM, APPLICATION_ID_CLAIM])?;
+    if scope.is_none() && authorized_party.is_none() {
+        return Ok(None);
+    }
+    let scope = scope.ok_or(AuthError::MissingDelegatedAccess)?;
+    let authorized_party = authorized_party
+        .ok_or(AuthError::MissingDelegatedAccess)
+        .and_then(parse_identity_id)?;
+    let scopes = scope
+        .split_ascii_whitespace()
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if scopes.is_empty()
+        || scopes.len() > 32
+        || scopes.iter().any(|value| {
+            value.len() > 200
+                || !value.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/')
+                })
+        })
+    {
+        return Err(AuthError::MalformedPrincipal);
+    }
+    let app_only = unique_claim(claims, &[TOKEN_TYPE_CLAIM])?
+        .is_some_and(|value| value.eq_ignore_ascii_case("app"));
+    Ok(Some(CompanionAccessClaims {
+        authorized_party,
+        scopes,
+        app_only,
+    }))
 }
 
 fn optional_email_claim(claims: &[PlatformClaim]) -> Option<String> {
@@ -177,6 +251,7 @@ impl From<&LocalAuthSettings> for Principal {
             object_id: settings.object_id,
             display_name: Some(settings.display_name.clone()),
             email_address: None,
+            companion_access: None,
         }
     }
 }
@@ -225,6 +300,44 @@ mod tests {
         assert_eq!(
             parse_platform_principal(&missing),
             Err(AuthError::MissingIdentityClaims)
+        );
+    }
+
+    #[test]
+    fn companion_authorization_accepts_v1_appid_alias() {
+        let client_id =
+            Uuid::parse_str("33333333-3333-3333-3333-333333333333").expect("client UUID");
+        let header = encoded_header(&[
+            ("tid", "11111111-1111-1111-1111-111111111111"),
+            ("oid", "22222222-2222-2222-2222-222222222222"),
+            (SCOPE_CLAIM, "calculator.launch"),
+            (APPLICATION_ID_CLAIM, &client_id.to_string()),
+        ]);
+
+        let principal = parse_platform_principal(&header).expect("valid v1 delegated principal");
+
+        assert_eq!(
+            principal.authorize_companion(client_id, "calculator.launch"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn companion_authorization_rejects_ambiguous_client_claims() {
+        let header = encoded_header(&[
+            ("tid", "11111111-1111-1111-1111-111111111111"),
+            ("oid", "22222222-2222-2222-2222-222222222222"),
+            (SCOPE_CLAIM, "calculator.launch"),
+            (
+                AUTHORIZED_PARTY_CLAIM,
+                "33333333-3333-3333-3333-333333333333",
+            ),
+            (APPLICATION_ID_CLAIM, "33333333-3333-3333-3333-333333333333"),
+        ]);
+
+        assert_eq!(
+            parse_platform_principal(&header),
+            Err(AuthError::AmbiguousIdentityClaims)
         );
     }
 

@@ -58,6 +58,14 @@ param assistantConcurrency int = 2
 @minValue(1)
 @maxValue(60)
 param assistantRequestsPerMinute int = 10
+@description('Enable the separately installed Calculator companion handoff routes.')
+param calculatorCompanionEnabled bool = false
+@description('Approved public native-client application ID for the Calculator companion.')
+param calculatorCompanionClientId string = ''
+@description('Delegated scope claim required on Calculator companion API requests.')
+param calculatorCompanionScope string = ''
+@description('Exact HTTPS origin of the hosted application.')
+param applicationOrigin string = ''
 param tags object = {
   application: 'tco-calculator'
   environment: 'dev'
@@ -90,6 +98,10 @@ module containerApp 'modules/container-app.bicep' = {
     applicationRegion: location
     assistantConcurrency: assistantConcurrency
     assistantRequestsPerMinute: assistantRequestsPerMinute
+    applicationOrigin: applicationOrigin
+    calculatorCompanionClientId: calculatorCompanionClientId
+    calculatorCompanionEnabled: calculatorCompanionEnabled
+    calculatorCompanionScope: calculatorCompanionScope
     containerImage: containerImage
     calculationConcurrency: calculationConcurrency
     configureAuthentication: configureAuthentication

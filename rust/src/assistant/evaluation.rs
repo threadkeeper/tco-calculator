@@ -258,6 +258,7 @@ fn evaluation_config() -> Config {
         local_auth: None,
         cosmos: None,
         assistant: None,
+        calculator_companion: None,
         web_asset_dir: PathBuf::from("rust/static"),
         guest_requests_per_minute: 60,
         provider_refreshes_per_hour: 40,
