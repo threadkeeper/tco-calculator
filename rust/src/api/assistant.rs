@@ -23,9 +23,10 @@ use crate::{
         help as help_catalog,
         image::{ImageIntakeError, ImageMediaType, MAX_IMAGE_INPUT_BYTES, normalize_image},
         model::{ModelError, ModelImage},
+        policy::PolicyError,
         tools::{
-            AssistantProposal, NewProjectDraftProposal, ProjectPatch, ProjectPatchChange,
-            ProjectPatchProposal,
+            AssistantProposal, InvalidToolArguments, NewProjectDraftProposal, ProjectPatch,
+            ProjectPatchChange, ProjectPatchProposal,
         },
         turn::{PROMPT_VERSION, TurnError, run_turn, run_turn_with_image},
     },
@@ -677,13 +678,46 @@ fn turn_error_category(error: &TurnError) -> &'static str {
         TurnError::Question(_) => "question_rejected",
         TurnError::Deadline => "deadline_exceeded",
         TurnError::Budget(_) => "budget_exhausted",
-        TurnError::Policy(_) => "policy_rejected",
+        TurnError::Policy(error) => policy_error_category(*error),
         TurnError::Model(ModelError::Unavailable) => "model_unavailable",
         TurnError::Model(ModelError::Timeout) => "model_timeout",
         TurnError::Model(ModelError::Transport) => "model_transport",
         TurnError::Model(ModelError::MalformedResponse) => "model_malformed_response",
         TurnError::Model(ModelError::ContentFiltered) => "model_content_filtered",
         TurnError::Model(ModelError::QuotaExceeded) => "model_quota_exhausted",
+    }
+}
+
+fn policy_error_category(error: PolicyError) -> &'static str {
+    match error {
+        PolicyError::EmptyBatch => "policy_empty_batch",
+        PolicyError::UngroundedResponse => "policy_ungrounded_response",
+        PolicyError::BatchTooLarge => "policy_batch_too_large",
+        PolicyError::BudgetExhausted => "policy_budget_exhausted",
+        PolicyError::InvalidCallId => "policy_invalid_call_id",
+        PolicyError::UnknownTool => "policy_unknown_tool",
+        PolicyError::PhaseNotAllowed => "policy_phase_not_allowed",
+        PolicyError::ProjectContextNotAllowed => "policy_project_context_not_allowed",
+        PolicyError::TooManyMutations => "policy_too_many_mutations",
+        PolicyError::InvalidArguments(error) => invalid_tool_arguments_category(error),
+        PolicyError::ClassificationMismatch => "policy_classification_mismatch",
+        PolicyError::MissingConfirmation => "policy_missing_confirmation",
+    }
+}
+
+fn invalid_tool_arguments_category(error: InvalidToolArguments) -> &'static str {
+    match error {
+        InvalidToolArguments::MalformedJson => "policy_arguments_malformed_json",
+        InvalidToolArguments::UnknownField => "policy_arguments_unknown_field",
+        InvalidToolArguments::MissingField => "policy_arguments_missing_field",
+        InvalidToolArguments::TypeMismatch => "policy_arguments_type_mismatch",
+        InvalidToolArguments::UnknownVariant => "policy_arguments_unknown_variant",
+        InvalidToolArguments::InvalidScalarValue => "policy_arguments_invalid_scalar_value",
+        InvalidToolArguments::InvalidShape => "policy_arguments_invalid_shape",
+        InvalidToolArguments::InputBounds => "policy_arguments_input_bounds",
+        InvalidToolArguments::ExtractionNotes => "policy_arguments_extraction_notes",
+        InvalidToolArguments::ResourceFieldMismatch => "policy_arguments_resource_field_mismatch",
+        InvalidToolArguments::UnregisteredTool => "policy_arguments_unregistered_tool",
     }
 }
 
@@ -720,6 +754,24 @@ mod tests {
             resource::{ProjectType, PurchaseOption},
         },
     };
+
+    #[test]
+    fn policy_failures_keep_a_sanitized_discriminating_category() {
+        assert_eq!(
+            turn_error_category(&TurnError::Policy(PolicyError::InvalidArguments(
+                InvalidToolArguments::UnknownField
+            ))),
+            "policy_arguments_unknown_field"
+        );
+        assert_eq!(
+            turn_error_category(&TurnError::Policy(PolicyError::ClassificationMismatch)),
+            "policy_classification_mismatch"
+        );
+        assert_eq!(
+            turn_error_category(&TurnError::Policy(PolicyError::UngroundedResponse)),
+            "policy_ungrounded_response"
+        );
+    }
 
     const TENANT_ID: &str = "11111111-1111-1111-1111-111111111111";
     const OWNER_ID: &str = "22222222-2222-2222-2222-222222222222";
