@@ -46,6 +46,13 @@ pub const MAX_PROPOSAL_CHANGES: usize = 500;
 pub const MAX_EXTRACTION_NOTES: usize = 100;
 pub const MAX_EXTRACTION_NOTE_CHARS: usize = 500;
 const EC2_CATALOG_RAM_UNAVAILABLE_UNCERTAINTY: &str = "Source RAM was not visible and authoritative AWS catalog memory was unavailable, so no project draft was created.";
+/// AWS includes 3,000 IOPS with every gp3 volume, so assuming that baseline keeps an image
+/// draft valid at no additional cost. io2 has no included tier and bills every provisioned
+/// IOPS, so an unseen value falls back to the smallest amount AWS accepts rather than a guess.
+const GP3_BASELINE_IOPS: u64 = 3_000;
+const IO2_MINIMUM_IOPS: u64 = 100;
+const GP3_ASSUMED_IOPS_UNCERTAINTY: &str = "Provisioned IOPS were not visible for at least one gp3 volume, so the draft uses the AWS gp3 baseline of 3,000 IOPS, which AWS includes at no additional cost.";
+const IO2_ASSUMED_IOPS_UNCERTAINTY: &str = "Provisioned IOPS were not visible for at least one io2 volume, so the draft uses the AWS io2 minimum of 100 IOPS. Confirm the provisioned value because io2 bills every provisioned IOPS.";
 
 /// Effect class of a tool, used by preflight to decide batching and confirmation rules.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1298,6 +1305,20 @@ fn stage_new_project_draft_with_ec2_memory(
     }
 
     let mut uncertainties = input.uncertainties.clone();
+    let assumed_iops = |assumed: EbsVolumeType| {
+        input.project_type == ProjectType::Ec2
+            && input.resources.iter().any(|resource| {
+                resource.volumes.iter().flatten().any(|volume| {
+                    volume.provisioned_iops.is_none() && volume.volume_type == Some(assumed)
+                })
+            })
+    };
+    if assumed_iops(EbsVolumeType::Gp3) {
+        uncertainties.push(GP3_ASSUMED_IOPS_UNCERTAINTY.to_owned());
+    }
+    if assumed_iops(EbsVolumeType::Io2) {
+        uncertainties.push(IO2_ASSUMED_IOPS_UNCERTAINTY.to_owned());
+    }
     if input.project_type == ProjectType::OnPrem
         && (input
             .settings
@@ -1547,6 +1568,7 @@ fn new_resource(
 }
 
 fn new_volume(input: &NewVolumeInput) -> EbsVolume {
+    let volume_type = input.volume_type.unwrap_or(EbsVolumeType::Ephemeral);
     EbsVolume {
         id: Uuid::new_v4(),
         label: input
@@ -1554,9 +1576,13 @@ fn new_volume(input: &NewVolumeInput) -> EbsVolume {
             .clone()
             .unwrap_or_else(|| "Instance storage".to_owned()),
         aws_volume_id: input.aws_volume_id.clone(),
-        volume_type: input.volume_type.unwrap_or(EbsVolumeType::Ephemeral),
+        volume_type,
         capacity_gb: input.capacity_gb.unwrap_or_default(),
-        provisioned_iops: input.provisioned_iops,
+        provisioned_iops: input.provisioned_iops.or(match volume_type {
+            EbsVolumeType::Gp3 => Some(GP3_BASELINE_IOPS),
+            EbsVolumeType::Io2 => Some(IO2_MINIMUM_IOPS),
+            EbsVolumeType::Ephemeral => None,
+        }),
         throughput_mibps: input.throughput_mibps,
     }
 }
@@ -2426,6 +2452,100 @@ mod tests {
 
         assert_eq!(resource.shared.sql_data_gb_per_instance, decimal(1_536));
         assert_eq!(resource.volumes[0].capacity_gb, decimal(2_048));
+    }
+
+    fn stage_image_volume(volume: &str) -> ToolOutcome {
+        let definition = find("stage_new_project_draft").expect("registered");
+        let input = parse_input(
+            definition,
+            &format!(
+                r#"{{
+                    "project_type":"ec2",
+                    "resources":[{{
+                        "source_type":"ec2",
+                        "instance_type":"r6id.12xlarge",
+                        "volumes":[{volume}]
+                    }}],
+                    "omissions":[],
+                    "uncertainties":[]
+                }}"#
+            ),
+        )
+        .expect("typed image draft input");
+        let ToolInput::StageNewProjectDraft(input) = input else {
+            panic!("expected new-project input");
+        };
+
+        stage_new_project_draft_with_ec2_memory(
+            &turn_context(TurnPhase::Propose, false),
+            &input,
+            &|_| Some(decimal(384)),
+        )
+    }
+
+    fn staged_volume(outcome: &ToolOutcome) -> (&EbsVolume, &[String]) {
+        let ToolOutcome::Staged {
+            proposal,
+            uncertainties,
+            ..
+        } = outcome
+        else {
+            panic!("expected a staged draft outcome");
+        };
+        let AssistantProposal::NewProjectDraft(proposal) =
+            proposal.as_deref().expect("a reviewable project draft")
+        else {
+            panic!("expected a new-project proposal");
+        };
+        let Resource::Ec2(resource) = &proposal.project.resources[0] else {
+            panic!("expected an EC2 resource");
+        };
+        (&resource.volumes[0], uncertainties)
+    }
+
+    #[test]
+    fn image_gp3_volume_without_visible_iops_uses_the_included_aws_baseline() {
+        let outcome =
+            stage_image_volume(r#"{"volume_type":"gp3","capacity_gb":{"value":"1","unit":"tb"}}"#);
+        let (volume, uncertainties) = staged_volume(&outcome);
+
+        assert_eq!(volume.provisioned_iops, Some(3_000));
+        assert_eq!(volume.capacity_gb, decimal(1_024));
+        assert!(
+            uncertainties
+                .iter()
+                .any(|note| note == GP3_ASSUMED_IOPS_UNCERTAINTY)
+        );
+    }
+
+    #[test]
+    fn image_io2_volume_without_visible_iops_uses_the_aws_minimum_and_flags_review() {
+        let outcome = stage_image_volume(
+            r#"{"volume_type":"io2","capacity_gb":{"value":"800","unit":"gb"}}"#,
+        );
+        let (volume, uncertainties) = staged_volume(&outcome);
+
+        assert_eq!(volume.provisioned_iops, Some(100));
+        assert!(
+            uncertainties
+                .iter()
+                .any(|note| note == IO2_ASSUMED_IOPS_UNCERTAINTY)
+        );
+    }
+
+    #[test]
+    fn image_io2_volume_keeps_iops_that_were_extracted_from_the_image() {
+        let outcome = stage_image_volume(
+            r#"{"volume_type":"io2","capacity_gb":{"value":"800","unit":"gb"},"provisioned_iops":24000}"#,
+        );
+        let (volume, uncertainties) = staged_volume(&outcome);
+
+        assert_eq!(volume.provisioned_iops, Some(24_000));
+        assert!(
+            !uncertainties
+                .iter()
+                .any(|note| note == IO2_ASSUMED_IOPS_UNCERTAINTY)
+        );
     }
 
     #[test]
