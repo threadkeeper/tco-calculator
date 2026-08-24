@@ -16,11 +16,12 @@ public sealed class CalculatorAutomationService
     {
         string edgeExecutable = FindEdgeExecutable();
         OwnedEdgeProfile profile = OwnedEdgeProfile.Create();
+        IPlaywright? playwright = null;
         IBrowserContext? context = null;
         try
         {
             reportStatus("Opening an isolated Microsoft Edge window...");
-            using IPlaywright playwright = await Playwright.CreateAsync().ConfigureAwait(true);
+            playwright = await Playwright.CreateAsync().ConfigureAwait(true);
             context = await playwright.Chromium.LaunchPersistentContextAsync(
                 profile.Path,
                 new BrowserTypeLaunchPersistentContextOptions
@@ -78,11 +79,18 @@ public sealed class CalculatorAutomationService
         }
         finally
         {
-            if (context is not null)
+            try
             {
-                await context.CloseAsync().ConfigureAwait(true);
+                if (context is not null)
+                {
+                    await context.CloseAsync().ConfigureAwait(true);
+                }
             }
-            await profile.DeleteAsync().ConfigureAwait(true);
+            finally
+            {
+                playwright?.Dispose();
+                await profile.DeleteAsync().ConfigureAwait(true);
+            }
         }
     }
 
