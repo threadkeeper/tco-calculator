@@ -27,12 +27,13 @@ use super::{
         TranscriptMessage,
     },
     policy::{self, PolicyError},
-    tools::{self, AssistantProposal, ToolOutcome},
+    tools::{self, AssistantProposal, InvalidToolArguments, ToolOutcome},
 };
 
 /// Version of the system instruction, recorded in audit metadata.
-pub const PROMPT_VERSION: &str = "tco-assistant-system/1.3.4";
+pub const PROMPT_VERSION: &str = "tco-assistant-system/1.3.5";
 const IMAGE_DRAFT_NOT_CREATED_ANSWER: &str = "I analyzed the image, but the server could not validate a new project draft, so there is no draft to open. Review the reported omissions and uncertainties, then upload an image with the missing required values and try again.";
+const IMAGE_SCHEMA_REPAIR_INSTRUCTION: &str = "The previous tool proposal was rejected before dispatch because it used a field outside the closed schema. This is the only correction attempt: re-read the image, call stage_new_project_draft using only fields present in its schema, and report every visible unsupported value through omissions instead of inventing another field.";
 
 /// Neutral, reviewed system instruction.
 pub const SYSTEM_INSTRUCTION: &str = concat!(
@@ -110,7 +111,8 @@ pub async fn run_turn(
     run_turn_with_image(state, client, context, question, None).await
 }
 
-/// Run one bounded turn with a normalized image attached to the initial model request only.
+/// Run one bounded turn with a normalized image attached to the initial request and, when needed,
+/// one pre-dispatch schema-repair request.
 pub async fn run_turn_with_image(
     state: &AppState,
     client: &dyn ModelClient,
@@ -130,6 +132,9 @@ pub async fn run_turn_with_image(
 
     let tool_schemas = tools::schemas_for_context(context);
     let image_turn = image.is_some();
+    let schema_repair_image = image.clone();
+    let mut schema_repair_attempted = false;
+    let mut schema_repair_pending = false;
     let mut transcript = vec![TranscriptMessage::User {
         content: question.to_owned(),
     }];
@@ -153,8 +158,15 @@ pub async fn run_turn_with_image(
             return Err(TurnError::Deadline);
         }
         budget.charge_model_request()?;
-        let system_instruction =
-            runtime_instruction(context, &tool_schemas, &action_history, image_turn);
+        let repairing_schema = schema_repair_pending;
+        schema_repair_pending = false;
+        let system_instruction = runtime_instruction(
+            context,
+            &tool_schemas,
+            &action_history,
+            image_turn,
+            repairing_schema,
+        );
         compact(&mut transcript, &system_instruction)?;
 
         let timeout = model_call_timeout(context.remaining());
@@ -162,9 +174,13 @@ pub async fn run_turn_with_image(
             system_instruction,
             prompt_version: PROMPT_VERSION,
             messages: transcript.clone(),
-            image: image.take(),
+            image: if repairing_schema {
+                schema_repair_image.clone()
+            } else {
+                image.take()
+            },
             tools: tool_schemas.clone(),
-            required_tool: None,
+            required_tool: repairing_schema.then_some("stage_new_project_draft"),
             max_output_tokens: MAX_MODEL_OUTPUT_TOKENS,
             timeout,
         };
@@ -201,7 +217,22 @@ pub async fn run_turn_with_image(
                 });
             }
             ModelOutput::ToolCalls(proposed) => {
-                let accepted = policy::preflight(&proposed, context, &budget, &executed_call_ids)?;
+                let accepted =
+                    match policy::preflight(&proposed, context, &budget, &executed_call_ids) {
+                        Ok(accepted) => accepted,
+                        Err(PolicyError::InvalidArguments(InvalidToolArguments::UnknownField))
+                            if image_turn
+                                && context.project().is_none()
+                                && context.classified_project_type().is_some()
+                                && executed_call_ids.is_empty()
+                                && !schema_repair_attempted =>
+                        {
+                            schema_repair_attempted = true;
+                            schema_repair_pending = true;
+                            continue;
+                        }
+                        Err(error) => return Err(TurnError::Policy(error)),
+                    };
                 budget.charge_tool_calls(accepted.len())?;
                 transcript.push(TranscriptMessage::AssistantToolCalls { calls: proposed });
 
@@ -241,6 +272,7 @@ fn runtime_instruction(
     tool_schemas: &[ToolSchema],
     action_history: &[ActionRecord],
     image_turn: bool,
+    repairing_schema: bool,
 ) -> String {
     let phase = match context.phase() {
         TurnPhase::ReadPlan => "read_plan",
@@ -273,6 +305,11 @@ fn runtime_instruction(
     } else {
         "none".to_owned()
     };
+    let schema_repair = if repairing_schema {
+        IMAGE_SCHEMA_REPAIR_INSTRUCTION
+    } else {
+        "none"
+    };
     format!(
         "{SYSTEM_INSTRUCTION}\n\nRuntime awareness (host-authored; authoritative for this call):\n\
          - Programming: TCO Assistant prompt {PROMPT_VERSION}, a bounded Rust-hosted reasoning loop. \
@@ -283,6 +320,7 @@ fn runtime_instruction(
          - Host pre-draft project classification: {classified_project_type}. When present, it is fixed for this turn.\n\
          - Available tools in this phase: {available_tools}. Only these exact tool schemas are callable.\n\
          - Image input for this turn: {image_input}.\n\
+         - Schema repair: {schema_repair}\n\
          - Completed tool/action history in this bounded turn: {action_history}.\n\
          - Memory boundary: you know only this system instruction and the supplied bounded transcript. \
          Do not claim hidden, durable, or cross-session memory.\n\
@@ -633,6 +671,102 @@ mod tests {
                 .iter()
                 .any(|note| note.contains("authoritative AWS catalog memory was unavailable"))
         );
+    }
+
+    #[tokio::test]
+    async fn a_classified_image_repairs_one_unknown_field_before_dispatch() {
+        let state = state();
+        let client = ScriptedModelClient::new(vec![
+            Ok(tool_calls(&[call(
+                "call-1",
+                "stage_new_project_draft",
+                r#"{"project_type":"on_prem","resources":[{"source_type":"on_prem","source_vcpu":8,"operating_system":"Windows"}],"omissions":[],"uncertainties":[]}"#,
+            )])),
+            Ok(tool_calls(&[call(
+                "call-2",
+                "stage_new_project_draft",
+                r#"{"project_type":"on_prem","resources":[{"source_type":"on_prem","source_vcpu":8}],"omissions":["Operating system is outside the supported project fields."],"uncertainties":[]}"#,
+            )])),
+            message("I staged a new on-premises project draft for your review."),
+        ]);
+        let context = TurnContext::new(OWNER, Uuid::nil(), TurnPhase::Propose)
+            .with_classified_project_type(ProjectType::OnPrem);
+
+        let outcome = run_turn_with_image(
+            &state,
+            &client,
+            &context,
+            "Create a project from this image",
+            Some(ModelImage::normalized_jpeg(vec![0xff, 0xd8, 0xff, 0x00])),
+        )
+        .await
+        .expect("one unknown field receives a bounded schema repair");
+
+        let tools::AssistantProposal::NewProjectDraft(proposal) =
+            outcome.proposal.expect("the repaired draft is returned")
+        else {
+            panic!("the proposal must be a new project draft");
+        };
+        assert_eq!(proposal.project.settings.project_type, ProjectType::OnPrem);
+        assert_eq!(outcome.omissions.len(), 1);
+
+        let requests = client.requests();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].image.is_some());
+        assert!(requests[1].image.is_some());
+        assert!(requests[2].image.is_none());
+        assert_eq!(requests[1].required_tool, Some("stage_new_project_draft"));
+        assert_eq!(requests[1].messages.len(), 1);
+        assert!(
+            requests[1]
+                .system_instruction
+                .contains(IMAGE_SCHEMA_REPAIR_INSTRUCTION)
+        );
+        assert!(
+            state
+                .projects
+                .list(OWNER)
+                .await
+                .expect("the repository remains readable")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_classified_image_rejects_a_second_unknown_field_without_dispatch() {
+        let rejected = r#"{"project_type":"on_prem","operating_system":"Windows","omissions":[],"uncertainties":[]}"#;
+        let client = ScriptedModelClient::new(vec![
+            Ok(tool_calls(&[call(
+                "call-1",
+                "stage_new_project_draft",
+                rejected,
+            )])),
+            Ok(tool_calls(&[call(
+                "call-2",
+                "stage_new_project_draft",
+                rejected,
+            )])),
+        ]);
+        let context = TurnContext::new(OWNER, Uuid::nil(), TurnPhase::Propose)
+            .with_classified_project_type(ProjectType::OnPrem);
+
+        let error = run_turn_with_image(
+            &state(),
+            &client,
+            &context,
+            "Create a project from this image",
+            Some(ModelImage::normalized_jpeg(vec![0xff, 0xd8, 0xff, 0x00])),
+        )
+        .await
+        .expect_err("a repeated unknown field remains a terminal policy error");
+
+        assert_eq!(
+            error,
+            TurnError::Policy(PolicyError::InvalidArguments(
+                InvalidToolArguments::UnknownField
+            ))
+        );
+        assert_eq!(client.requests().len(), 2);
     }
 
     #[tokio::test]
