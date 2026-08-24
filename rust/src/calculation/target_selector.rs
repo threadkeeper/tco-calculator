@@ -73,6 +73,7 @@ pub struct SelectedTarget {
     pub service_tier: ServiceTier,
     pub hardware_family: String,
     pub vcores: u32,
+    #[serde(default)]
     pub zone_redundant: bool,
     pub included_memory_gb: DecimalValue,
     pub selected_memory_gb: DecimalValue,
@@ -865,6 +866,32 @@ mod tests {
         });
 
         assert!(selected.zone_redundant);
+    }
+
+    #[test]
+    fn selected_target_deserializes_legacy_documents_without_zone_redundancy() {
+        let target = candidate(
+            "nggp-legacy",
+            ServiceTier::NextGenerationGeneralPurpose,
+            8,
+            "64",
+            &["64"],
+            None,
+        );
+        let selected = selected_target(&EligibleCandidate {
+            candidate: &target,
+            selected_memory_gb: decimal("64"),
+        });
+        let mut persisted = serde_json::to_value(selected).expect("serialize selected target");
+        persisted
+            .as_object_mut()
+            .expect("selected target object")
+            .remove("zone_redundant");
+
+        let restored: SelectedTarget =
+            serde_json::from_value(persisted).expect("deserialize legacy selected target");
+
+        assert!(!restored.zone_redundant);
     }
 
     fn catalog(candidates: Vec<TargetCandidate>) -> CapabilityCatalog {
