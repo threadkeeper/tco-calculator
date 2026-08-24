@@ -31,7 +31,7 @@ public static partial class LaunchActivationParser
     }
 
     [GeneratedRegex(
-        "\\Aazure-tco-calculator://launch\\?v=1&id=(?<id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\z",
+        "\\Aazure-tco-calculator://launch/?\\?v=1&id=(?<id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\z",
         RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture | RegexOptions.NonBacktracking)]
     private static partial Regex ActivationPattern();
 }

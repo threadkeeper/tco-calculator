@@ -20,6 +20,20 @@ public sealed class LaunchActivationParserTests
     }
 
     [TestMethod]
+    public void AcceptsWindowsNormalizedActivation()
+    {
+        const string normalizedActivation =
+            "azure-tco-calculator://launch/?v=1&id=01234567-89ab-4cde-8f01-23456789abcd";
+
+        bool parsed = LaunchActivationParser.TryParse([normalizedActivation], out LaunchActivation? activation);
+
+        Assert.IsTrue(parsed);
+        Assert.IsNotNull(activation);
+        Assert.AreEqual(Guid.Parse("01234567-89ab-4cde-8f01-23456789abcd"), activation.LaunchId);
+        Assert.AreEqual(1, activation.ProtocolVersion);
+    }
+
+    [TestMethod]
     [DataRow()]
     [DataRow("azure-tco-calculator://launch?v=1&id=01234567-89ab-4cde-8f01-23456789abcd", "extra")]
     [DataRow("azure-tco-calculator://launch?v=2&id=01234567-89ab-4cde-8f01-23456789abcd")]
