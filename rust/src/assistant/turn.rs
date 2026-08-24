@@ -32,6 +32,7 @@ use super::{
 
 /// Version of the system instruction, recorded in audit metadata.
 pub const PROMPT_VERSION: &str = "tco-assistant-system/1.3.4";
+const IMAGE_DRAFT_NOT_CREATED_ANSWER: &str = "I analyzed the image, but the server could not validate a new project draft, so there is no draft to open. Review the reported omissions and uncertainties, then upload an image with the missing required values and try again.";
 
 /// Neutral, reviewed system instruction.
 pub const SYSTEM_INSTRUCTION: &str = concat!(
@@ -179,6 +180,15 @@ pub async fn run_turn_with_image(
                 if executed_call_ids.is_empty() {
                     return Err(TurnError::Policy(PolicyError::UngroundedResponse));
                 }
+                let answer = if image_turn
+                    && context.project().is_none()
+                    && context.classified_project_type().is_some()
+                    && proposal.is_none()
+                {
+                    IMAGE_DRAFT_NOT_CREATED_ANSWER.to_owned()
+                } else {
+                    answer
+                };
                 return Ok(TurnOutcome {
                     answer,
                     citations,
@@ -590,6 +600,39 @@ mod tests {
         .expect_err("the draft loop must execute its own tool before returning prose");
 
         assert_eq!(error, TurnError::Policy(PolicyError::UngroundedResponse));
+    }
+
+    #[tokio::test]
+    async fn a_classified_image_without_a_valid_draft_returns_the_host_failure_answer() {
+        let client = ScriptedModelClient::new(vec![
+            Ok(tool_calls(&[call(
+                "call-1",
+                "stage_new_project_draft",
+                r#"{"project_type":"ec2","resources":[{"source_type":"ec2","instance_type":"unknown.large"}],"omissions":[],"uncertainties":[]}"#,
+            )])),
+            message("I staged a new EC2 project draft for your review."),
+        ]);
+        let context = TurnContext::new(OWNER, Uuid::nil(), TurnPhase::Propose)
+            .with_classified_project_type(ProjectType::Ec2);
+
+        let outcome = run_turn_with_image(
+            &state(),
+            &client,
+            &context,
+            "Create a project from this image",
+            Some(ModelImage::normalized_jpeg(vec![0xff, 0xd8, 0xff, 0x00])),
+        )
+        .await
+        .expect("the failed draft returns a reviewable extraction report");
+
+        assert_eq!(outcome.answer, IMAGE_DRAFT_NOT_CREATED_ANSWER);
+        assert!(outcome.proposal.is_none());
+        assert!(
+            outcome
+                .uncertainties
+                .iter()
+                .any(|note| note.contains("authoritative AWS catalog memory was unavailable"))
+        );
     }
 
     #[tokio::test]

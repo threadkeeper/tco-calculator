@@ -45,6 +45,7 @@ pub const MAX_TOOL_DESCRIPTION_CHARS: usize = 1_024;
 pub const MAX_PROPOSAL_CHANGES: usize = 500;
 pub const MAX_EXTRACTION_NOTES: usize = 100;
 pub const MAX_EXTRACTION_NOTE_CHARS: usize = 500;
+const EC2_CATALOG_RAM_UNAVAILABLE_UNCERTAINTY: &str = "Source RAM was not visible and authoritative AWS catalog memory was unavailable, so no project draft was created.";
 
 /// Effect class of a tool, used by preflight to decide batching and confirmation rules.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1271,8 +1272,14 @@ fn stage_new_project_draft_with_ec2_memory(
             })
         };
     if ec2_catalog_ram_missing {
-        return ToolOutcome::Unavailable {
-            code: "ec2_catalog_ram_unavailable",
+        let mut uncertainties = input.uncertainties.clone();
+        if uncertainties.len() < MAX_EXTRACTION_NOTES {
+            uncertainties.push(EC2_CATALOG_RAM_UNAVAILABLE_UNCERTAINTY.to_owned());
+        }
+        return ToolOutcome::Staged {
+            proposal: None,
+            omissions: input.omissions.clone(),
+            uncertainties,
         };
     }
 
@@ -2117,7 +2124,7 @@ mod tests {
     }
 
     #[test]
-    fn an_ec2_draft_without_visible_or_catalog_ram_is_not_staged() {
+    fn an_ec2_draft_without_visible_or_catalog_ram_reports_why_it_is_not_staged() {
         let definition = find("stage_new_project_draft").expect("registered");
         let input = parse_input(
             definition,
@@ -2140,12 +2147,12 @@ mod tests {
         );
 
         assert!(outcome.proposal().is_none());
-        assert!(matches!(
-            outcome,
-            ToolOutcome::Unavailable {
-                code: "ec2_catalog_ram_unavailable"
-            }
-        ));
+        let (omissions, uncertainties) = outcome
+            .extraction_notes()
+            .expect("the failed draft returns its extraction report");
+        assert!(omissions.is_empty());
+        assert_eq!(uncertainties, [EC2_CATALOG_RAM_UNAVAILABLE_UNCERTAINTY]);
+        assert_eq!(outcome.history_status(), "reported");
     }
 
     #[test]

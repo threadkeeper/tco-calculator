@@ -268,7 +268,7 @@
           uncertainties: response.uncertainties
         }
       ];
-      removeImage();
+      if (response.proposal) removeImage();
       await scrollToLatest();
     } catch (error) {
       if (!controller.signal.aborted && activeRequest === controller) {
