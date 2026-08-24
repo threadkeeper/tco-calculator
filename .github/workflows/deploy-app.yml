@@ -715,13 +715,17 @@ jobs:
             throw 'Container Apps built-in authentication is not enabled in guest-compatible mode.'
           }
           $allowedAudiences = @($auth.properties.identityProviders.azureActiveDirectory.validation.allowedAudiences)
+          $allowedApplications = @($auth.properties.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedApplications)
           if (
             $auth.properties.identityProviders.azureActiveDirectory.registration.clientId -ne $env:ENTRA_CLIENT_ID -or
             $allowedAudiences.Count -ne 1 -or
             $allowedAudiences[0] -cne "api://$env:ENTRA_CLIENT_ID" -or
+            $allowedApplications.Count -ne 2 -or
+            $allowedApplications -cnotcontains $env:ENTRA_CLIENT_ID -or
+            $allowedApplications -cnotcontains $env:CALCULATOR_COMPANION_CLIENT_ID -or
             $auth.properties.login.tokenStore.enabled -ne $false
           ) {
-            throw 'Container Apps Entra authentication does not match the reviewed registration or token-store policy.'
+            throw 'Container Apps Entra authentication does not match the reviewed registration, companion-client, or token-store policy.'
           }
 
           $baseUri = "https://$fqdn"
