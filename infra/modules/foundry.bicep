@@ -54,7 +54,9 @@ resource modelRouter 'Microsoft.CognitiveServices/accounts/deployments@2025-12-0
     versionUpgradeOption: 'NoAutoUpgrade'
   }
   sku: {
-    capacity: 10
+    // Rate ceiling only on Standard billing: 1 unit = 1K tokens/min + 1 request/min. One image
+    // turn spends several thousand tokens across a classification call and a drafting call.
+    capacity: 100
     name: 'DataZoneStandard'
   }
 }
