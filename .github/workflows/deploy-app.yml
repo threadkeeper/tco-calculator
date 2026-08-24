@@ -714,7 +714,13 @@ jobs:
           if ($auth.properties.platform.enabled -ne $true -or $auth.properties.globalValidation.unauthenticatedClientAction -ne 'AllowAnonymous') {
             throw 'Container Apps built-in authentication is not enabled in guest-compatible mode.'
           }
-          if ($auth.properties.identityProviders.azureActiveDirectory.registration.clientId -ne $env:ENTRA_CLIENT_ID -or $auth.properties.login.tokenStore.enabled -ne $false) {
+          $allowedAudiences = @($auth.properties.identityProviders.azureActiveDirectory.validation.allowedAudiences)
+          if (
+            $auth.properties.identityProviders.azureActiveDirectory.registration.clientId -ne $env:ENTRA_CLIENT_ID -or
+            $allowedAudiences.Count -ne 1 -or
+            $allowedAudiences[0] -cne "api://$env:ENTRA_CLIENT_ID" -or
+            $auth.properties.login.tokenStore.enabled -ne $false
+          ) {
             throw 'Container Apps Entra authentication does not match the reviewed registration or token-store policy.'
           }
 

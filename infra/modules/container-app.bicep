@@ -243,7 +243,7 @@ resource auth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = if (configu
         }
         validation: {
           allowedAudiences: [
-            entraClientId
+            'api://${entraClientId}'
           ]
         }
       }
