@@ -862,9 +862,9 @@ export interface components {
         };
         CalculatorManifest: {
             /** @constant */
-            schema_version: 1;
+            schema_version: 2;
             /** @constant */
-            calculator_contract_version: "2026-08-23";
+            calculator_contract_version: "2026-08-24";
             /**
              * Format: uri
              * @constant
@@ -876,6 +876,7 @@ export interface components {
             currency: "USD";
             /** @constant */
             locale: "en-US";
+            estimate_name: string;
             items: components["schemas"]["CalculatorManifestItem"][];
         };
         CalculatorManifestItem: {

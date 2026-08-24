@@ -380,6 +380,8 @@ pub enum CalculatorManifestError {
     UnsupportedTarget,
     #[error("project annual hours cannot be represented exactly by the Calculator contract")]
     InexactMonthlyHours,
+    #[error("project or workload name cannot be represented by the Calculator contract")]
+    InvalidDisplayName,
 }
 
 pub(crate) fn build_calculator_manifest(
@@ -390,6 +392,7 @@ pub(crate) fn build_calculator_manifest(
         || project.settings.currency != "USD"
         || project.resources.is_empty()
         || project.resources.len() > MAX_CALCULATOR_MANIFEST_ITEMS
+        || !calculator_display_name(&project.name, 100)
     {
         return Err(CalculatorManifestError::IneligibleProject);
     }
@@ -416,6 +419,7 @@ pub(crate) fn build_calculator_manifest(
         generated_at,
         currency: "USD".to_owned(),
         locale: "en-US".to_owned(),
+        estimate_name: project.name.clone(),
         items,
     })
 }
@@ -492,9 +496,12 @@ fn build_item(
     ])?;
     let ordinal = index + 1;
     let item_key = format!("{ordinal:03}");
+    if !calculator_display_name(&resource.shared().workload_name, 160) {
+        return Err(CalculatorManifestError::InvalidDisplayName);
+    }
 
     Ok(CalculatorManifestItem {
-        display_name: format!("Workload {item_key}"),
+        display_name: resource.shared().workload_name.clone(),
         item_key,
         product: CalculatorProduct::AzureSqlManagedInstance,
         region: selected.azure_region.clone(),
@@ -550,6 +557,12 @@ fn calculator_purchase_option(value: PurchaseOption) -> (CalculatorPurchaseOptio
     }
 }
 
+fn calculator_display_name(value: &str, max_chars: usize) -> bool {
+    value.trim() == value
+        && (1..=max_chars).contains(&value.chars().count())
+        && value.chars().all(|character| !character.is_control())
+}
+
 fn exact_monthly_hours(annual: DecimalValue) -> Result<DecimalValue, CalculatorManifestError> {
     let twelve = Decimal::from(12);
     let monthly = annual
@@ -583,6 +596,19 @@ fn is_region_code(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
+
+    use crate::{
+        calculation::{
+            cost::AzureCostBreakdown,
+            engine::{PortfolioTotals, StorageInputs},
+            target_selector::{SelectedTarget, TargetSelection},
+        },
+        config::SCHEMA_VERSION,
+        domain::{
+            project::ProjectSettings,
+            resource::{LicenseBasis, OnPremResource, SharedResource, SqlEdition, SqlWorkload},
+        },
+    };
 
     use super::*;
 
@@ -641,6 +667,172 @@ mod tests {
             exact_monthly_hours(decimal("1")),
             Err(CalculatorManifestError::InexactMonthlyHours)
         );
+    }
+
+    #[test]
+    fn calculator_display_names_are_bounded_and_printable() {
+        assert!(calculator_display_name("Workload 1 EC2 SQL", 100));
+        assert!(calculator_display_name("VM5", 160));
+        assert!(!calculator_display_name(" VM5", 160));
+        assert!(!calculator_display_name("VM5\n", 160));
+        assert!(!calculator_display_name(&"x".repeat(161), 160));
+    }
+
+    #[test]
+    fn manifest_uses_persisted_project_and_workload_names_in_row_order() {
+        let project = eligible_project();
+
+        let manifest = build_calculator_manifest(&project, "2026-08-24T12:00:00Z".to_owned())
+            .expect("eligible Calculator manifest");
+
+        assert_eq!(manifest.estimate_name, "Workload 1 EC2 SQL");
+        assert_eq!(
+            manifest
+                .items
+                .iter()
+                .map(|item| (item.item_key.as_str(), item.display_name.as_str()))
+                .collect::<Vec<_>>(),
+            [("001", "VM5"), ("002", "VM6")]
+        );
+    }
+
+    fn eligible_project() -> ProjectDocument {
+        let resources = vec![resource("VM5"), resource("VM6")];
+        let resource_results = resources
+            .iter()
+            .map(|resource| calculation(resource.shared().id))
+            .collect();
+        ProjectDocument {
+            id: Uuid::new_v4(),
+            document_type: "project".to_owned(),
+            owner_id: "entra:tenant:user".to_owned(),
+            name: "Workload 1 EC2 SQL".to_owned(),
+            description: None,
+            settings: ProjectSettings {
+                project_type: ProjectType::OnPrem,
+                aws_region: None,
+                azure_region: "swedencentral".to_owned(),
+                currency: "USD".to_owned(),
+                source_compute_discount: DecimalValue::ZERO,
+                source_license_discount: DecimalValue::ZERO,
+                source_storage_discount: DecimalValue::ZERO,
+                azure_compute_discount: DecimalValue::ZERO,
+                azure_license_discount: DecimalValue::ZERO,
+                azure_storage_discount: DecimalValue::ZERO,
+                selected_parity_adjustment: DecimalValue::ZERO,
+                default_annual_hours: decimal("8760"),
+                default_mi_purchase_option: PurchaseOption::Payg,
+                enterprise_license_sa_usd_per_two_core_pack: Some(decimal("1000")),
+                standard_license_sa_usd_per_two_core_pack: Some(decimal("500")),
+                remaining_coverage_months: Some(12),
+                electricity_rate_usd_per_kwh: Some(decimal("0.12")),
+                sql_payg: None,
+            },
+            resources,
+            aws_price_snapshot_id: None,
+            azure_price_snapshot_id: Some("azure-snapshot".to_owned()),
+            latest_calculation_revision: Some(CalculationRevision {
+                formula_version: FORMULA_VERSION.to_owned(),
+                aws_snapshot_id: None,
+                azure_snapshot_id: Some("azure-snapshot".to_owned()),
+                resource_results,
+                portfolio_totals: PortfolioTotals {
+                    aws_all_rows_total: None,
+                    aws_mapped_rows_total: DecimalValue::ZERO,
+                    azure_mapped_rows_total: DecimalValue::ZERO,
+                    required_portfolio_adjustment: DecimalValue::ZERO,
+                    selected_parity_adjustment: DecimalValue::ZERO,
+                    portfolio_after_selected_parity: DecimalValue::ZERO,
+                    portfolio_difference: DecimalValue::ZERO,
+                    comparable_resource_count: 2,
+                    no_mapping_resource_count: 0,
+                    price_unavailable_resource_count: 0,
+                },
+                warnings: Vec::new(),
+                sql_payg_analysis: None,
+            }),
+            formula_version: FORMULA_VERSION.to_owned(),
+            schema_version: SCHEMA_VERSION.to_owned(),
+            created_at: "2026-08-24T12:00:00Z".to_owned(),
+            updated_at: "2026-08-24T12:00:00Z".to_owned(),
+            etag: "\"1\"".to_owned(),
+        }
+    }
+
+    fn resource(workload_name: &str) -> Resource {
+        Resource::OnPrem(OnPremResource {
+            shared: SharedResource {
+                id: Uuid::new_v4(),
+                workload_name: workload_name.to_owned(),
+                server_name: None,
+                quantity: 1,
+                source_ram_gb_per_instance: decimal("28"),
+                annual_hours_per_instance: decimal("8760"),
+            },
+            sql: SqlWorkload {
+                sql_edition: SqlEdition::Enterprise,
+                license_basis: LicenseBasis::Byol,
+                sql_data_gb_per_instance: decimal("1024"),
+                mi_purchase_option: PurchaseOption::Payg,
+            },
+            source_vcpu: 4,
+            licensable_cores: 4,
+            source_max_iops: 6_400,
+            hardware_capex_usd: DecimalValue::ZERO,
+            depreciation_years: decimal("5"),
+            average_power_kw_override: None,
+        })
+    }
+
+    fn calculation(resource_id: Uuid) -> ResourceCalculation {
+        ResourceCalculation {
+            resource_id,
+            storage_inputs: StorageInputs {
+                sql_data_gb_per_instance: decimal("1024"),
+                persistent_ebs_gb_per_instance: DecimalValue::ZERO,
+                azure_storage_gb_per_instance: decimal("1024"),
+            },
+            mapping_status: Some(MappingStatus::Mapped),
+            aws_pricing_status: PricingStatus::NotRequired,
+            azure_pricing_status: PricingStatus::Fresh,
+            target_selection: Some(TargetSelection {
+                mapping_status: MappingStatus::Mapped,
+                requested_tier: ServiceTier::NextGenerationGeneralPurpose,
+                nggp_iops_limit: 6_400,
+                selected: Some(SelectedTarget {
+                    configuration_key: "swedencentral-nggp-premium-4".to_owned(),
+                    azure_region: "swedencentral".to_owned(),
+                    service_tier: ServiceTier::NextGenerationGeneralPurpose,
+                    hardware_family: "Premium Series".to_owned(),
+                    vcores: 4,
+                    zone_redundant: false,
+                    included_memory_gb: decimal("28"),
+                    selected_memory_gb: decimal("28"),
+                    additional_memory_gb: DecimalValue::ZERO,
+                    storage_architecture: "remote".to_owned(),
+                    maximum_storage_gb: Some(decimal("16384")),
+                }),
+                candidates: Vec::new(),
+                outcome_reasons: Vec::new(),
+                storage_escalation: None,
+            }),
+            source_costs: None,
+            azure_costs: Some(AzureCostBreakdown {
+                compute_gross: decimal("100"),
+                additional_ram_gb: DecimalValue::ZERO,
+                additional_ram_gross: DecimalValue::ZERO,
+                compute_plus_ram_net: decimal("100"),
+                license_gross: decimal("25"),
+                license_net: decimal("25"),
+                storage_gross: decimal("10"),
+                storage_net: decimal("10"),
+                total_before_parity: decimal("135"),
+            }),
+            purchase_option_discounts: None,
+            savings: None,
+            explanation_steps: Vec::new(),
+            unresolved_components: Vec::new(),
+        }
     }
 
     fn decimal(value: &str) -> DecimalValue {

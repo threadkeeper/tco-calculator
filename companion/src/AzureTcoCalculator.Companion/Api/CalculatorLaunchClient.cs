@@ -167,7 +167,7 @@ public sealed class CalculatorLaunchClient : IDisposable
         [property: JsonPropertyName("supported_calculator_contracts")] string[]? CalculatorContracts = null)
     {
         public ClaimRequest(Guid companionInstanceId)
-            : this(companionInstanceId, "1.0.0", [1], [1], ["2026-08-23"])
+            : this(companionInstanceId, "1.0.0", [1], [2], ["2026-08-24"])
         {
         }
     }

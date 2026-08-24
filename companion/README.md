@@ -4,7 +4,7 @@ This directory contains the separately installed Windows companion for attended 
 
 The solution targets pinned .NET 10 and restores only the locked dependency graph from the repository-owned `NuGet.config`. It uses installed Microsoft Edge and must not download Playwright browsers.
 
-The owner-only x64 package supports Windows 10 version 1809 (build 17763) or later and Windows Server 2022. It is not approved for another person's device or for production distribution.
+The temporary internal-pilot x64 package supports Windows 10 version 1809 (build 17763) or later and Windows Server 2022. Its self-signed development release may be made publicly downloadable after the required release evidence is complete, but it is not approved for production, customer data, or broader rollout.
 
 ## Local validation
 
@@ -18,7 +18,7 @@ dotnet package list --project AzureTcoCalculator.Companion.sln --vulnerable --in
 
 The independent `Companion CI` GitHub workflow performs these checks on Windows. It does not receive a signing key or sign the application. GitHub identity, OIDC, release authorship, and artifact attestations can establish repository/build provenance, but they do not provide an Authenticode certificate trusted by Windows App Installer.
 
-## Owner-only development package
+## Internal development pilot package
 
 The approved demo uses a locally generated self-signed certificate. Run the one-time initializer from an elevated PowerShell session:
 
@@ -39,7 +39,13 @@ After locked restore and validation, build and sign the package from a normal Po
 	-Sign
 ```
 
-Generated MSIX and SHA-256 files remain under ignored `companion/artifacts`. The package identity ends in `.Dev`, uses publisher `CN=Azure TCO Calculator Development`, runs `asInvoker`, and is trusted only on machines where the matching public certificate was explicitly installed. The certificate label is not a verified GitHub identity. Do not distribute this owner-only package to another person.
+Generated MSIX and SHA-256 files remain under ignored `companion/artifacts`. The package identity ends in `.Dev`, uses publisher `CN=Azure TCO Calculator Development`, runs `asInvoker`, and is trusted only on machines where the matching public certificate was explicitly installed. The certificate label is not a verified GitHub, Microsoft, person, or organization identity.
+
+Pilot releases will be published at [GitHub Releases](https://github.com/threadkeeper/tco-calculator/releases) only after the signed MSIX, public `.cer`, SHA-256 sidecar, SBOM, dependency/license/vulnerability evidence, provenance, and release notes are complete. GitHub provenance and the sidecar hash do not make the self-signed publisher trusted by Windows.
+
+When release assets are available, each pilot user must independently decide whether to proceed. Download the release assets, compare the MSIX SHA-256 with the sidecar, and inspect the package signature. From an explicitly elevated PowerShell session, import only the downloaded public certificate into `LocalMachine\TrustedPeople`; never import it into a root store. Then open the MSIX with Windows App Installer, review the development publisher, and explicitly choose Install. Return to the TCO application and choose **Open companion** after installation.
+
+Stop if the package hash or signature does not match, the certificate is expired, the publisher differs, the warning is not understood, or Windows or enterprise policy blocks installation. Do not bypass endpoint policy. Publicly trusted signing and managed deployment are required before broader rollout.
 
 To retire the demo, uninstall the app and run the rollback from elevated PowerShell:
 

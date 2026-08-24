@@ -1684,14 +1684,14 @@ components:
     CalculatorManifest:
       type: object
       additionalProperties: false
-      required: [schema_version, calculator_contract_version, calculator_url, generated_at, currency, locale, items]
+      required: [schema_version, calculator_contract_version, calculator_url, generated_at, currency, locale, estimate_name, items]
       properties:
         schema_version:
           type: integer
-          const: 1
+          const: 2
         calculator_contract_version:
           type: string
-          const: '2026-08-23'
+          const: '2026-08-24'
         calculator_url:
           type: string
           format: uri
@@ -1705,6 +1705,10 @@ components:
         locale:
           type: string
           const: en-US
+        estimate_name:
+          type: string
+          minLength: 1
+          maxLength: 100
         items:
           type: array
           minItems: 1
@@ -1721,7 +1725,8 @@ components:
           pattern: '^[0-9]{3}$'
         display_name:
           type: string
-          pattern: '^Workload [0-9]{3}$'
+          minLength: 1
+          maxLength: 160
         product:
           type: string
           const: azure_sql_managed_instance

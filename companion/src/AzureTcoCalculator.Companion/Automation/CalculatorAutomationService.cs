@@ -40,7 +40,7 @@ public sealed class CalculatorAutomationService
 
             reportStatus($"Creating {plan.Items.Count} SQL Managed Instance lines...");
             await CreateItemsAsync(page, plan.Items).ConfigureAwait(true);
-            await FillAndVerifyAsync(page.GetByPlaceholder("Your Estimate").First, "Azure TCO Estimate")
+            await FillAndVerifyAsync(page.GetByPlaceholder("Your Estimate").First, plan.EstimateName)
                 .ConfigureAwait(true);
             await VerifyAsync(page, plan.Items).ConfigureAwait(true);
 
@@ -49,7 +49,7 @@ public sealed class CalculatorAutomationService
                 new PageReloadOptions { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 60_000 })
                 .ConfigureAwait(true);
             await AssertCalculatorPageAsync(page).ConfigureAwait(true);
-            await ExpectValueAsync(page.GetByPlaceholder("Your Estimate").First, "Azure TCO Estimate")
+            await ExpectValueAsync(page.GetByPlaceholder("Your Estimate").First, plan.EstimateName)
                 .ConfigureAwait(true);
             await VerifyAsync(page, plan.Items).ConfigureAwait(true);
 

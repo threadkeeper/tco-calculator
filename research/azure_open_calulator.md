@@ -44,7 +44,7 @@ Before changing source, the coding agent MUST:
 4. Treat the implementation phases as ordered gates. Do not scaffold later phases while an earlier experiment or review gate is unresolved.
 5. Use synthetic data until the Privacy and Security gates explicitly permit project-derived manifests. Never use customer names, tenant identifiers, credentials, commercial terms, or production data in fixtures, screenshots, traces, logs, prompts, or documentation.
 6. Preserve the existing single-image Azure application topology. The companion is a separate installed product; it is never copied into the runtime container or deployed as another Container App, Job, sidecar, function, or browser service.
-7. Keep Calculator automation anonymous. The companion MUST finish all Playwright reads and writes before the user is invited to sign in. After handoff it may wait only for browser disconnection; it MUST NOT inspect the page, URL, DOM, requests, responses, cookies, storage, downloads, or user input.
+7. Keep Calculator automation unauthenticated. The companion MUST finish all Playwright reads and writes before the user is invited to sign in. After handoff it may wait only for browser disconnection; it MUST NOT inspect the page, URL, DOM, requests, responses, cookies, storage, downloads, or user input.
 8. Use official supported platform APIs and packages. Do not hand-roll OAuth, JWT validation, cryptography, installer trust, browser drivers, or update signing.
 9. Verify exact versions, publishers, package sources, licenses, transitive dependencies, vulnerabilities, installer URLs, and published hashes under the repository software policy before installing or restoring any new tool or package.
 10. After the governance-only Phase 0 gate passes, make the first implementation commit a Phase 1 synthetic spike only. No production feature flag may be enabled until every later acceptance gate passes.
@@ -57,14 +57,14 @@ The recommended value is a proposal, not an approval. `Required before` identifi
 | --- | --- | --- | --- | --- |
 | `DEC-001` | Approve a separately installed Windows companion as a new product boundary and specification exception | `approve` / `reject` | `approve` | Any source change |
 | `DEC-002` | Confirm the v1 outcome: populated local Calculator window, optional manual Microsoft sign-in, manual Save/Share, and no Calculator URL returned to TCO | `confirm` / `change` | `confirm` | API and UX design |
-| `DEC-003` | Select the first supported client platform | `windows-10-1809-plus-server-2022-x64-owner-dev-demo` / `windows-11-x64-general` / other documented scope | `windows-10-1809-plus-server-2022-x64-owner-dev-demo` | Companion scaffold |
+| `DEC-003` | Select the first supported client platform | `windows-10-1809-plus-server-2022-x64-internal-dev-pilot` / `windows-11-x64-general` / other documented scope | `windows-10-1809-plus-server-2022-x64-internal-dev-pilot` | Companion scaffold |
 | `DEC-004` | Select the companion application stack | `dotnet-10-wpf` / `typescript-node-packaged` / another reviewed stack | `dotnet-10-wpf` using pinned .NET 10, Windows App SDK lifecycle APIs, Microsoft.Playwright, and MSAL.NET/WAM | Dependency review |
 | `DEC-005` | Select the automated browser distribution | `installed-edge-stable` / `bundled-playwright-chromium` | `installed-edge-stable` with an isolated profile and tested version range | Browser spike |
 | `DEC-006` | Approve the profile policy | `ephemeral-per-launch` only for the baseline; any persistent profile requires a new review | `ephemeral-per-launch`, deleted on normal close and startup cleanup | Browser spike |
 | `DEC-007` | Select companion-to-TCO authentication | `entra-wam-delegated-scope` / `two-step-downloaded-manifest` | `entra-wam-delegated-scope`; no local listener, shared secret, copied cookie, or capability token in the URI | Identity spike |
 | `DEC-008` | Select companion tenancy and consent | `multitenant-workforce` / `single-tenant-pilot` | `multitenant-workforce`, matching the web app; workforce accounts only | App registration |
-| `DEC-009` | Select signing and distribution for the development demo | `owner-self-signed-msix-github-release` / `public-trust-msix-github-release` / `microsoft-store` | `owner-self-signed-msix-github-release`; GitHub identifies the release source but cannot provide a Windows Authenticode publisher certificate; the owner explicitly trusts the public development certificate before installing the MSIX | Packaging work |
-| `DEC-010` | Select Calculator row identity and grouping | `anonymous-one-per-resource` / `source-name-one-per-resource` / `anonymous-exact-groups` | `anonymous-one-per-resource` with labels `Workload 001`, `Workload 002`, and so on | Manifest contract and Privacy approval |
+| `DEC-009` | Select signing and distribution for the development pilot | `internal-pilot-self-signed-msix-github-release` / `public-trust-msix-github-release` / `microsoft-store` | `internal-pilot-self-signed-msix-github-release`; assets are public, but intended use is limited to internal pilot users who explicitly trust the development certificate with local administrator rights; GitHub provenance is not Windows publisher trust | Packaging work |
+| `DEC-010` | Select Calculator row identity and grouping | `anonymous-one-per-resource` / `source-name-one-per-resource` / `anonymous-exact-groups` | `source-name-one-per-resource`; use the saved project name for the estimate and each persisted workload name for its one Calculator line; never accept names from the launch request | Manifest contract and Privacy approval |
 | `DEC-011` | Select project eligibility policy | `all-rows-fresh-or-block` / `allow-valid-subset` / another exact rule | `all-rows-fresh-or-block`: saved, clean, latest revision, all rows mapped, fresh Azure prices, USD, supported project type | Manifest builder |
 | `DEC-012` | Select validation behavior when Calculator prices differ but every control matches | `warn-and-handoff` / `block` | `warn-and-handoff`; configuration mismatch always blocks | Adapter acceptance tests |
 | `DEC-013` | Select annual-to-monthly usage behavior | `exact-divide-by-12-or-block` / an explicitly documented rounding rule | `exact-divide-by-12-or-block`; Phase 1A must prove the Calculator accepts the required precision | Manifest contract |
@@ -85,14 +85,14 @@ Replace only the values and repository references. Do not put tenant IDs, client
 decision_answers:
   DEC-001: approve
   DEC-002: confirm
-  DEC-003: windows-10-1809-plus-server-2022-x64-owner-dev-demo
+  DEC-003: windows-10-1809-plus-server-2022-x64-internal-dev-pilot
   DEC-004: dotnet-10-wpf
   DEC-005: installed-edge-stable
   DEC-006: ephemeral-per-launch
   DEC-007: entra-wam-delegated-scope
   DEC-008: multitenant-workforce
-  DEC-009: owner-self-signed-msix-github-release
-  DEC-010: anonymous-one-per-resource
+  DEC-009: internal-pilot-self-signed-msix-github-release
+  DEC-010: source-name-one-per-resource
   DEC-011: all-rows-fresh-or-block
   DEC-012: warn-and-handoff
   DEC-013: exact-divide-by-12-or-block
@@ -116,6 +116,8 @@ approval_records:
   oss_and_dependency_review: approved-by-authorized-user-in-conversation-2026-08-23
   desktop_packaging_and_code_signing: approved-by-authorized-user-in-conversation-2026-08-23
   operations_and_support_owner: approved-by-authorized-user-in-conversation-2026-08-23
+  public_self_signed_internal_pilot: approved-by-authorized-user-in-conversation-2026-08-24
+  calculator_project_and_workload_name_egress: approved-by-authorized-user-in-conversation-2026-08-24
 ```
 
 The authorized user approved every decision value above and explicitly approved visible-control Playwright automation under the attended no-login-automation boundary, accepted the documented residual isolated-profile risk with the specified controls, and approved the multitenant public native client, WAM, single delegated API scope, and `tid` plus `oid` owner match. The approval covers architecture and implementation, anonymous synthetic testing, disabled-by-default development deployment, and a managed development pilot after its phase gates pass. It does not waive exact dependency review, immutable package/signature evidence, validation failures, current Calculator drift checks, or environment-specific deployment safeguards. If `DEC-007` changes from `entra-wam-delegated-scope`, the one-click architecture in this document no longer applies.
@@ -241,12 +243,12 @@ For account pricing, the calculator user must log in and select the correct lice
 
 ### Product scope and non-goals
 
-The v1 feature is an attended transfer of de-identified target configuration. It is not a Calculator API integration and does not promise a saved estimate.
+The v1 feature is an attended transfer of the approved saved estimate/workload names and target configuration. It is not a Calculator API integration and does not promise a saved estimate.
 
 In scope after approval:
 
 - Authenticated, saved, clean EC2, RDS, and on-premises workload projects.
-- One anonymous Calculator line per project resource, preserving server-authoritative quantity.
+- One Calculator line per project resource labeled with its persisted workload name, preserving server-authoritative quantity.
 - A separately installed Windows companion with a visible progress window.
 - Anonymous configuration and validation in isolated Edge, followed by an ordinary non-automated Edge window.
 - Optional user-driven Microsoft sign-in, agreement selection, Save, Share, and Export on the Calculator origin.
@@ -293,7 +295,7 @@ flowchart LR
     API -->|Bounded immutable manifest| ACT
     ACT --> PW
     PW --> PDIR
-    PW -->|Anonymous target controls only| CALC
+    PW -->|Approved manifest fields, before sign-in| CALC
     PW -->|Close controlled browser| PDIR
     ACT -->|Start without automation flags| EDGE
     EDGE --> PDIR
@@ -309,7 +311,7 @@ Trust-boundary rules:
 - The companion is a public native client, not a confidential client. It contains no client secret or certificate and never receives the web application's authentication cookie.
 - Playwright is present only on the user's device and only during anonymous Calculator configuration. It is disconnected and its browser is closed before user authentication begins.
 - The ordinary Edge phase is outside Playwright. The companion may retain only a process handle and profile-directory path for cleanup. It must not open, enumerate, parse, copy, back up, or upload profile files.
-- Microsoft receives the target fields listed in the egress section when the companion enters them. Project identity, source inventory labels, source costs, owner identity, and application discounts are not entered.
+- Microsoft receives the saved project name, saved workload names, and target fields listed in the egress section when the companion enters them. Project descriptions, server names, source cloud SKUs/capacity/costs and infrastructure identifiers, owner identity, and application discounts are not entered.
 
 ### End-to-end sequence
 
@@ -509,8 +511,8 @@ Persist a dedicated document shape, not a `ProjectDocument` union guessed by cal
   "source_azure_snapshot_id": "opaque-snapshot-id",
   "status": "ready",
   "protocol_version": 1,
-  "manifest_version": 1,
-  "calculator_contract_version": "2026-08-23",
+  "manifest_version": 2,
+  "calculator_contract_version": "2026-08-24",
   "minimum_companion_version": "1.0.0",
   "manifest_sha256": "lowercase-hex-sha256",
   "manifest": {},
@@ -551,29 +553,30 @@ This is a one-time secure data-transfer lifecycle, not a job state machine. The 
 
 ### Versioned manifest contract
 
-The server owns all target mapping. The companion is a renderer and verifier, not a calculator or SKU selector. Use strict JSON parsing, reject unknown fields at each supported schema version, represent all decimal values as canonical strings, and enforce a maximum of 100 items and 256 KiB serialized JSON.
+The server owns all target mapping. The companion is a renderer and verifier, not a calculator or SKU selector. Use strict JSON parsing, reject unknown fields at each supported schema version, represent all decimal values as canonical strings, and enforce a maximum of 25 items and 256 KiB serialized JSON.
 
-An implementation-level v1 shape is:
+An implementation-level v2 shape is:
 
 ```json
 {
-  "schema_version": 1,
-  "calculator_contract_version": "2026-08-23",
+  "schema_version": 2,
+  "calculator_contract_version": "2026-08-24",
   "calculator_url": "https://azure.microsoft.com/en-us/pricing/calculator/",
-  "generated_at": "2026-08-23T12:00:00Z",
+  "generated_at": "2026-08-24T12:00:00Z",
   "currency": "USD",
   "locale": "en-US",
+  "estimate_name": "Workload 1 EC2 SQL",
   "items": [
     {
       "item_key": "001",
-      "display_name": "Workload 001",
+      "display_name": "VM5",
       "product": "azure_sql_managed_instance",
       "region": "eastus",
       "deployment_model": "single_instance",
       "service_tier": "next_generation_general_purpose",
-      "hardware_family": "standard_series_gen5",
-      "vcores": 8,
-      "selected_memory_gb": "64",
+      "hardware_family": "premium_series",
+      "vcores": 4,
+      "selected_memory_gb": "28",
       "zone_redundant": false,
       "quantity": 1,
       "hours_per_month": "730",
@@ -831,22 +834,22 @@ Do not poll. A bounded local timer may reveal install/retry guidance because bro
 
 ### MSIX packaging, signing, distribution, and update
 
-The owner-only development demo is not complete when it runs from a developer checkout. Its package requires all of these controls:
+The temporary internal development pilot is not complete when it runs from a developer checkout. Its package requires all of these controls:
 
 - Package as MSIX with a stable package family name, fixed publisher identity, semantic product version translated to a monotonically increasing four-part MSIX version, requested execution level `asInvoker`, and only the URI protocol capability required for activation.
 - Build deterministic release artifacts from a reviewed locked dependency graph. Produce an SBOM, package hash, provenance record, license inventory, and vulnerability results.
-- Sign the MSIX with the owner-only self-signed development certificate whose subject exactly matches the manifest publisher. Generate its private key as non-exportable in `CurrentUser\My`; never create or export a PFX, copy the private key, or place certificate secrets in the repository or GitHub.
-- Export only the public `.cer` and explicitly import it into `LocalMachine\TrustedPeople` from an elevated PowerShell session on the owner's development machine. This grants local package trust; it is not a public trust root, production approval, or verified GitHub identity. Remove both trust and the private key when the demo is retired.
+- Sign the MSIX with the self-signed development certificate whose subject exactly matches the manifest publisher. Generate its private key as non-exportable in the owner's `CurrentUser\My`; never create or export a PFX, copy the private key, or place certificate secrets in the repository or GitHub.
+- Export only the public `.cer`. Each pilot user must independently decide to import it into `LocalMachine\TrustedPeople` from an explicitly elevated PowerShell session. This grants trust only on that machine; it is not a public trust root, production approval, or verified GitHub identity. Pilot users remove certificate trust and uninstall the package when the pilot is retired; the owner also deletes the private key.
 - Validate the signature, package identity, publisher, and SHA-256 hash before publishing. A development certificate is not required to use a public timestamp service; packages stop being acceptable when the certificate is expired or removed.
 - Publish only the signed, versioned development MSIX, public `.cer`, SHA-256 hash, dependency/license/vulnerability evidence, and release notes as GitHub Release assets. GitHub release authorship or an optional GitHub artifact attestation proves repository/build provenance only; neither is an Authenticode signature recognized by Windows App Installer.
 - The web application may link only to the repository's fixed HTTPS release page or versioned asset URL selected server-side. It must not append a launch UUID, project identifier, owner identifier, referrer payload, or other application data.
-- Installation is an explicit owner action: import the public development certificate into `LocalMachine\TrustedPeople` from elevated PowerShell, download the MSIX, open it with Windows App Installer, review the development publisher, and choose Install. The application itself remains `asInvoker`. Do not claim that a webpage can silently install MSIX or invoke Microsoft's disabled-by-default `ms-appinstaller:` protocol.
-- Do not alter sideloading or App Installer policy, install the certificate as a root CA, bypass endpoint controls, or instruct another user to trust the certificate. If Windows or enterprise policy blocks trust or installation, the device is unsupported and the process stops.
+- Installation is an explicit pilot-user action: review the release warning and evidence, import the public development certificate into `LocalMachine\TrustedPeople` from elevated PowerShell, download the MSIX, open it with Windows App Installer, review the development publisher, and choose Install. The application itself remains `asInvoker`. Do not claim that a webpage can silently install MSIX or invoke Microsoft's disabled-by-default `ms-appinstaller:` protocol.
+- Do not alter sideloading or App Installer policy, install the certificate as a root CA, or bypass endpoint controls. If Windows or enterprise policy blocks trust or installation, the device is unsupported and the process stops.
 - Updates are explicit downloads of newer signed releases. Do not implement a self-updater, background updater, scheduled task, service, runtime executable download, plugin loader, or remote script.
 - Have the API enforce `minimum_companion_version`. Return `426` with an install-page URL selected server-side from a fixed allowlist, never an arbitrary redirect.
 - Test upgrade with an active and abandoned profile, downgrade rejection, uninstall cleanup, protocol re-registration, side-by-side dev/prod packages, expired signing certificates, offline launch, and revoked package scenarios.
 
-The authorized owner superseded the Public Trust design on 2026-08-23 and approved this owner-only self-signed development exception. Azure Artifact Signing is not used by this package. Any distribution to another person, production use, or claim of public/GitHub identity trust requires a new approval and a publicly trusted signing design.
+The authorized owner superseded the Public Trust design on 2026-08-23 and approved the initial owner-device self-signed development exception. On 2026-08-24, the owner approved temporary public distribution through this repository's GitHub Releases page for an internal development pilot in which each user independently chooses certificate trust and installation with local administrator rights. Azure Artifact Signing is not used by this package. The exception prohibits production/customer data, silent installation, automated certificate deployment, production use, and claims of public/GitHub identity trust. Publicly trusted signing and managed deployment are mandatory before broader rollout.
 
 ### Diagnostics and operational behavior
 
@@ -897,14 +900,14 @@ Never pass a raw exception message to the server or web UI. Development-only log
 
 Update `THIRD-PARTY-DATA-EGRESS.md` before enabling the feature. The companion causes the user's device to enter these fields into `azure.microsoft.com`:
 
-- Anonymous ordinal item label.
+- Saved project name for the Calculator estimate and saved workload name for each line label, both reloaded from the persisted owner-scoped project rather than accepted from the launch request.
 - Azure region.
 - SQL Managed Instance product/deployment choice.
 - Service tier, hardware family, vCores, selected memory, and zone-redundancy setting.
 - Quantity, monthly usage hours, purchase plan/term, and AHB assumption.
 - Data-storage and approved backup-storage values.
 
-Do not send project names, descriptions, workload/server names, source cloud SKUs, source capacity, source costs, project discounts, parity adjustments, calculated expected amounts, tenant/subscription/billing IDs, owner identity, or commercial agreements. The Calculator itself computes and displays prices from the entered target fields.
+Apart from the approved saved project name and workload names, do not send project descriptions, server names, source cloud SKUs, source capacity, source costs or infrastructure identifiers, project discounts, parity adjustments, calculated expected amounts, tenant/subscription/billing IDs, owner identity, or commercial agreements. The Calculator itself computes and displays prices from the entered target fields.
 
 The page was observed making Microsoft-operated analytics and experience-configuration requests. Do not claim the target values remain solely in local IndexedDB or that Microsoft retains nothing merely because no estimate-write request was observed. Privacy/Legal must approve both the automated entries and the Calculator's own documented/observed processing.
 
@@ -1116,7 +1119,7 @@ Run the complete validation matrix below in the development environment with the
 ### Phase 9: managed development pilot
 
 1. Deploy the disabled server changes through the approved development application workflow for an exact `main` commit.
-2. Download the signed companion from the approved GitHub Release and install it only on the owner's supported x64 device running Windows 10 version 1809 (build 17763) or later, or Windows Server 2022.
+2. Internal pilot users download the signed companion from the public approved GitHub Release and install it only after independently choosing to trust the public development certificate with local administrator rights on a supported x64 device running Windows 10 version 1809 (build 17763) or later, or Windows Server 2022.
 3. Enable the feature in development after identity, persistence, health, version, and rollback checks.
 4. Exercise synthetic and approved de-identified projects; never use production/customer data merely because a pilot exists.
 5. Monitor only approved aggregate companion-stage/error/version signals. Review every `calculator_contract_changed`, challenge, owner mismatch trend, cleanup-pending trend, and update-required trend.
@@ -1242,8 +1245,8 @@ Before deployment, additionally run the repository's existing version, container
 Every statement below must be evidenced before the managed development pilot:
 
 1. With the signed companion already installed, one user gesture creates and claims one owner-scoped launch under the proven browser policy; otherwise the approved two-click fallback is used honestly.
-2. The API always reloads the persisted clean project and exact ETag. No client-owned mapping, calculation, amount, owner, revision, label, or snapshot is trusted.
-3. Every eligible row becomes one anonymous Calculator item with exact region, target, memory, redundancy, quantity, hours, plan/AHB, storage, and optional-cost settings.
+2. The API always reloads the persisted clean project and exact ETag. No client-owned mapping, calculation, amount, owner, revision, project/workload name, label, or snapshot is trusted.
+3. Every eligible row becomes one Calculator item labeled with its persisted workload name and exact region, target, memory, redundancy, quantity, hours, plan/AHB, storage, and optional-cost settings; the estimate uses the persisted project name.
 4. Every configured value matches on immediate read-back and after anonymous reload. Configuration mismatch never hands off.
 5. Playwright and its controlled Edge process are fully closed before ordinary Edge starts; release code cannot inspect browser/page/network/profile content afterward.
 6. The synthetic estimate survives ordinary Edge relaunch and human Microsoft sign-in on all supported device/Edge/policy combinations.

@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use super::repository::current_timestamp;
 
-pub const CURRENT_PRIVACY_NOTICE_VERSION: &str = "2026-08-11-internal-pilot-v1";
+pub const CURRENT_PRIVACY_NOTICE_VERSION: &str = "2026-08-24-internal-pilot-v2";
 pub(crate) const PRIVACY_CONSENT_DOCUMENT_ID: &str = "privacy-consent";
 pub(crate) const PRIVACY_CONSENT_DOCUMENT_TYPE: &str = "privacy_consent";
 

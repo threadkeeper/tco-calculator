@@ -399,7 +399,7 @@ mod tests {
         let consent_status = client
             .put(format!("http://{address}/api/v1/privacy-consent"))
             .json(&serde_json::json!({
-                "notice_version": "2026-08-11-internal-pilot-v1",
+                "notice_version": crate::persistence::privacy_consent::CURRENT_PRIVACY_NOTICE_VERSION,
                 "accepted": true,
                 "allow_contact": false,
                 "email_address": null

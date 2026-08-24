@@ -16,6 +16,8 @@ public sealed class CalculatorAutomationPlanTests
         Assert.AreEqual("32", item.StorageUnits);
         Assert.AreEqual("1", item.BackupStorageGb);
         Assert.AreEqual("sweden-central", item.Region);
+        Assert.AreEqual("Workload 1 EC2 SQL", CalculatorAutomationPlan.Create(manifest).EstimateName);
+        Assert.AreEqual("VM5", item.DisplayName);
     }
 
     [TestMethod]
@@ -40,21 +42,57 @@ public sealed class CalculatorAutomationPlanTests
         Assert.ThrowsExactly<InvalidDataException>(() => CalculatorAutomationPlan.Create(manifest));
     }
 
+    [TestMethod]
+    public void Validate_RejectsSupersededManifestContracts()
+    {
+        Assert.ThrowsExactly<InvalidDataException>(
+            () => (Manifest(Item()) with { SchemaVersion = 1 }).Validate());
+        Assert.ThrowsExactly<InvalidDataException>(
+            () => (Manifest(Item()) with { CalculatorContractVersion = "2026-08-23" }).Validate());
+    }
+
+    [TestMethod]
+    public void Validate_RejectsInvalidEstimateNames()
+    {
+        string?[] invalidNames = [null, "", " Workload 1 EC2 SQL", "Workload 1 EC2 SQL\n", new('x', 101)];
+
+        foreach (string? invalidName in invalidNames)
+        {
+            CalculatorManifest manifest = Manifest(Item()) with { EstimateName = invalidName! };
+
+            Assert.ThrowsExactly<InvalidDataException>(manifest.Validate, invalidName ?? "<null>");
+        }
+    }
+
+    [TestMethod]
+    public void Validate_RejectsInvalidWorkloadNames()
+    {
+        string?[] invalidNames = [null, "", " VM5", "VM5\n", new('x', 161)];
+
+        foreach (string? invalidName in invalidNames)
+        {
+            CalculatorManifest manifest = Manifest(Item() with { DisplayName = invalidName! });
+
+            Assert.ThrowsExactly<InvalidDataException>(manifest.Validate, invalidName ?? "<null>");
+        }
+    }
+
     private static CalculatorManifest Manifest(CalculatorManifestItem item) => new()
     {
-        SchemaVersion = 1,
-        CalculatorContractVersion = "2026-08-23",
+        SchemaVersion = 2,
+        CalculatorContractVersion = "2026-08-24",
         CalculatorUrl = "https://azure.microsoft.com/en-us/pricing/calculator/",
         GeneratedAt = "2026-08-23T19:00:00Z",
         Currency = "USD",
         Locale = "en-US",
+        EstimateName = "Workload 1 EC2 SQL",
         Items = [item]
     };
 
     private static CalculatorManifestItem Item() => new()
     {
         ItemKey = "001",
-        DisplayName = "Workload 001",
+        DisplayName = "VM5",
         Product = "azure_sql_managed_instance",
         Region = "swedencentral",
         DeploymentModel = "single_instance",

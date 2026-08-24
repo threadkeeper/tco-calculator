@@ -202,5 +202,5 @@ Set-Content -LiteralPath $hashPath -Value "$($hash.Hash.ToLowerInvariant())  $([
     Version = $msixVersion
     Signed = [bool] $Sign
     Publisher = 'CN=Azure TCO Calculator Development'
-    TrustModel = 'Owner-only self-signed development certificate'
+    TrustModel = 'Internal-pilot self-signed development certificate'
 }

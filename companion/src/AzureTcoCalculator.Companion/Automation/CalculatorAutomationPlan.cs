@@ -14,7 +14,9 @@ public sealed record CalculatorAutomationItem(
     string StorageUnits,
     string BackupStorageGb);
 
-public sealed record CalculatorAutomationPlan(IReadOnlyList<CalculatorAutomationItem> Items)
+public sealed record CalculatorAutomationPlan(
+    string EstimateName,
+    IReadOnlyList<CalculatorAutomationItem> Items)
 {
     public static CalculatorAutomationPlan Create(CalculatorManifest manifest)
     {
@@ -57,7 +59,7 @@ public sealed record CalculatorAutomationPlan(IReadOnlyList<CalculatorAutomation
                 storageUnits.ToString(CultureInfo.InvariantCulture),
                 "1"));
         }
-        return new CalculatorAutomationPlan(items);
+        return new CalculatorAutomationPlan(manifest.EstimateName, items);
     }
 
     private static decimal ParseDecimal(string value) => decimal.Parse(

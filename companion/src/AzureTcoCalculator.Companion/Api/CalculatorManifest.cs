@@ -24,16 +24,20 @@ public sealed record CalculatorManifest
     [JsonPropertyName("locale")]
     public required string Locale { get; init; }
 
+    [JsonPropertyName("estimate_name")]
+    public required string EstimateName { get; init; }
+
     [JsonPropertyName("items")]
     public required CalculatorManifestItem[] Items { get; init; }
 
     public void Validate()
     {
-        if (SchemaVersion != 1
-            || CalculatorContractVersion != "2026-08-23"
+        if (SchemaVersion != 2
+            || CalculatorContractVersion != "2026-08-24"
             || CalculatorUrl != "https://azure.microsoft.com/en-us/pricing/calculator/"
             || Currency != "USD"
             || Locale != "en-US"
+            || !ValidDisplayName(EstimateName, 100)
             || Items.Length is < 1 or > 25
             || !DateTimeOffset.TryParse(
                 GeneratedAt,
@@ -49,6 +53,12 @@ public sealed record CalculatorManifest
             Items[index].Validate(index + 1);
         }
     }
+
+    internal static bool ValidDisplayName(string? value, int maximumLength) =>
+        !string.IsNullOrEmpty(value)
+        && value.EnumerateRunes().Count() <= maximumLength
+        && value == value.Trim()
+        && !value.Any(char.IsControl);
 }
 
 public sealed record CalculatorManifestItem
@@ -108,7 +118,7 @@ public sealed record CalculatorManifestItem
     {
         string key = ordinal.ToString("000", CultureInfo.InvariantCulture);
         if (ItemKey != key
-            || DisplayName != $"Workload {key}"
+            || !CalculatorManifest.ValidDisplayName(DisplayName, 160)
             || Product != "azure_sql_managed_instance"
             || DeploymentModel != "single_instance"
             || Region.Length is < 1 or > 64

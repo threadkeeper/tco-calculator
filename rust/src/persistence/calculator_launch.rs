@@ -14,9 +14,9 @@ use uuid::Uuid;
 use crate::domain::decimal::DecimalValue;
 
 pub const CALCULATOR_LAUNCH_DOCUMENT_TYPE: &str = "azure_calculator_launch";
-pub const CALCULATOR_MANIFEST_VERSION: u16 = 1;
+pub const CALCULATOR_MANIFEST_VERSION: u16 = 2;
 pub const CALCULATOR_PROTOCOL_VERSION: u16 = 1;
-pub const CALCULATOR_CONTRACT_VERSION: &str = "2026-08-23";
+pub const CALCULATOR_CONTRACT_VERSION: &str = "2026-08-24";
 pub const MINIMUM_COMPANION_VERSION: &str = "1.0.0";
 pub const MAX_CALCULATOR_MANIFEST_ITEMS: usize = 25;
 pub const MAX_CALCULATOR_MANIFEST_BYTES: usize = 256 * 1024;
@@ -32,6 +32,7 @@ pub struct CalculatorManifest {
     pub generated_at: String,
     pub currency: String,
     pub locale: String,
+    pub estimate_name: String,
     pub items: Vec<CalculatorManifestItem>,
 }
 
@@ -668,9 +669,10 @@ mod tests {
                 generated_at: "2026-08-23T12:00:00Z".to_owned(),
                 currency: "USD".to_owned(),
                 locale: "en-US".to_owned(),
+                estimate_name: "Workload 1 EC2 SQL".to_owned(),
                 items: vec![CalculatorManifestItem {
                     item_key: "001".to_owned(),
-                    display_name: "Workload 001".to_owned(),
+                    display_name: "VM5".to_owned(),
                     product: CalculatorProduct::AzureSqlManagedInstance,
                     region: "eastus".to_owned(),
                     deployment_model: CalculatorDeploymentModel::SingleInstance,

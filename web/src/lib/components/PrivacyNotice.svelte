@@ -153,6 +153,13 @@
             region filters are sent.
           </li>
           <li>
+            When you explicitly create an Azure Pricing Calculator estimate, the separately
+            installed companion enters the saved project name, workload names, and Azure target
+            configuration into Microsoft's public Calculator. It does not send project descriptions,
+            server names, source infrastructure identifiers, calculated totals, owner identity,
+            credentials, or commercial terms.
+          </li>
+          <li>
             You can intentionally disclose an editable project snapshot by creating a 30-day share
             link. The source project and owner identity remain private.
           </li>
