@@ -8,7 +8,7 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const fixtureRoot = path.resolve(scriptDirectory, '../../tests/assistant-workload-classification');
 const manifestPath = path.join(fixtureRoot, 'cases.json');
 const resetResults = process.argv.includes('--reset-results');
-const allowedFamilies = new Set(['ec2', 'rds', 'on_prem', 'sql_payg']);
+const allowedFamilies = new Set(['ec2', 'ec2_vm', 'rds', 'on_prem', 'sql_payg']);
 
 const cases = JSON.parse(await readFile(manifestPath, 'utf8'));
 validateManifest(cases);
@@ -64,7 +64,7 @@ function validateManifest(fixtures) {
   for (const fixture of fixtures) {
     if (
       typeof fixture.id !== 'string' ||
-      !/^(ec2|rds|on_prem|sql_payg)\/[a-z0-9-]+$/.test(fixture.id) ||
+      !/^(ec2_vm|ec2|rds|on_prem|sql_payg)\/[a-z0-9-]+$/.test(fixture.id) ||
       identifiers.has(fixture.id)
     ) {
       throw new Error(`Invalid or duplicate fixture id: ${fixture.id}`);

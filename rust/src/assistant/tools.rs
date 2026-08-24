@@ -25,9 +25,9 @@ use crate::{
         decimal::DecimalValue,
         project::{EditableProject, ProjectSettings, SqlPaygSettings, ValidationIssue},
         resource::{
-            EbsVolume, EbsVolumeType, Ec2Resource, LicenseBasis, OnPremResource, ProjectType,
-            PurchaseOption, RdsDeployment, RdsResource, Resource, SharedResource, SqlEdition,
-            SqlWorkload,
+            EbsVolume, EbsVolumeType, Ec2Resource, Ec2VmResource, LicenseBasis, OnPremResource,
+            ProjectType, PurchaseOption, RdsDeployment, RdsResource, Resource, SharedResource,
+            SqlEdition, SqlWorkload, VmDiskRole, VmVolume,
         },
     },
     persistence::repository::RepositoryError,
@@ -47,6 +47,14 @@ pub const MAX_PROPOSAL_CHANGES: usize = 500;
 pub const MAX_EXTRACTION_NOTES: usize = 100;
 pub const MAX_EXTRACTION_NOTE_CHARS: usize = 500;
 const EC2_CATALOG_RAM_UNAVAILABLE_UNCERTAINTY: &str = "Source RAM was not visible and authoritative AWS catalog memory was unavailable, so no project draft was created.";
+/// The EC2 virtual machine workload is structurally non-SQL, so these inputs are removed from its
+/// tool schema and rejected if a model sends them anyway.
+const SQL_ONLY_FIELDS: &[&str] = &[
+    "sql_edition",
+    "license_basis",
+    "sql_data_gb_per_instance",
+    "mi_purchase_option",
+];
 /// AWS includes 3,000 IOPS with every gp3 volume, so assuming that baseline keeps an image
 /// draft valid at no additional cost. io2 has no included tier and bills every provisioned
 /// IOPS, so an unseen value falls back to the smallest amount AWS accepts rather than a guess.
@@ -553,8 +561,15 @@ fn scoped_new_project_draft_schema(project_type: ProjectType) -> Option<String> 
         .as_object_mut()?
         .insert("enum".to_owned(), json!([project_type_name]));
 
+    // The VM workload carries no SQL inputs, so the model cannot propose them at all.
+    if project_type == ProjectType::Ec2Vm {
+        for field in SQL_ONLY_FIELDS {
+            properties.remove(*field);
+        }
+    }
+
     let allowed_specific_fields: &[&str] = match project_type {
-        ProjectType::Ec2 => &["instance_type", "volumes"],
+        ProjectType::Ec2 | ProjectType::Ec2Vm => &["instance_type", "volumes"],
         ProjectType::Rds => &[
             "instance_type",
             "deployment",
@@ -570,8 +585,6 @@ fn scoped_new_project_draft_schema(project_type: ProjectType) -> Option<String> 
             "depreciation_years",
             "average_power_kw_override",
         ],
-        // The assistant cannot draft this workload yet, and classification never selects it.
-        ProjectType::Ec2Vm => return None,
         ProjectType::SqlPayg => unreachable!("SQL PAYG returned before resource scoping"),
     };
     const SOURCE_SPECIFIC_FIELDS: &[&str] = &[
@@ -735,9 +748,18 @@ impl NewResourceInput {
             || self.average_power_kw_override.is_some();
         match self.source_type {
             ProjectType::Ec2 => !rds_fields && !on_prem_fields,
+            // The VM workload is structurally non-SQL, so any SQL input is a mismatch.
+            ProjectType::Ec2Vm => {
+                !rds_fields
+                    && !on_prem_fields
+                    && self.sql_edition.is_none()
+                    && self.license_basis.is_none()
+                    && self.sql_data_gb_per_instance.is_none()
+                    && self.mi_purchase_option.is_none()
+            }
             ProjectType::Rds => !ec2_fields && !on_prem_fields,
             ProjectType::OnPrem => self.instance_type.is_none() && !ec2_fields && !rds_fields,
-            ProjectType::Ec2Vm | ProjectType::SqlPayg => false,
+            ProjectType::SqlPayg => false,
         }
     }
 }
@@ -1250,7 +1272,7 @@ async fn stage_new_project_draft(
     input: &StageNewProjectDraftInput,
 ) -> ToolOutcome {
     let aws_region = input.settings.aws_region.as_deref().unwrap_or("eu-west-1");
-    let aws_snapshot = if input.project_type == ProjectType::Ec2 {
+    let aws_snapshot = if matches!(input.project_type, ProjectType::Ec2 | ProjectType::Ec2Vm) {
         state
             .pricing
             .resolve_aws("USD", aws_region)
@@ -1278,18 +1300,19 @@ fn stage_new_project_draft_with_ec2_memory(
             code: "project_already_selected",
         };
     }
-    let ec2_catalog_ram_missing = input.project_type == ProjectType::Ec2
-        && if input.resources.is_empty() {
-            ec2_catalog_memory("r6id.8xlarge").is_none()
-        } else {
-            input.resources.iter().any(|resource| {
-                resource.source_ram_gb_per_instance.is_none()
-                    && ec2_catalog_memory(
-                        resource.instance_type.as_deref().unwrap_or("r6id.8xlarge"),
-                    )
-                    .is_none()
-            })
-        };
+    let ec2_catalog_ram_missing =
+        matches!(input.project_type, ProjectType::Ec2 | ProjectType::Ec2Vm)
+            && if input.resources.is_empty() {
+                ec2_catalog_memory("r6id.8xlarge").is_none()
+            } else {
+                input.resources.iter().any(|resource| {
+                    resource.source_ram_gb_per_instance.is_none()
+                        && ec2_catalog_memory(
+                            resource.instance_type.as_deref().unwrap_or("r6id.8xlarge"),
+                        )
+                        .is_none()
+                })
+            };
     if ec2_catalog_ram_missing {
         let mut uncertainties = input.uncertainties.clone();
         if uncertainties.len() < MAX_EXTRACTION_NOTES {
@@ -1310,7 +1333,7 @@ fn stage_new_project_draft_with_ec2_memory(
 
     let mut uncertainties = input.uncertainties.clone();
     let assumed_iops = |assumed: EbsVolumeType| {
-        input.project_type == ProjectType::Ec2
+        matches!(input.project_type, ProjectType::Ec2 | ProjectType::Ec2Vm)
             && input.resources.iter().any(|resource| {
                 resource.volumes.iter().flatten().any(|volume| {
                     volume.provisioned_iops.is_none() && volume.volume_type == Some(assumed)
@@ -1369,7 +1392,10 @@ fn new_project_draft(
     ec2_catalog_memory: &dyn Fn(&str) -> Option<DecimalValue>,
 ) -> EditableProject {
     let on_prem = input.project_type == ProjectType::OnPrem;
-    let aws_project = matches!(input.project_type, ProjectType::Ec2 | ProjectType::Rds);
+    let aws_project = matches!(
+        input.project_type,
+        ProjectType::Ec2 | ProjectType::Ec2Vm | ProjectType::Rds
+    );
     let sql_payg = (input.project_type == ProjectType::SqlPayg).then(|| {
         let settings = input.settings.sql_payg.as_ref();
         SqlPaygSettings {
@@ -1495,16 +1521,19 @@ fn new_resource(
     let ec2_instance_type = input.instance_type.as_deref().unwrap_or("r6id.8xlarge");
     let shared = SharedResource {
         id: Uuid::new_v4(),
-        workload_name: input
-            .workload_name
-            .clone()
-            .unwrap_or_else(|| "SQL workload".to_owned()),
+        workload_name: input.workload_name.clone().unwrap_or_else(|| {
+            if input.source_type == ProjectType::Ec2Vm {
+                "Virtual machine".to_owned()
+            } else {
+                "SQL workload".to_owned()
+            }
+        }),
         server_name: None,
         quantity: input.quantity.unwrap_or(1),
         source_ram_gb_per_instance: input
             .source_ram_gb_per_instance
             .or_else(|| {
-                (input.source_type == ProjectType::Ec2)
+                matches!(input.source_type, ProjectType::Ec2 | ProjectType::Ec2Vm)
                     .then(|| ec2_catalog_memory(ec2_instance_type))
                     .flatten()
             })
@@ -1571,7 +1600,19 @@ fn new_resource(
             average_power_kw_override: input.average_power_kw_override,
         }),
         ProjectType::Ec2Vm => {
-            unreachable!("the assistant cannot draft EC2 virtual machine resources yet")
+            let volumes = match input.volumes.as_deref() {
+                Some(volumes) if !volumes.is_empty() => volumes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, volume)| new_vm_volume(volume, index))
+                    .collect(),
+                _ => vec![new_vm_volume(&NewVolumeInput::default(), 0)],
+            };
+            Resource::Ec2Vm(Ec2VmResource {
+                shared,
+                instance_type: ec2_instance_type.to_owned(),
+                volumes,
+            })
         }
         ProjectType::SqlPayg => {
             unreachable!("SQL Pay As You Go projects cannot contain workload resources")
@@ -1596,6 +1637,35 @@ fn new_volume(input: &NewVolumeInput) -> EbsVolume {
             EbsVolumeType::Ephemeral => None,
         }),
         throughput_mibps: input.throughput_mibps,
+    }
+}
+
+/// The first persistent volume is the operating system disk and the rest are data disks, which is
+/// the reviewed default in section 4.4 of the product specification.
+fn new_vm_volume(input: &NewVolumeInput, index: usize) -> VmVolume {
+    let is_os = index == 0;
+    let volume = new_volume(&NewVolumeInput {
+        // An operating system disk is persistent by definition, so it is never instance storage.
+        volume_type: input.volume_type.or(is_os.then_some(EbsVolumeType::Gp3)),
+        label: input
+            .label
+            .clone()
+            .or_else(|| Some(if is_os { "OS disk" } else { "Data disk" }.to_owned())),
+        ..input.clone()
+    });
+    VmVolume {
+        id: volume.id,
+        label: volume.label,
+        aws_volume_id: volume.aws_volume_id,
+        volume_type: volume.volume_type,
+        role: if is_os {
+            VmDiskRole::Os
+        } else {
+            VmDiskRole::Data
+        },
+        capacity_gb: volume.capacity_gb,
+        provisioned_iops: volume.provisioned_iops,
+        throughput_mibps: volume.throughput_mibps,
     }
 }
 
@@ -2388,6 +2458,176 @@ mod tests {
         assert!(omissions.is_empty());
         assert_eq!(uncertainties, [EC2_CATALOG_RAM_UNAVAILABLE_UNCERTAINTY]);
         assert_eq!(outcome.history_status(), "reported");
+    }
+
+    #[test]
+    fn the_vm_draft_schema_hides_every_sql_input() {
+        let schema = classified_draft_schema(ProjectType::Ec2Vm);
+
+        assert_eq!(
+            schema["properties"]["project_type"]["enum"],
+            json!(["ec2_vm"])
+        );
+        let properties = schema["properties"]["resources"]["items"]["properties"]
+            .as_object()
+            .expect("resource properties");
+        assert_eq!(properties["source_type"]["enum"], json!(["ec2_vm"]));
+        for field in ["instance_type", "volumes"] {
+            assert!(properties.contains_key(field), "ec2_vm needs {field}");
+        }
+        for field in SQL_ONLY_FIELDS {
+            assert!(
+                !properties.contains_key(*field),
+                "ec2_vm must not expose {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_vm_resource_carrying_a_sql_input_is_refused_before_any_draft_is_built() {
+        let definition = find("stage_new_project_draft").expect("registered");
+
+        for field in [
+            r#""sql_edition":"standard""#,
+            r#""license_basis":"license_included""#,
+            r#""sql_data_gb_per_instance":"512""#,
+            r#""mi_purchase_option":"payg""#,
+        ] {
+            let arguments = format!(
+                r#"{{
+                    "project_type":"ec2_vm",
+                    "resources":[{{"source_type":"ec2_vm","instance_type":"t3.large",{field}}}],
+                    "omissions":[],
+                    "uncertainties":[]
+                }}"#
+            );
+            assert!(
+                matches!(
+                    parse_input(definition, &arguments),
+                    Err(InvalidToolArguments::ResourceFieldMismatch)
+                ),
+                "{field} must not reach a VM draft"
+            );
+        }
+    }
+
+    #[test]
+    fn a_vm_draft_stages_one_operating_system_disk_ahead_of_its_data_disks() {
+        let definition = find("stage_new_project_draft").expect("registered");
+        let input = parse_input(
+            definition,
+            r#"{
+                "project_type":"ec2_vm",
+                "resources":[{
+                    "source_type":"ec2_vm",
+                    "workload_name":"VM1",
+                    "instance_type":"r6id.12xlarge",
+                    "volumes":[
+                        {"volume_type":"gp3","capacity_gb":"1024"},
+                        {"volume_type":"gp3","capacity_gb":"2048"}
+                    ]
+                }],
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect("typed VM draft input");
+        let ToolInput::StageNewProjectDraft(input) = input else {
+            panic!("expected new-project input");
+        };
+
+        let outcome = stage_new_project_draft_with_ec2_memory(
+            &turn_context(TurnPhase::Propose, false),
+            &input,
+            &|instance_type| (instance_type == "r6id.12xlarge").then(|| decimal(384)),
+        );
+        let AssistantProposal::NewProjectDraft(proposal) =
+            outcome.proposal().expect("VM draft proposal")
+        else {
+            panic!("expected a new-project proposal");
+        };
+
+        assert_eq!(proposal.project.settings.project_type, ProjectType::Ec2Vm);
+        assert_eq!(
+            proposal.project.settings.aws_region.as_deref(),
+            Some("eu-west-1")
+        );
+        assert!(proposal.project.validate().is_empty());
+
+        let resource = &proposal.project.resources[0];
+        assert!(
+            resource.sql().is_none(),
+            "a VM workload never carries SQL Server"
+        );
+        assert_eq!(resource.shared().source_ram_gb_per_instance, decimal(384));
+        assert_eq!(resource.shared().annual_hours_per_instance, decimal(8_760));
+
+        let Resource::Ec2Vm(resource) = resource else {
+            panic!("expected an EC2 virtual machine resource");
+        };
+        assert_eq!(resource.instance_type, "r6id.12xlarge");
+        assert_eq!(
+            resource
+                .volumes
+                .iter()
+                .map(|volume| volume.role)
+                .collect::<Vec<_>>(),
+            vec![VmDiskRole::Os, VmDiskRole::Data]
+        );
+        assert_eq!(
+            resource
+                .volumes
+                .iter()
+                .map(|volume| volume.provisioned_iops)
+                .collect::<Vec<_>>(),
+            vec![Some(GP3_BASELINE_IOPS), Some(GP3_BASELINE_IOPS)]
+        );
+
+        let (_, uncertainties) = outcome
+            .extraction_notes()
+            .expect("the staged draft returns its extraction report");
+        assert_eq!(uncertainties, [GP3_ASSUMED_IOPS_UNCERTAINTY]);
+    }
+
+    #[test]
+    fn a_vm_draft_without_visible_storage_still_stages_a_persistent_operating_system_disk() {
+        let definition = find("stage_new_project_draft").expect("registered");
+        let input = parse_input(
+            definition,
+            r#"{
+                "project_type":"ec2_vm",
+                "resources":[{"source_type":"ec2_vm","instance_type":"t3.large"}],
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect("typed VM draft input");
+        let ToolInput::StageNewProjectDraft(input) = input else {
+            panic!("expected new-project input");
+        };
+
+        let outcome = stage_new_project_draft_with_ec2_memory(
+            &turn_context(TurnPhase::Propose, false),
+            &input,
+            &|_| Some(decimal(8)),
+        );
+        let AssistantProposal::NewProjectDraft(proposal) =
+            outcome.proposal().expect("VM draft proposal")
+        else {
+            panic!("expected a new-project proposal");
+        };
+
+        assert!(proposal.project.validate().is_empty());
+        let Resource::Ec2Vm(resource) = &proposal.project.resources[0] else {
+            panic!("expected an EC2 virtual machine resource");
+        };
+        let [volume] = resource.volumes.as_slice() else {
+            panic!("expected exactly one default volume");
+        };
+        assert_eq!(volume.role, VmDiskRole::Os);
+        assert_eq!(volume.volume_type, EbsVolumeType::Gp3);
+        assert_eq!(volume.label, "OS disk");
+        assert_eq!(volume.provisioned_iops, Some(GP3_BASELINE_IOPS));
     }
 
     #[test]

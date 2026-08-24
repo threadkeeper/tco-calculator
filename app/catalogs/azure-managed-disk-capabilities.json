@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0.0",
+  "status": "reviewed",
+  "reviewed_date": "2026-08-24",
+  "source_urls": [
+    "https://learn.microsoft.com/en-us/azure/virtual-machines/disks-types"
+  ],
+  "assumptions": [
+    "Capacity, IOPS, and throughput values are the documented base provisioned values from the Azure managed disk types article; burst and expanded performance are deliberately excluded because they are not guaranteed provisioned capability.",
+    "Premium SSD v2 cannot be used as an operating system disk and is therefore restricted to the data role.",
+    "Premium SSD v2 includes 3,000 IOPS and 125 MB/s at no additional charge; only performance above those baselines is separately priced.",
+    "Only locally redundant storage is represented. Zone-redundant storage is out of scope for the first release of the EC2 virtual machine workload.",
+    "Region availability records only the regions this catalog has been reviewed for. A region that is absent is treated as unavailable rather than assumed available.",
+    "The catalog carries capabilities only. Prices are resolved separately from the Azure Retail Prices API."
+  ],
+  "offers": [
+    {
+      "offer_key": "premium_ssd_lrs",
+      "display_name": "Premium SSD LRS",
+      "redundancy": "lrs",
+      "allowed_roles": ["os", "data"],
+      "performance_is_provisioned_independently": false,
+      "azure_regions": ["swedencentral"],
+      "included_iops": null,
+      "included_throughput_mbps": null,
+      "maximum_iops": 20000,
+      "maximum_throughput_mbps": 900,
+      "capacity_increment_gb": null,
+      "minimum_capacity_gb": null,
+      "maximum_capacity_gb": "32767",
+      "tiers": [
+        { "tier_key": "P1", "capacity_gb": "4", "provisioned_iops": 120, "provisioned_throughput_mbps": "25" },
+        { "tier_key": "P2", "capacity_gb": "8", "provisioned_iops": 120, "provisioned_throughput_mbps": "25" },
+        { "tier_key": "P3", "capacity_gb": "16", "provisioned_iops": 120, "provisioned_throughput_mbps": "25" },
+        { "tier_key": "P4", "capacity_gb": "32", "provisioned_iops": 120, "provisioned_throughput_mbps": "25" },
+        { "tier_key": "P6", "capacity_gb": "64", "provisioned_iops": 240, "provisioned_throughput_mbps": "50" },
+        { "tier_key": "P10", "capacity_gb": "128", "provisioned_iops": 500, "provisioned_throughput_mbps": "100" },
+        { "tier_key": "P15", "capacity_gb": "256", "provisioned_iops": 1100, "provisioned_throughput_mbps": "125" },
+        { "tier_key": "P20", "capacity_gb": "512", "provisioned_iops": 2300, "provisioned_throughput_mbps": "150" },
+        { "tier_key": "P30", "capacity_gb": "1024", "provisioned_iops": 5000, "provisioned_throughput_mbps": "200" },
+        { "tier_key": "P40", "capacity_gb": "2048", "provisioned_iops": 7500, "provisioned_throughput_mbps": "250" },
+        { "tier_key": "P50", "capacity_gb": "4096", "provisioned_iops": 7500, "provisioned_throughput_mbps": "250" },
+        { "tier_key": "P60", "capacity_gb": "8192", "provisioned_iops": 16000, "provisioned_throughput_mbps": "500" },
+        { "tier_key": "P70", "capacity_gb": "16384", "provisioned_iops": 18000, "provisioned_throughput_mbps": "750" },
+        { "tier_key": "P80", "capacity_gb": "32767", "provisioned_iops": 20000, "provisioned_throughput_mbps": "900" }
+      ],
+      "source_url": "https://learn.microsoft.com/en-us/azure/virtual-machines/disks-types",
+      "reviewed_date": "2026-08-24"
+    },
+    {
+      "offer_key": "premium_ssd_v2_lrs",
+      "display_name": "Premium SSD v2 LRS",
+      "redundancy": "lrs",
+      "allowed_roles": ["data"],
+      "performance_is_provisioned_independently": true,
+      "azure_regions": ["swedencentral"],
+      "included_iops": 3000,
+      "included_throughput_mbps": "125",
+      "maximum_iops": 80000,
+      "maximum_throughput_mbps": 2000,
+      "capacity_increment_gb": "1",
+      "minimum_capacity_gb": "1",
+      "maximum_capacity_gb": "65536",
+      "tiers": [],
+      "source_url": "https://learn.microsoft.com/en-us/azure/virtual-machines/disks-types",
+      "reviewed_date": "2026-08-24"
+    }
+  ]
+}

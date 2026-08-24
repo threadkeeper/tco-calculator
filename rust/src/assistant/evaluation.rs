@@ -44,9 +44,14 @@ const IDENTITY_VARIABLE: &str = "TCO_LIVE_FOUNDRY_IDENTITY";
 const AZURE_CLI_USER_IDENTITY: &str = "azure_cli_user";
 const SYSTEM_ASSIGNED_MANAGED_IDENTITY: &str = "system_assigned_managed_identity";
 const FIXTURE_MANIFEST: &str = "cases.json";
-const EXPECTED_CASES: usize = 15;
-const EXPECTED_CASES_BY_FAMILY: [(&str, usize); 4] =
-    [("ec2", 5), ("rds", 4), ("on_prem", 3), ("sql_payg", 3)];
+const EXPECTED_CASES: usize = 17;
+const EXPECTED_CASES_BY_FAMILY: [(&str, usize); 5] = [
+    ("ec2", 5),
+    ("ec2_vm", 2),
+    ("rds", 4),
+    ("on_prem", 3),
+    ("sql_payg", 3),
+];
 
 #[derive(Debug, Error)]
 pub enum EvaluationError {

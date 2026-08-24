@@ -13,7 +13,7 @@ use super::{
     },
 };
 
-pub const CLASSIFICATION_PROMPT_VERSION: &str = "tco-assistant-image-classifier/1.2.0";
+pub const CLASSIFICATION_PROMPT_VERSION: &str = "tco-assistant-image-classifier/1.3.0";
 const CLASSIFICATION_MAX_OUTPUT_TOKENS: u32 = 800;
 const CLASSIFICATION_MAX_ATTEMPTS: u32 = 3;
 const MAX_CLASSIFICATION_NOTES: usize = 12;
@@ -26,10 +26,11 @@ const CLASSIFICATION_SYSTEM_INSTRUCTION: &str = concat!(
     "Return exactly one classify_project_type tool call using only visible evidence.\n",
     "Classification precedence:\n",
     "- rds: Amazon RDS or RDS for SQL Server labels, DB instance class, db.* instance identifiers, DB identifiers, Multi-AZ, or RDS storage terms.\n",
-    "- ec2: Amazon EC2 labels, non-db instance types such as m7i.4xlarge or r6i.2xlarge, instance IDs, AMIs, EBS, gp3, or io2.\n",
+    "- ec2: Amazon EC2 labels, non-db instance types such as m7i.4xlarge or r6i.2xlarge, instance IDs, AMIs, EBS, gp3, or io2, together with visible SQL Server evidence such as a SQL edition, a SQL licence basis, or a SQL data size.\n",
+    "- ec2_vm: the same EC2 evidence when no SQL Server evidence is visible anywhere in the image, such as virtual machine rows listing only an instance type, an operating system, and storage. Windows, RAM, vCPU, or storage alone is never evidence of SQL Server.\n",
     "- sql_payg: an Azure Arc-enabled SQL Server PAYG licensing comparison with Enterprise or EE core counts, Standard or SE core counts, Software Assurance or SA annual spend, and usage hours. Treat STE as a weak OCR-like alias for SE only when Standard Edition and the complete Arc/PAYG comparison bundle are also visible. SQL edition or STE alone is not sufficient.\n",
     "- on_prem: generic server, CPU or core, RAM or memory, disk or storage, socket, hardware, datacenter, or power data only when no AWS, RDS, EC2, or SQL PAYG identifier is visible.\n",
-    "AWS service-specific evidence takes precedence over generic CPU, RAM, SQL edition, and storage fields. Use unknown when evidence is absent or materially conflicting.\n",
+    "AWS service-specific evidence takes precedence over generic CPU, RAM, SQL edition, and storage fields. Visible SQL Server evidence is what separates ec2 from ec2_vm; never assume SQL Server is present because it is absent from the image. Use unknown when evidence is absent or materially conflicting.\n",
     "Evidence must quote 1 to 6 short visible labels or identifiers. Record at most 6 conflicts in ambiguities. Keep every note on one line and under 160 characters.\n",
 );
 
@@ -40,7 +41,7 @@ const CLASSIFICATION_SCHEMA: &str = r#"{
     "properties": {
         "project_type": {
             "type": "string",
-            "enum": ["ec2", "rds", "on_prem", "sql_payg", "unknown"]
+            "enum": ["ec2", "ec2_vm", "rds", "on_prem", "sql_payg", "unknown"]
         },
         "confidence": {
             "type": "string",
@@ -61,6 +62,7 @@ const CLASSIFICATION_SCHEMA: &str = r#"{
 #[serde(rename_all = "snake_case")]
 pub enum ClassifiedProjectType {
     Ec2,
+    Ec2Vm,
     Rds,
     OnPrem,
     SqlPayg,
@@ -71,6 +73,7 @@ impl ClassifiedProjectType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ec2 => "ec2",
+            Self::Ec2Vm => "ec2_vm",
             Self::Rds => "rds",
             Self::OnPrem => "on_prem",
             Self::SqlPayg => "sql_payg",
@@ -81,6 +84,7 @@ impl ClassifiedProjectType {
     pub fn project_type(self) -> Option<ProjectType> {
         match self {
             Self::Ec2 => Some(ProjectType::Ec2),
+            Self::Ec2Vm => Some(ProjectType::Ec2Vm),
             Self::Rds => Some(ProjectType::Rds),
             Self::OnPrem => Some(ProjectType::OnPrem),
             Self::SqlPayg => Some(ProjectType::SqlPayg),

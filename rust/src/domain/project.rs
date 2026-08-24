@@ -473,7 +473,7 @@ fn validate_settings(settings: &ProjectSettings, issues: &mut Vec<ValidationIssu
         ));
     }
     match settings.project_type {
-        ProjectType::Ec2 | ProjectType::Rds
+        ProjectType::Ec2 | ProjectType::Ec2Vm | ProjectType::Rds
             if settings.aws_region.as_deref().is_none_or(str::is_empty) =>
         {
             issues.push(issue(
