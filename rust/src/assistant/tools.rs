@@ -1239,11 +1239,19 @@ async fn stage_new_project_draft(
     input: &StageNewProjectDraftInput,
 ) -> ToolOutcome {
     let aws_region = input.settings.aws_region.as_deref().unwrap_or("eu-west-1");
-    let aws_snapshots = state.pricing.list_latest_aws().await.unwrap_or_default();
+    let aws_snapshot = if input.project_type == ProjectType::Ec2 {
+        state
+            .pricing
+            .resolve_aws("USD", aws_region)
+            .await
+            .ok()
+            .and_then(|resolution| resolution.snapshot)
+    } else {
+        None
+    };
     stage_new_project_draft_with_ec2_memory(context, input, &|instance_type| {
-        aws_snapshots
-            .iter()
-            .find(|snapshot| snapshot.matches_scope("USD", aws_region))
+        aws_snapshot
+            .as_ref()
             .and_then(|snapshot| snapshot.ec2_rate(instance_type))
             .map(|record| record.rate.catalog_memory_gb)
     })
@@ -1811,7 +1819,23 @@ impl CalculationView {
 
 #[cfg(test)]
 mod tests {
+    use std::{path::PathBuf, sync::Arc};
+
+    use async_trait::async_trait;
+
     use super::*;
+    use crate::{
+        calculation::target_selector::CapabilityCatalog,
+        config::{AppEnvironment, Config},
+        pricing::{
+            coordinator::PricingCoordinator,
+            local_fixture,
+            repository::{
+                DurableSnapshotRepository, InMemorySnapshotRepository, SnapshotRepositoryError,
+            },
+            snapshot::{AwsPriceSnapshot, AzurePriceSnapshot},
+        },
+    };
 
     const FORBIDDEN_FIELD_TERMS: &[&str] = &[
         "owner_id",
@@ -1848,6 +1872,107 @@ mod tests {
         } else {
             context
         }
+    }
+
+    struct FindOnlyAwsSnapshotRepository {
+        snapshot: AwsPriceSnapshot,
+    }
+
+    #[async_trait]
+    impl DurableSnapshotRepository for FindOnlyAwsSnapshotRepository {
+        async fn put_aws(
+            &self,
+            snapshot: &AwsPriceSnapshot,
+        ) -> Result<AwsPriceSnapshot, SnapshotRepositoryError> {
+            Ok(snapshot.clone())
+        }
+
+        async fn put_azure(
+            &self,
+            _snapshot: &AzurePriceSnapshot,
+        ) -> Result<(), SnapshotRepositoryError> {
+            Ok(())
+        }
+
+        async fn get_aws(
+            &self,
+            snapshot_id: &str,
+        ) -> Result<Option<AwsPriceSnapshot>, SnapshotRepositoryError> {
+            Ok((self.snapshot.metadata.snapshot_id == snapshot_id).then(|| self.snapshot.clone()))
+        }
+
+        async fn get_azure(
+            &self,
+            _snapshot_id: &str,
+        ) -> Result<Option<AzurePriceSnapshot>, SnapshotRepositoryError> {
+            Ok(None)
+        }
+
+        async fn find_aws(
+            &self,
+            currency: &str,
+            source_region: &str,
+        ) -> Result<Option<AwsPriceSnapshot>, SnapshotRepositoryError> {
+            Ok(self
+                .snapshot
+                .matches_scope(currency, source_region)
+                .then(|| self.snapshot.clone()))
+        }
+
+        async fn find_azure(
+            &self,
+            _currency: &str,
+            _target_region: &str,
+        ) -> Result<Option<AzurePriceSnapshot>, SnapshotRepositoryError> {
+            Ok(None)
+        }
+
+        async fn list_latest_aws(&self) -> Result<Vec<AwsPriceSnapshot>, SnapshotRepositoryError> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn test_state() -> AppState {
+        AppState::in_memory(Config {
+            bind_address: "127.0.0.1:0".parse().expect("bind address"),
+            environment: AppEnvironment::Local,
+            local_auth: None,
+            cosmos: None,
+            assistant: None,
+            calculator_companion: None,
+            web_asset_dir: PathBuf::from("rust/static"),
+            guest_requests_per_minute: 60,
+            provider_refreshes_per_hour: 8,
+            provider_max_response_bytes: 64 * 1024 * 1024,
+            calculation_concurrency: 10,
+            assistant_requests_per_minute: 10,
+        })
+        .expect("in-memory application state")
+    }
+
+    fn reported_ec2_snapshot() -> AwsPriceSnapshot {
+        let (mut snapshot, _) = local_fixture::load_for_runtime().expect("local price fixture");
+        let anchor = snapshot
+            .ec2_rate("r6id.8xlarge")
+            .expect("EC2 fixture anchor")
+            .clone();
+        snapshot.ec2_rates = [
+            ("r6id.12xlarge", 48, 384),
+            ("r6id.8xlarge", 32, 256),
+            ("r5.8xlarge", 32, 256),
+            ("z1d.2xlarge", 8, 64),
+        ]
+        .into_iter()
+        .map(|(instance_type, source_vcpu, memory_gb)| {
+            let mut record = anchor.clone();
+            record.stable_key = format!("eu-west-1|on-demand|shared|windows|{instance_type}");
+            record.instance_type = instance_type.to_owned();
+            record.rate.source_vcpu = source_vcpu;
+            record.rate.catalog_memory_gb = decimal(memory_gb);
+            record
+        })
+        .collect();
+        snapshot
     }
 
     #[test]
@@ -2121,6 +2246,71 @@ mod tests {
             .map(|resource| resource.shared().source_ram_gb_per_instance)
             .collect::<Vec<_>>();
         assert_eq!(source_ram, vec![decimal(16), decimal(32), decimal(48)]);
+    }
+
+    #[tokio::test]
+    async fn an_ec2_draft_resolves_catalog_ram_when_the_region_is_absent_from_the_latest_list() {
+        let mut state = test_state();
+        state.pricing = PricingCoordinator::new(
+            InMemorySnapshotRepository::new(),
+            Some(Arc::new(FindOnlyAwsSnapshotRepository {
+                snapshot: reported_ec2_snapshot(),
+            })),
+            None,
+            None,
+            Arc::new(CapabilityCatalog {
+                schema_version: "test".to_owned(),
+                candidates: Vec::new(),
+            }),
+        );
+        assert!(
+            state
+                .pricing
+                .list_latest_aws()
+                .await
+                .expect("latest AWS snapshots")
+                .is_empty()
+        );
+
+        let definition = find("stage_new_project_draft").expect("registered");
+        let input = parse_input(
+            definition,
+            r#"{
+                "project_type":"ec2",
+                "settings":{"aws_region":"eu-west-1"},
+                "resources":[
+                    {"source_type":"ec2","instance_type":"r6id.12xlarge"},
+                    {"source_type":"ec2","instance_type":"r6id.8xlarge"},
+                    {"source_type":"ec2","instance_type":"r5.8xlarge"},
+                    {"source_type":"ec2","instance_type":"z1d.2xlarge"}
+                ],
+                "omissions":[],
+                "uncertainties":[]
+            }"#,
+        )
+        .expect("typed EC2 draft input");
+        let ToolInput::StageNewProjectDraft(input) = input else {
+            panic!("expected new-project input");
+        };
+
+        let outcome =
+            stage_new_project_draft(&state, &turn_context(TurnPhase::Propose, false), &input).await;
+        let AssistantProposal::NewProjectDraft(proposal) =
+            outcome.proposal().expect("catalog-hydrated draft proposal")
+        else {
+            panic!("expected a new-project proposal");
+        };
+
+        assert_eq!(proposal.action, "open_project_draft");
+        assert_eq!(
+            proposal
+                .project
+                .resources
+                .iter()
+                .map(|resource| resource.shared().source_ram_gb_per_instance)
+                .collect::<Vec<_>>(),
+            vec![decimal(384), decimal(256), decimal(256), decimal(64)]
+        );
     }
 
     #[test]
