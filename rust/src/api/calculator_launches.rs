@@ -478,8 +478,12 @@ fn build_item(
         .azure_costs
         .as_ref()
         .ok_or(CalculatorManifestError::PricingUnavailable)?;
-    let (purchase_option, azure_hybrid_benefit) =
-        calculator_purchase_option(resource.shared().mi_purchase_option);
+    let (purchase_option, azure_hybrid_benefit) = calculator_purchase_option(
+        resource
+            .sql()
+            .ok_or(CalculatorManifestError::PricingUnavailable)?
+            .mi_purchase_option,
+    );
     let expected_total = checked_sum([
         azure_costs.compute_gross,
         azure_costs.additional_ram_gross,

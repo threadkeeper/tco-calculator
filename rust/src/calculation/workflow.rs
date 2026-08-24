@@ -338,6 +338,7 @@ impl CalculationEngine {
             Resource::Ec2(resource) => resolve_ec2_source(resource, input),
             Resource::Rds(resource) => resolve_rds_source(resource, input),
             Resource::OnPrem(resource) => resolve_on_prem_source(resource, input.settings)?,
+            Resource::Ec2Vm(_) => resolve_ec2_vm_source(),
         };
 
         let Some(source_vcpu) = source.source_vcpu else {
@@ -465,9 +466,21 @@ impl CalculationEngine {
 }
 
 fn storage_inputs(resource: &Resource) -> StorageInputs {
-    let sql_data_gb_per_instance = resource.shared().sql_data_gb_per_instance;
+    let sql_data_gb_per_instance = resource
+        .sql()
+        .map_or(DecimalValue::ZERO, |sql| sql.sql_data_gb_per_instance);
     let persistent_ebs_gb_per_instance = match resource {
         Resource::Ec2(resource) => DecimalValue(
+            resource
+                .volumes
+                .iter()
+                .filter(|volume| {
+                    volume.volume_type != crate::domain::resource::EbsVolumeType::Ephemeral
+                })
+                .map(|volume| volume.capacity_gb.0)
+                .sum(),
+        ),
+        Resource::Ec2Vm(resource) => DecimalValue(
             resource
                 .volumes
                 .iter()
@@ -580,6 +593,23 @@ fn resolve_rds_source(resource: &RdsResource, input: &CalculationInput<'_>) -> R
     }
 }
 
+fn resolve_ec2_vm_source() -> ResolvedSource {
+    ResolvedSource {
+        source_vcpu: None,
+        source_max_iops: None,
+        costs: None,
+        pricing_status: PricingStatus::Unavailable,
+        explanation_steps: Vec::new(),
+        unresolved_components: vec![UnresolvedComponent {
+            provider: None,
+            code: "ec2_vm_pricing_unavailable".to_owned(),
+            message:
+                "AWS EC2 virtual machine pricing and Azure Virtual Machine target selection are not available yet."
+                    .to_owned(),
+        }],
+    }
+}
+
 fn resolve_on_prem_source(
     resource: &OnPremResource,
     settings: &ProjectSettings,
@@ -638,10 +668,20 @@ fn resolve_azure_costs(
             Vec::new(),
         );
     }
-    let Some(record) = snapshot.mi_rate(
-        &selected.configuration_key,
-        resource.shared().mi_purchase_option,
-    ) else {
+    let Some(sql) = resource.sql() else {
+        return (
+            None,
+            None,
+            PricingStatus::Unavailable,
+            vec![UnresolvedComponent {
+                provider: Some(Provider::Azure),
+                code: "azure_rate_unavailable".to_owned(),
+                message: "SQL Managed Instance rates do not apply to this workload.".to_owned(),
+            }],
+            Vec::new(),
+        );
+    };
+    let Some(record) = snapshot.mi_rate(&selected.configuration_key, sql.mi_purchase_option) else {
         return (
             None,
             None,
@@ -951,7 +991,7 @@ fn source_cost_formula_step(
                 divide_or_zero(costs.storage_gross.0, quantity * Decimal::from(12)).to_string(),
             );
         }
-        Resource::Rds(_) => {
+        Resource::Rds(rds) => {
             values.insert(
                 "license_formula".to_owned(),
                 "license_gross = quantity * annual_hours_per_instance * source_vcpu * regional_edition_core_hourly"
@@ -973,18 +1013,18 @@ fn source_cost_formula_step(
             );
             values.insert(
                 "sql_data_gb_per_instance".to_owned(),
-                shared.sql_data_gb_per_instance.to_string(),
+                rds.sql.sql_data_gb_per_instance.to_string(),
             );
             values.insert(
                 "storage_monthly_per_gb".to_owned(),
                 divide_or_zero(
                     costs.storage_gross.0,
-                    quantity * shared.sql_data_gb_per_instance.0 * Decimal::from(12),
+                    quantity * rds.sql.sql_data_gb_per_instance.0 * Decimal::from(12),
                 )
                 .to_string(),
             );
         }
-        Resource::OnPrem(_) => return None,
+        Resource::OnPrem(_) | Resource::Ec2Vm(_) => return None,
     }
 
     Some(ExplanationStep {
@@ -1293,7 +1333,7 @@ fn on_prem_power_step(
             ),
             (
                 "sql_data_gb".to_owned(),
-                resource.shared.sql_data_gb_per_instance.to_string(),
+                resource.sql.sql_data_gb_per_instance.to_string(),
             ),
             (
                 "estimated_power_kw".to_owned(),
@@ -1318,7 +1358,7 @@ fn on_prem_cost_formula_step(
     costs: &SourceCostBreakdown,
     explanation: &OnPremExplanation,
 ) -> ExplanationStep {
-    let license_price = match resource.shared.sql_edition {
+    let license_price = match resource.sql.sql_edition {
         crate::domain::resource::SqlEdition::Standard => {
             settings.standard_license_sa_usd_per_two_core_pack
         }
@@ -1425,7 +1465,7 @@ mod tests {
             project::SqlPaygSettings,
             resource::{
                 EbsVolume, EbsVolumeType, LicenseBasis, ProjectType, PurchaseOption,
-                SharedResource, SqlEdition,
+                SharedResource, SqlEdition, SqlWorkload,
             },
         },
         pricing::snapshot::{
@@ -1603,11 +1643,13 @@ mod tests {
                 workload_name: "Synthetic large-memory EC2 workload".to_owned(),
                 server_name: None,
                 quantity: 1,
+                source_ram_gb_per_instance: decimal("1536"),
+                annual_hours_per_instance: decimal("8760"),
+            },
+            sql: SqlWorkload {
                 sql_edition: SqlEdition::Enterprise,
                 license_basis: LicenseBasis::Byol,
                 sql_data_gb_per_instance: decimal("4096"),
-                source_ram_gb_per_instance: decimal("1536"),
-                annual_hours_per_instance: decimal("8760"),
                 mi_purchase_option: PurchaseOption::Ahb,
             },
             instance_type: "r7i.48xlarge".to_owned(),
@@ -1677,11 +1719,13 @@ mod tests {
                 workload_name: "Synthetic 1 TiB on-prem workload".to_owned(),
                 server_name: None,
                 quantity: 1,
+                source_ram_gb_per_instance: decimal("1024"),
+                annual_hours_per_instance: decimal("8760"),
+            },
+            sql: SqlWorkload {
                 sql_edition: SqlEdition::Enterprise,
                 license_basis: LicenseBasis::LicenseIncluded,
                 sql_data_gb_per_instance: decimal("4096"),
-                source_ram_gb_per_instance: decimal("1024"),
-                annual_hours_per_instance: decimal("8760"),
                 mi_purchase_option: PurchaseOption::Ahb,
             },
             source_vcpu: 128,
@@ -1907,11 +1951,13 @@ mod tests {
                 workload_name: "Synthetic on-prem workload".to_owned(),
                 server_name: None,
                 quantity: 2,
+                source_ram_gb_per_instance: decimal("256"),
+                annual_hours_per_instance: decimal("8760"),
+            },
+            sql: SqlWorkload {
                 sql_edition: SqlEdition::Enterprise,
                 license_basis: LicenseBasis::LicenseIncluded,
                 sql_data_gb_per_instance: decimal("1024"),
-                source_ram_gb_per_instance: decimal("256"),
-                annual_hours_per_instance: decimal("8760"),
                 mi_purchase_option: PurchaseOption::Ahb,
             },
             source_vcpu: 16,
@@ -2065,11 +2111,13 @@ mod tests {
                 workload_name: "Synthetic workload".to_owned(),
                 server_name: None,
                 quantity: 1,
+                source_ram_gb_per_instance: decimal("64"),
+                annual_hours_per_instance: decimal("8760"),
+            },
+            sql: SqlWorkload {
                 sql_edition: SqlEdition::Standard,
                 license_basis: LicenseBasis::Byol,
                 sql_data_gb_per_instance: decimal(sql_data_gb),
-                source_ram_gb_per_instance: decimal("64"),
-                annual_hours_per_instance: decimal("8760"),
                 mi_purchase_option: PurchaseOption::Ahb,
             },
             instance_type: "m-test".to_owned(),

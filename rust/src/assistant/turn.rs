@@ -331,6 +331,7 @@ fn runtime_instruction(
 fn project_type_name(project_type: crate::domain::resource::ProjectType) -> &'static str {
     match project_type {
         crate::domain::resource::ProjectType::Ec2 => "ec2",
+        crate::domain::resource::ProjectType::Ec2Vm => "ec2_vm",
         crate::domain::resource::ProjectType::Rds => "rds",
         crate::domain::resource::ProjectType::OnPrem => "on_prem",
         crate::domain::resource::ProjectType::SqlPayg => "sql_payg",
@@ -420,7 +421,7 @@ mod tests {
             project::{EditableProject, ProjectSettings},
             resource::{
                 EbsVolume, EbsVolumeType, Ec2Resource, LicenseBasis, ProjectType, PurchaseOption,
-                Resource, SharedResource, SqlEdition,
+                Resource, SharedResource, SqlEdition, SqlWorkload,
             },
         },
     };
@@ -567,11 +568,13 @@ mod tests {
                     workload_name: "CONTOSO-SQLPROD-01".to_owned(),
                     server_name: None,
                     quantity: 1,
+                    source_ram_gb_per_instance: decimal("64"),
+                    annual_hours_per_instance: decimal("8760"),
+                },
+                sql: SqlWorkload {
                     sql_edition: SqlEdition::Standard,
                     license_basis: LicenseBasis::Byol,
                     sql_data_gb_per_instance: decimal("512"),
-                    source_ram_gb_per_instance: decimal("64"),
-                    annual_hours_per_instance: decimal("8760"),
                     mi_purchase_option: PurchaseOption::Ahb,
                 },
                 instance_type: "r5.2xlarge".to_owned(),

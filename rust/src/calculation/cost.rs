@@ -152,8 +152,8 @@ pub fn calculate_ec2_source(
     let compute_gross = quantity * hours * rate.compute_hourly.0;
     let compute_net = apply_discount(compute_gross, settings.source_compute_discount);
     let license_hourly = source_license_hourly(
-        resource.shared.license_basis,
-        resource.shared.sql_edition,
+        resource.sql.license_basis,
+        resource.sql.sql_edition,
         rate.standard_license_hourly,
         rate.enterprise_license_hourly,
     )?;
@@ -252,19 +252,19 @@ pub fn calculate_rds_source(
     let hours = resource.shared.annual_hours_per_instance.0;
     let compute_gross = quantity * hours * rate.effective_compute_hourly.0;
     let compute_net = apply_discount(compute_gross, settings.source_compute_discount);
-    let core_rate = match resource.shared.sql_edition {
+    let core_rate = match resource.sql.sql_edition {
         SqlEdition::Standard => rate.standard_license_core_hourly,
         SqlEdition::Enterprise => rate.enterprise_license_core_hourly,
     };
     validate_rate(core_rate)?;
-    let license_gross = if resource.shared.license_basis == LicenseBasis::Byol {
+    let license_gross = if resource.sql.license_basis == LicenseBasis::Byol {
         Decimal::ZERO
     } else {
         quantity * hours * Decimal::from(rate.source_vcpu) * core_rate.0
     };
     let license_net = apply_discount(license_gross, settings.source_license_discount);
     let storage_gross = quantity
-        * resource.shared.sql_data_gb_per_instance.0
+        * resource.sql.sql_data_gb_per_instance.0
         * Decimal::from(12)
         * rate.storage_monthly_per_gb.0;
     let storage_net = apply_discount(storage_gross, settings.source_storage_discount);
@@ -285,7 +285,7 @@ pub fn calculate_on_prem_source(
     resource: &OnPremResource,
     settings: &ProjectSettings,
 ) -> Result<OnPremCostResult, CostError> {
-    let license_price = match resource.shared.sql_edition {
+    let license_price = match resource.sql.sql_edition {
         SqlEdition::Standard => settings.standard_license_sa_usd_per_two_core_pack,
         SqlEdition::Enterprise => settings.enterprise_license_sa_usd_per_two_core_pack,
     }
@@ -304,7 +304,7 @@ pub fn calculate_on_prem_source(
     let estimated_power_kw = Decimal::new(100, 3)
         + Decimal::new(125, 4) * Decimal::from(resource.source_vcpu)
         + Decimal::new(375, 6) * resource.shared.source_ram_gb_per_instance.0
-        + Decimal::new(10, 3) * resource.shared.sql_data_gb_per_instance.0 / Decimal::from(1024);
+        + Decimal::new(10, 3) * resource.sql.sql_data_gb_per_instance.0 / Decimal::from(1024);
     let effective_power_kw = resource
         .average_power_kw_override
         .map_or(estimated_power_kw, |power| power.0);
@@ -505,7 +505,7 @@ mod tests {
 
     use super::*;
     use crate::domain::resource::{
-        EbsVolume, ProjectType, PurchaseOption, RdsDeployment, SharedResource,
+        EbsVolume, ProjectType, PurchaseOption, RdsDeployment, SharedResource, SqlWorkload,
     };
 
     #[test]
@@ -754,6 +754,7 @@ mod tests {
     fn ec2_resource() -> Ec2Resource {
         Ec2Resource {
             shared: shared(),
+            sql: sql_workload(),
             instance_type: "r6id.8xlarge".to_owned(),
             volumes: Vec::new(),
         }
@@ -762,6 +763,7 @@ mod tests {
     fn rds_resource() -> RdsResource {
         RdsResource {
             shared: shared(),
+            sql: sql_workload(),
             instance_type: "db.r6i.xlarge".to_owned(),
             deployment: RdsDeployment::SingleAz,
             commercial_term: "on_demand".to_owned(),
@@ -773,6 +775,7 @@ mod tests {
     fn on_prem_resource() -> OnPremResource {
         OnPremResource {
             shared: shared(),
+            sql: sql_workload(),
             source_vcpu: 4,
             licensable_cores: 4,
             source_max_iops: 0,
@@ -788,11 +791,16 @@ mod tests {
             workload_name: "Synthetic workload".to_owned(),
             server_name: None,
             quantity: 1,
+            source_ram_gb_per_instance: decimal("16"),
+            annual_hours_per_instance: decimal("8760"),
+        }
+    }
+
+    fn sql_workload() -> SqlWorkload {
+        SqlWorkload {
             sql_edition: SqlEdition::Standard,
             license_basis: LicenseBasis::LicenseIncluded,
             sql_data_gb_per_instance: decimal("100"),
-            source_ram_gb_per_instance: decimal("16"),
-            annual_hours_per_instance: decimal("8760"),
             mi_purchase_option: PurchaseOption::Ahb,
         }
     }

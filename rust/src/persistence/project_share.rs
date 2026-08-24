@@ -275,7 +275,7 @@ mod tests {
         project::ProjectSettings,
         resource::{
             LicenseBasis, OnPremResource, ProjectType, PurchaseOption, Resource, SharedResource,
-            SqlEdition,
+            SqlEdition, SqlWorkload,
         },
     };
 
@@ -379,9 +379,11 @@ mod tests {
                     workload_name: "SQL Server".to_owned(),
                     server_name: None,
                     quantity: 1,
-                    sql_data_gb_per_instance: DecimalValue(Decimal::from(500_u32)),
                     source_ram_gb_per_instance: DecimalValue(Decimal::from(64_u32)),
                     annual_hours_per_instance: DecimalValue(Decimal::from(8_760_u32)),
+                },
+                sql: SqlWorkload {
+                    sql_data_gb_per_instance: DecimalValue(Decimal::from(500_u32)),
                     sql_edition: SqlEdition::Enterprise,
                     license_basis: LicenseBasis::LicenseIncluded,
                     mi_purchase_option: PurchaseOption::Payg,

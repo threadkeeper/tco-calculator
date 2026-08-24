@@ -27,6 +27,7 @@ use crate::{
         resource::{
             EbsVolume, EbsVolumeType, Ec2Resource, LicenseBasis, OnPremResource, ProjectType,
             PurchaseOption, RdsDeployment, RdsResource, Resource, SharedResource, SqlEdition,
+            SqlWorkload,
         },
     },
     persistence::repository::RepositoryError,
@@ -524,6 +525,7 @@ fn scoped_new_project_draft_schema(project_type: ProjectType) -> Option<String> 
     let mut schema: Value = serde_json::from_str(STAGE_NEW_PROJECT_DRAFT_SCHEMA).ok()?;
     let project_type_name = match project_type {
         ProjectType::Ec2 => "ec2",
+        ProjectType::Ec2Vm => "ec2_vm",
         ProjectType::Rds => "rds",
         ProjectType::OnPrem => "on_prem",
         ProjectType::SqlPayg => "sql_payg",
@@ -568,6 +570,8 @@ fn scoped_new_project_draft_schema(project_type: ProjectType) -> Option<String> 
             "depreciation_years",
             "average_power_kw_override",
         ],
+        // The assistant cannot draft this workload yet, and classification never selects it.
+        ProjectType::Ec2Vm => return None,
         ProjectType::SqlPayg => unreachable!("SQL PAYG returned before resource scoping"),
     };
     const SOURCE_SPECIFIC_FIELDS: &[&str] = &[
@@ -733,7 +737,7 @@ impl NewResourceInput {
             ProjectType::Ec2 => !rds_fields && !on_prem_fields,
             ProjectType::Rds => !ec2_fields && !on_prem_fields,
             ProjectType::OnPrem => self.instance_type.is_none() && !ec2_fields && !rds_fields,
-            ProjectType::SqlPayg => false,
+            ProjectType::Ec2Vm | ProjectType::SqlPayg => false,
         }
     }
 }
@@ -1497,11 +1501,6 @@ fn new_resource(
             .unwrap_or_else(|| "SQL workload".to_owned()),
         server_name: None,
         quantity: input.quantity.unwrap_or(1),
-        sql_edition: input.sql_edition.unwrap_or(SqlEdition::Enterprise),
-        license_basis: input.license_basis.unwrap_or(LicenseBasis::Byol),
-        sql_data_gb_per_instance: input
-            .sql_data_gb_per_instance
-            .unwrap_or_else(|| decimal(1_024)),
         source_ram_gb_per_instance: input
             .source_ram_gb_per_instance
             .or_else(|| {
@@ -1519,6 +1518,13 @@ fn new_resource(
         annual_hours_per_instance: input
             .annual_hours_per_instance
             .unwrap_or_else(|| decimal(8_760)),
+    };
+    let sql = SqlWorkload {
+        sql_edition: input.sql_edition.unwrap_or(SqlEdition::Enterprise),
+        license_basis: input.license_basis.unwrap_or(LicenseBasis::Byol),
+        sql_data_gb_per_instance: input
+            .sql_data_gb_per_instance
+            .unwrap_or_else(|| decimal(1_024)),
         mi_purchase_option: input.mi_purchase_option.unwrap_or(PurchaseOption::Ahb),
     };
 
@@ -1531,12 +1537,14 @@ fn new_resource(
                 .unwrap_or_else(|| vec![new_volume(&NewVolumeInput::default())]);
             Resource::Ec2(Ec2Resource {
                 shared,
+                sql,
                 instance_type: ec2_instance_type.to_owned(),
                 volumes,
             })
         }
         ProjectType::Rds => Resource::Rds(RdsResource {
             shared,
+            sql,
             instance_type: input
                 .instance_type
                 .clone()
@@ -1554,6 +1562,7 @@ fn new_resource(
         }),
         ProjectType::OnPrem => Resource::OnPrem(OnPremResource {
             shared,
+            sql,
             source_vcpu: input.source_vcpu.unwrap_or(32),
             licensable_cores: input.licensable_cores.unwrap_or(32),
             source_max_iops: input.source_max_iops.unwrap_or(0),
@@ -1561,6 +1570,9 @@ fn new_resource(
             depreciation_years: input.depreciation_years.unwrap_or_else(|| decimal(5)),
             average_power_kw_override: input.average_power_kw_override,
         }),
+        ProjectType::Ec2Vm => {
+            unreachable!("the assistant cannot draft EC2 virtual machine resources yet")
+        }
         ProjectType::SqlPayg => {
             unreachable!("SQL Pay As You Go projects cannot contain workload resources")
         }
@@ -1784,6 +1796,13 @@ fn redact_resource(resource: &Resource, index: usize) -> Resource {
         Resource::Ec2(ec2) => {
             ec2.shared.workload_name = workload_name;
             for (volume_index, volume) in ec2.volumes.iter_mut().enumerate() {
+                volume.label = format!("volume-{}", volume_index + 1);
+                volume.aws_volume_id = None;
+            }
+        }
+        Resource::Ec2Vm(vm) => {
+            vm.shared.workload_name = workload_name;
+            for (volume_index, volume) in vm.volumes.iter_mut().enumerate() {
                 volume.label = format!("volume-{}", volume_index + 1);
                 volume.aws_volume_id = None;
             }
@@ -2450,7 +2469,7 @@ mod tests {
             panic!("expected an EC2 resource");
         };
 
-        assert_eq!(resource.shared.sql_data_gb_per_instance, decimal(1_536));
+        assert_eq!(resource.sql.sql_data_gb_per_instance, decimal(1_536));
         assert_eq!(resource.volumes[0].capacity_gb, decimal(2_048));
     }
 
@@ -2592,7 +2611,7 @@ mod tests {
             panic!("expected an EC2 resource");
         };
 
-        assert_eq!(resource.shared.sql_data_gb_per_instance, decimal(2_048));
+        assert_eq!(resource.sql.sql_data_gb_per_instance, decimal(2_048));
         assert_eq!(resource.volumes[0].capacity_gb, decimal(1_024));
     }
 

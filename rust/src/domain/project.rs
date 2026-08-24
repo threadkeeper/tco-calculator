@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{
     decimal::DecimalValue,
-    resource::{EbsVolumeType, ProjectType, PurchaseOption, Resource},
+    resource::{EbsVolumeType, ProjectType, PurchaseOption, Resource, VmDiskRole},
 };
 use crate::calculation::engine::CalculationRevision;
 
@@ -189,15 +189,17 @@ impl EditableProject {
                     "Quantity must be between 1 and 10,000.",
                 ));
             }
-            validate_decimal_range(
-                &mut issues,
-                &format!("/resources/{index}/sql_data_gb_per_instance"),
-                shared.sql_data_gb_per_instance,
-                Decimal::ZERO,
-                Decimal::from(1_000_000_000_u64),
-                false,
-                "SQL data size must be between 0 and 1,000,000,000 GB.",
-            );
+            if let Some(sql) = resource.sql() {
+                validate_decimal_range(
+                    &mut issues,
+                    &format!("/resources/{index}/sql_data_gb_per_instance"),
+                    sql.sql_data_gb_per_instance,
+                    Decimal::ZERO,
+                    Decimal::from(1_000_000_000_u64),
+                    false,
+                    "SQL data size must be between 0 and 1,000,000,000 GB.",
+                );
+            }
             validate_decimal_range(
                 &mut issues,
                 &format!("/resources/{index}/source_ram_gb_per_instance"),
@@ -231,6 +233,88 @@ impl EditableProject {
                             &format!("/resources/{index}/volumes"),
                             "limit",
                             "EC2 resources require 1 to 50 volumes.",
+                        ));
+                    }
+                    for (volume_index, volume) in resource.volumes.iter().enumerate() {
+                        let prefix = format!("/resources/{index}/volumes/{volume_index}");
+                        if !volume_ids.insert(volume.id) {
+                            issues.push(issue(
+                                &format!("{prefix}/id"),
+                                "duplicate",
+                                "Volume IDs must be unique within a project.",
+                            ));
+                        }
+                        if !(1..=80).contains(&volume.label.chars().count()) {
+                            issues.push(issue(
+                                &format!("{prefix}/label"),
+                                "length",
+                                "Volume label must contain 1 to 80 characters.",
+                            ));
+                        }
+                        if volume
+                            .aws_volume_id
+                            .as_ref()
+                            .is_some_and(|id| id.chars().count() > 128)
+                        {
+                            issues.push(issue(
+                                &format!("{prefix}/aws_volume_id"),
+                                "length",
+                                "AWS volume ID must not exceed 128 characters.",
+                            ));
+                        }
+                        if volume.capacity_gb.0 < Decimal::ZERO {
+                            issues.push(issue(
+                                &format!("{prefix}/capacity_gb"),
+                                "range",
+                                "Volume capacity must not be negative.",
+                            ));
+                        }
+                        if volume.volume_type != EbsVolumeType::Ephemeral
+                            && volume.provisioned_iops.is_none()
+                        {
+                            issues.push(issue(
+                                &format!("{prefix}/provisioned_iops"),
+                                "required",
+                                "gp3 and io2 volumes require provisioned IOPS.",
+                            ));
+                        }
+                        if volume
+                            .throughput_mibps
+                            .is_some_and(|throughput| throughput.0 < Decimal::ZERO)
+                        {
+                            issues.push(issue(
+                                &format!("{prefix}/throughput_mibps"),
+                                "range",
+                                "Volume throughput must not be negative.",
+                            ));
+                        }
+                    }
+                }
+                Resource::Ec2Vm(resource) => {
+                    if resource.instance_type.trim().is_empty() {
+                        issues.push(issue(
+                            &format!("/resources/{index}/instance_type"),
+                            "required",
+                            "EC2 instance type is required.",
+                        ));
+                    }
+                    if !(1..=50).contains(&resource.volumes.len()) {
+                        issues.push(issue(
+                            &format!("/resources/{index}/volumes"),
+                            "limit",
+                            "EC2 virtual machine resources require 1 to 50 volumes.",
+                        ));
+                    }
+                    let os_disks = resource
+                        .volumes
+                        .iter()
+                        .filter(|volume| volume.role == VmDiskRole::Os)
+                        .count();
+                    if os_disks != 1 {
+                        issues.push(issue(
+                            &format!("/resources/{index}/volumes"),
+                            "os_disk",
+                            "EC2 virtual machine resources require exactly one OS disk.",
                         ));
                     }
                     for (volume_index, volume) in resource.volumes.iter().enumerate() {
@@ -649,5 +733,97 @@ mod tests {
                 .iter()
                 .any(|issue| issue.pointer == "/resources/0/server_name")
         );
+    }
+
+    fn ec2_vm_project(volumes: serde_json::Value) -> EditableProject {
+        serde_json::from_value(json!({
+            "name": "EC2 virtual machine project",
+            "description": null,
+            "settings": {
+                "project_type": "ec2_vm",
+                "aws_region": "eu-west-1",
+                "azure_region": "swedencentral",
+                "currency": "USD",
+                "source_compute_discount": "0",
+                "source_license_discount": "0",
+                "source_storage_discount": "0",
+                "azure_compute_discount": "0",
+                "azure_license_discount": "0",
+                "azure_storage_discount": "0",
+                "selected_parity_adjustment": "0",
+                "default_annual_hours": "8760",
+                "default_mi_purchase_option": "ahb",
+                "enterprise_license_sa_usd_per_two_core_pack": null,
+                "standard_license_sa_usd_per_two_core_pack": null,
+                "remaining_coverage_months": null,
+                "electricity_rate_usd_per_kwh": null
+            },
+            "resources": [{
+                "source_type": "ec2_vm",
+                "id": "11111111-1111-4111-8111-111111111111",
+                "workload_name": "VM1",
+                "server_name": null,
+                "quantity": 1,
+                "source_ram_gb_per_instance": "384",
+                "annual_hours_per_instance": "8760",
+                "instance_type": "r6id.12xlarge",
+                "volumes": volumes
+            }],
+            "aws_price_snapshot_id": null,
+            "azure_price_snapshot_id": null
+        }))
+        .expect("test project should deserialize")
+    }
+
+    fn vm_volume(id: &str, role: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "label": "Disk",
+            "aws_volume_id": null,
+            "volume_type": "gp3",
+            "role": role,
+            "capacity_gb": "1024",
+            "provisioned_iops": 3000,
+            "throughput_mibps": "125"
+        })
+    }
+
+    #[test]
+    fn ec2_vm_resources_accept_one_os_disk_and_data_disks() {
+        let project = ec2_vm_project(json!([
+            vm_volume("22222222-2222-4222-8222-222222222222", "os"),
+            vm_volume("33333333-3333-4333-8333-333333333333", "data")
+        ]));
+        assert!(project.validate().is_empty(), "{:?}", project.validate());
+    }
+
+    #[test]
+    fn ec2_vm_resources_require_exactly_one_os_disk() {
+        for volumes in [
+            json!([vm_volume("22222222-2222-4222-8222-222222222222", "data")]),
+            json!([
+                vm_volume("22222222-2222-4222-8222-222222222222", "os"),
+                vm_volume("33333333-3333-4333-8333-333333333333", "os")
+            ]),
+        ] {
+            let project = ec2_vm_project(volumes);
+            assert!(
+                project
+                    .validate()
+                    .iter()
+                    .any(|issue| issue.pointer == "/resources/0/volumes"
+                        && issue.code == "os_disk")
+            );
+        }
+    }
+
+    #[test]
+    fn ec2_vm_persistent_volumes_require_provisioned_iops() {
+        let mut volume = vm_volume("22222222-2222-4222-8222-222222222222", "os");
+        volume["provisioned_iops"] = json!(null);
+        let project = ec2_vm_project(json!([volume]));
+        assert!(project.validate().iter().any(|issue| issue.pointer
+            == "/resources/0/volumes/0/provisioned_iops"
+            && issue.code == "required"));
     }
 }

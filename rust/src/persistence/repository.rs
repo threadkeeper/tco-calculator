@@ -322,7 +322,7 @@ mod tests {
         project::ProjectSettings,
         resource::{
             LicenseBasis, OnPremResource, ProjectType, PurchaseOption, Resource, SharedResource,
-            SqlEdition,
+            SqlEdition, SqlWorkload,
         },
     };
 
@@ -580,11 +580,13 @@ mod tests {
                     workload_name: "Synthetic workload".to_owned(),
                     server_name: None,
                     quantity: 1,
+                    source_ram_gb_per_instance: DecimalValue(Decimal::from(128_u32)),
+                    annual_hours_per_instance: DecimalValue(Decimal::from(8_760_u32)),
+                },
+                sql: SqlWorkload {
                     sql_edition: SqlEdition::Enterprise,
                     license_basis: LicenseBasis::Byol,
                     sql_data_gb_per_instance: DecimalValue(Decimal::from(1_024_u32)),
-                    source_ram_gb_per_instance: DecimalValue(Decimal::from(128_u32)),
-                    annual_hours_per_instance: DecimalValue(Decimal::from(8_760_u32)),
                     mi_purchase_option: PurchaseOption::Payg,
                 },
                 source_vcpu: 16,

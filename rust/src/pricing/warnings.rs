@@ -51,14 +51,14 @@ fn is_relevant(warning: &str, resources: &[Resource]) -> bool {
 
 fn has_ec2(resources: &[Resource], instance_type: &str, edition: SqlEdition) -> bool {
     resources.iter().any(|resource| {
-        matches!(resource, Resource::Ec2(ec2) if ec2.instance_type == instance_type && ec2.shared.sql_edition == edition)
+        matches!(resource, Resource::Ec2(ec2) if ec2.instance_type == instance_type && ec2.sql.sql_edition == edition)
     })
 }
 
 fn has_rds_edition(resources: &[Resource], edition: SqlEdition) -> bool {
     resources
         .iter()
-        .any(|resource| matches!(resource, Resource::Rds(rds) if rds.shared.sql_edition == edition))
+        .any(|resource| matches!(resource, Resource::Rds(rds) if rds.sql.sql_edition == edition))
 }
 
 fn rds_deployment_key(deployment: RdsDeployment) -> &'static str {

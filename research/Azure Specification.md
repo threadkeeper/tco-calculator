@@ -53,7 +53,8 @@ Useful engineering practices reviewed in `C:\Repos\gaia-robot` and adopted here 
 - AWS RDS for SQL Server.
 - On-premises SQL Server with user-entered infrastructure, licensing, and electricity assumptions.
 - Azure Arc-enabled SQL Server PAYG licensing compared with current annual Software Assurance or renewal spend.
-- Separate `EC2`, `RDS`, `On-prem`, and `SQL Pay As You Go` project types. Workload projects contain resources of exactly one source type; SQL Pay As You Go projects contain no workload resources.
+- AWS EC2 Windows virtual machines without SQL Server, compared with Windows Azure Virtual Machines and Azure managed disks, as adopted in section 4.4.
+- Separate `EC2`, `EC2 VM`, `RDS`, `On-prem`, and `SQL Pay As You Go` project types. Workload projects contain resources of exactly one source type; SQL Pay As You Go projects contain no workload resources.
 - EC2 EBS `gp3`, `io2`, and ephemeral volumes.
 - RDS Single-AZ and Multi-AZ deployments.
 - SQL Server Standard and Enterprise source editions.
@@ -88,7 +89,7 @@ Useful engineering practices reviewed in `C:\Repos\gaia-robot` and adopted here 
 ### 4.3 Explicitly Excluded from MVP
 
 - AWS report-server workloads that were removed from the workbook.
-- Azure SQL Database, SQL Server on Azure VM, PostgreSQL, MySQL, Oracle, or non-SQL workloads.
+- Azure SQL Database, SQL Server on Azure VM, PostgreSQL, MySQL, and Oracle. Non-SQL workloads are excluded except the AWS EC2 Windows virtual machine workload adopted in section 4.4.
 - Automated database feature-compatibility assessment.
 - Actual migration execution.
 - Network, backup, snapshot, support, migration-labor, or operational cost modeling.
@@ -100,6 +101,32 @@ Useful engineering practices reviewed in `C:\Repos\gaia-robot` and adopted here 
 - CSV, Excel, and PDF import and project duplication. Client-side native Excel workbook result export is included only as specified in section 7.6. JPEG and PNG assisted input is included only as specified in section 4.2.
 - AWS or Azure write access.
 - Provider-console login in MVP. Public price feeds are sufficient for the modeled retail prices.
+
+### 4.4 AWS EC2 Virtual Machine Workload
+
+The repository owner adopted this workload on 2026-08-24, resolving the non-SQL exclusion in section 4.3 for this case only. `docs/EC2-VM-TCO-SPEC.md` is the detailed implementation specification; where it conflicts with this document, this document controls.
+
+The workload compares Windows EC2 virtual machines and their persistent EBS volumes with Windows Azure Virtual Machines and Azure managed disks. It uses the project and resource discriminator `ec2_vm`. The existing `ec2` EC2 SQL workload keeps its current meaning, wire format, formulas, and target selection.
+
+An `ec2_vm` resource MUST NOT carry a SQL edition, SQL license basis, SQL data size, SQL MI tier, or SQL MI purchase option. The server MUST reject those fields on this variant rather than defaulting them.
+
+The owner also directed that the remaining inputs default to values covering the common case rather than modeling fringe scenarios. Each default below is an explicit, disclosed assumption that the user can override. None of them may be presented as an extracted or confirmed customer fact.
+
+| Input | Default | Basis |
+|---|---|---|
+| Monthly powered-on hours | 730 hours, persisted as 8,760 annual hours | Continuously running production servers; matches the 730-hour month used by the AWS and Azure calculators |
+| Resource quantity | 1 per resource row | Preserves one-to-one source-to-target identity |
+| AWS source region | Project `eu-west-1` default | Reuses the existing workload project setting |
+| Azure target region | Project `Sweden Central` default | Reuses the existing workload project setting |
+| Operating system | Windows | First release scope |
+| Tenancy and purchase model | Shared, On-Demand | First release scope |
+| Target licensing | Windows license included, Azure Hybrid Benefit off | Entitlement MUST NOT be inferred |
+| Volume role | First volume `os`, remaining volumes `data` | Deterministic, and never invents a volume the source inventory does not show |
+| Instance-store use | `not_used` | Local NVMe on `r6id` and `z1d` is ephemeral scratch in the common case; a persistent equivalent is never invented |
+| Burstable T3 sources | Current B-series burstable lineage | The source family is already burstable; AWS and Azure credit models are NOT claimed to be identical |
+| High-frequency `z1d` sources | Current memory-optimized lineage, matched on capacity | Per-core frequency equivalence is NOT claimed and MUST be disclosed |
+
+Defaulting an input MUST NOT suppress its disclosure. Every defaulted value MUST appear in the result assumptions, and the T3 credit-model and `z1d` per-core caveats MUST remain visible in the result.
 
 ## 5. Users and Access Modes
 
@@ -305,8 +332,8 @@ The settings area MUST contain:
 | Setting | Default | Validation | Notes |
 |---|---:|---:|---|
 | Project name | User supplied | 1-100 chars | Persisted for authenticated users |
-| Project type | User selected | `ec2`, `rds`, `on_prem`, or `sql_payg` | Immutable after creation |
-| AWS region | `eu-west-1` | Supported live catalog region | Required for EC2/RDS; absent for On-prem and SQL Pay As You Go; one region per workload project |
+| Project type | User selected | `ec2`, `ec2_vm`, `rds`, `on_prem`, or `sql_payg` | Immutable after creation |
+| AWS region | `eu-west-1` | Supported live catalog region | Required for EC2/EC2 VM/RDS; absent for On-prem and SQL Pay As You Go; one region per workload project |
 | Azure migration region | `Sweden Central` | One of the 28 reviewed SQL MI public pricing regions | Required for workload projects; not user-editable or used for SQL Pay As You Go |
 
 The Azure migration-region catalog MUST contain the 28 public USD regions that, as reviewed on 2026-08-11, are listed by Microsoft for Premium-series hardware with 16-TB storage and are represented by both the global Azure Retail Prices API and Azure SQL calculator: Australia East, Australia Southeast, Brazil South, Canada Central, Canada East, Central India, Central US, East Asia, East US, East US 2, France Central, Germany West Central, Italy North, Japan East, Japan West, North Central US, North Europe, Poland Central, Qatar Central, South Central US, Southeast Asia, Sweden Central, Switzerland North, UK South, West Central US, West Europe, West US, and West US 2.
@@ -410,13 +437,13 @@ All IDs MUST be UUIDs. All money and rates MUST use decimal strings at API bound
 | Field | Type | Validation |
 |---|---|---|
 | `id` | UUID | Server generated |
-| `source_type` | `ec2`, `rds`, or `on_prem` | Must equal the immutable project type |
+| `source_type` | `ec2`, `ec2_vm`, `rds`, or `on_prem` | Must equal the immutable project type |
 | `workload_name` | string | 1-160 chars |
 | `server_name` | string or null | Optional free text, maximum 160 chars |
 | `quantity` | integer | 1-10,000 |
-| `sql_edition` | `standard` or `enterprise` | Required |
-| `license_basis` | `license_included` or `byol` | Required |
-| `sql_data_gb_per_instance` | decimal | 0-1,000,000,000 |
+| `sql_edition` | `standard` or `enterprise` | Required, except on `ec2_vm` where it MUST be absent |
+| `license_basis` | `license_included` or `byol` | Required, except on `ec2_vm` where it MUST be absent |
+| `sql_data_gb_per_instance` | decimal | 0-1,000,000,000, except on `ec2_vm` where it MUST be absent |
 | `source_ram_gb_per_instance` | decimal | >0 and <=1,000,000 |
 | `annual_hours_per_instance` | decimal | 0-8,784 |
 | `mi_purchase_option` | enum in section 10.6 | Required |
