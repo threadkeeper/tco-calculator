@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -10,33 +13,45 @@ use crate::{
         decimal::DecimalValue,
         project::{EditableProject, ProjectSettings, ValidationIssue},
         resource::{
-            Ec2Resource, OnPremResource, ProjectType, PurchaseOption, RdsResource, Resource,
+            EbsVolumeType, Ec2Resource, Ec2VmResource, OnPremResource, ProjectType, PurchaseOption,
+            RdsResource, Resource, VmBurstPolicy, VmDiskRole, VmHighFrequencyRequirement,
+            VmInstanceStoreUse,
         },
     },
     pricing::{
         provider::{Provider, ResolutionStatus},
-        snapshot::{AwsPriceSnapshot, AzurePriceSnapshot},
+        snapshot::{AwsPriceSnapshot, AzureManagedDiskPriceDimension, AzurePriceSnapshot},
         warnings::relevant_for_resources,
     },
 };
 
 use super::{
     cost::{
-        AzureCostBreakdown, AzureRate, CostError, OnPremExplanation, SavingsBreakdown,
-        SourceCostBreakdown, azure_mi_billable_storage_gb, azure_mi_configured_storage_gb,
-        calculate_azure, calculate_ec2_source, calculate_on_prem_source, calculate_rds_source,
-        calculate_savings, source_max_iops,
+        AzureCostBreakdown, AzureManagedDiskRateSet, AzureRate, CostError, OnPremExplanation,
+        SavingsBreakdown, SourceCostBreakdown, azure_mi_billable_storage_gb,
+        azure_mi_configured_storage_gb, calculate_azure, calculate_azure_managed_disk_monthly,
+        calculate_azure_vm, calculate_ec2_source, calculate_ec2_vm_source,
+        calculate_on_prem_source, calculate_rds_source, calculate_savings, source_max_iops,
     },
     sql_payg::{self, SqlPaygAnalysis, SqlPaygInput},
     target_selector::{
         CapabilityCatalog, MappingStatus, TargetSelection, TargetSelectionError,
         TargetSelectionRequest, select_target,
     },
+    vm_target_selector::{
+        ManagedDiskCatalog, SelectedManagedDisk, SelectedVmTarget, SourceClass,
+        VmCapabilityCatalog, VmDiskPriceDimension, VmDiskPriceKey, VmPriceAvailability,
+        VmRecommendationStatus, VmSelectionReason, VmSelectionReasonCode, VmTargetSelection,
+        VmTargetSelectionError, VmTargetSelectionRequest, VmVolumeRequirement,
+        classify_source_instance, select_vm_target,
+    },
 };
 
 #[derive(Clone)]
 pub struct CalculationEngine {
     capabilities: Arc<CapabilityCatalog>,
+    vm_capabilities: Arc<VmCapabilityCatalog>,
+    managed_disk_capabilities: Arc<ManagedDiskCatalog>,
     formula_version: String,
 }
 
@@ -69,6 +84,8 @@ pub struct ResourceCalculation {
     pub aws_pricing_status: PricingStatus,
     pub azure_pricing_status: PricingStatus,
     pub target_selection: Option<TargetSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_target_selection: Option<VmTargetSelection>,
     pub source_costs: Option<SourceCostBreakdown>,
     pub azure_costs: Option<AzureCostBreakdown>,
     pub purchase_option_discounts: Option<PurchaseOptionDiscounts>,
@@ -146,6 +163,8 @@ pub enum CalculationError {
     #[error(transparent)]
     TargetSelection(#[from] TargetSelectionError),
     #[error(transparent)]
+    VmTargetSelection(#[from] VmTargetSelectionError),
+    #[error(transparent)]
     Cost(#[from] CostError),
     #[error(transparent)]
     SqlPayg(#[from] sql_payg::SqlPaygError),
@@ -171,8 +190,28 @@ impl CalculationEngine {
 
         Ok(Self {
             capabilities,
+            vm_capabilities: Arc::new(VmCapabilityCatalog {
+                schema_version: "unconfigured".to_owned(),
+                candidates: Vec::new(),
+            }),
+            managed_disk_capabilities: Arc::new(ManagedDiskCatalog {
+                schema_version: "unconfigured".to_owned(),
+                offers: Vec::new(),
+            }),
             formula_version: formula_version.into(),
         })
+    }
+
+    pub fn with_vm_catalogs(
+        capabilities: Arc<CapabilityCatalog>,
+        vm_capabilities: Arc<VmCapabilityCatalog>,
+        managed_disk_capabilities: Arc<ManagedDiskCatalog>,
+        formula_version: impl Into<String>,
+    ) -> Result<Self, CalculationError> {
+        let mut engine = Self::new(capabilities, formula_version)?;
+        engine.vm_capabilities = vm_capabilities;
+        engine.managed_disk_capabilities = managed_disk_capabilities;
+        Ok(engine)
     }
 
     pub fn calculate(
@@ -334,11 +373,14 @@ impl CalculationEngine {
     ) -> Result<ResourceCalculation, CalculationError> {
         let shared = resource.shared();
         let storage_inputs = storage_inputs(resource);
+        if let Resource::Ec2Vm(resource) = resource {
+            return self.calculate_ec2_vm_resource(resource, storage_inputs, input);
+        }
         let mut source = match resource {
             Resource::Ec2(resource) => resolve_ec2_source(resource, input),
             Resource::Rds(resource) => resolve_rds_source(resource, input),
             Resource::OnPrem(resource) => resolve_on_prem_source(resource, input.settings)?,
-            Resource::Ec2Vm(_) => resolve_ec2_vm_source(),
+            Resource::Ec2Vm(_) => unreachable!("EC2 VM resources use the VM calculation path"),
         };
 
         let Some(source_vcpu) = source.source_vcpu else {
@@ -356,6 +398,7 @@ impl CalculationEngine {
                 aws_pricing_status: source.pricing_status,
                 azure_pricing_status: PricingStatus::Unavailable,
                 target_selection: None,
+                vm_target_selection: None,
                 source_costs: source.costs,
                 azure_costs: None,
                 purchase_option_discounts: None,
@@ -397,6 +440,7 @@ impl CalculationEngine {
                 aws_pricing_status: source.pricing_status,
                 azure_pricing_status: PricingStatus::NotRequired,
                 target_selection: Some(target_selection),
+                vm_target_selection: None,
                 source_costs: source.costs,
                 azure_costs: None,
                 purchase_option_discounts: None,
@@ -455,6 +499,7 @@ impl CalculationEngine {
             aws_pricing_status: source.pricing_status,
             azure_pricing_status,
             target_selection: Some(target_selection),
+            vm_target_selection: None,
             source_costs: source.costs,
             azure_costs,
             purchase_option_discounts,
@@ -462,6 +507,352 @@ impl CalculationEngine {
             explanation_steps: source.explanation_steps,
             unresolved_components: source.unresolved_components,
         })
+    }
+
+    fn calculate_ec2_vm_resource(
+        &self,
+        resource: &Ec2VmResource,
+        mut storage_inputs: StorageInputs,
+        input: &CalculationInput<'_>,
+    ) -> Result<ResourceCalculation, CalculationError> {
+        let mut source = resolve_ec2_vm_source(resource, input);
+        source.explanation_steps.push(vm_assumptions_step(resource));
+
+        let Some(source_vcpu) = source.source_vcpu else {
+            source.unresolved_components.push(UnresolvedComponent {
+                provider: Some(Provider::Aws),
+                code: "source_metadata_unavailable".to_owned(),
+                message:
+                    "Source sizing metadata is unavailable, so VM target mapping was not evaluated."
+                        .to_owned(),
+            });
+            return Ok(ResourceCalculation {
+                resource_id: resource.shared.id,
+                storage_inputs,
+                mapping_status: None,
+                aws_pricing_status: source.pricing_status,
+                azure_pricing_status: PricingStatus::Unavailable,
+                target_selection: None,
+                vm_target_selection: None,
+                source_costs: source.costs,
+                azure_costs: None,
+                purchase_option_discounts: None,
+                savings: None,
+                explanation_steps: source.explanation_steps,
+                unresolved_components: source.unresolved_components,
+            });
+        };
+        let Some(source_class) = classify_source_instance(&resource.instance_type) else {
+            source.unresolved_components.push(UnresolvedComponent {
+                provider: None,
+                code: "source_class_unsupported".to_owned(),
+                message: format!(
+                    "{} is not in the reviewed EC2 VM family mapping policy.",
+                    resource.instance_type
+                ),
+            });
+            return Ok(ResourceCalculation {
+                resource_id: resource.shared.id,
+                storage_inputs,
+                mapping_status: None,
+                aws_pricing_status: source.pricing_status,
+                azure_pricing_status: PricingStatus::NotRequired,
+                target_selection: None,
+                vm_target_selection: None,
+                source_costs: source.costs,
+                azure_costs: None,
+                purchase_option_discounts: None,
+                savings: None,
+                explanation_steps: source.explanation_steps,
+                unresolved_components: source.unresolved_components,
+            });
+        };
+
+        let mut effective_source_class = source_class;
+        let mut recommendation_status = VmRecommendationStatus::Recommended;
+        let mut semantic_reasons = Vec::new();
+        if source_class == SourceClass::Burstable {
+            match resource.requirements.burst_policy {
+                VmBurstPolicy::ConfirmedBurstCompatible | VmBurstPolicy::NotApplicable => {}
+                VmBurstPolicy::RequiresSustainedCpu => {
+                    effective_source_class = SourceClass::GeneralPurpose;
+                }
+                VmBurstPolicy::Unknown => {
+                    effective_source_class = SourceClass::GeneralPurpose;
+                    recommendation_status = VmRecommendationStatus::CapacityFitReviewRequired;
+                    semantic_reasons.push(VmSelectionReason {
+                        code: VmSelectionReasonCode::BurstPolicyReviewRequired,
+                        detail: "Burst suitability is unknown, so a conservative D-series capacity fit was evaluated and requires review."
+                            .to_owned(),
+                    });
+                }
+            }
+        }
+        if source_class == SourceClass::HighFrequencyMemoryOptimized {
+            recommendation_status = VmRecommendationStatus::CapacityFitReviewRequired;
+            let detail = match resource.requirements.high_frequency_requirement {
+                VmHighFrequencyRequirement::Required => {
+                    "Per-core performance is required; the selected E-series target is capacity-only and is not a performance-equivalence recommendation."
+                }
+                VmHighFrequencyRequirement::Unknown => {
+                    "Per-core performance requirements are unknown; the selected E-series target is capacity-only and requires review."
+                }
+                VmHighFrequencyRequirement::CapacityFitAccepted
+                | VmHighFrequencyRequirement::NotApplicable => {
+                    "The E-series target is a capacity fit only; per-core performance equivalence is not claimed."
+                }
+            };
+            semantic_reasons.push(VmSelectionReason {
+                code: VmSelectionReasonCode::HighFrequencyReviewRequired,
+                detail: detail.to_owned(),
+            });
+        }
+
+        let volume_requirements = resource
+            .volumes
+            .iter()
+            .filter(|volume| volume.volume_type != EbsVolumeType::Ephemeral)
+            .map(|volume| VmVolumeRequirement {
+                volume_id: volume.id,
+                label: volume.label.clone(),
+                role: volume.role,
+                capacity_gb: volume.capacity_gb,
+                iops: volume.provisioned_iops.unwrap_or(0),
+                throughput_mbps: volume.throughput_mibps.unwrap_or(DecimalValue::ZERO),
+            })
+            .collect::<Vec<_>>();
+        source.explanation_steps.push(vm_source_input_step(
+            resource,
+            source_vcpu,
+            effective_source_class,
+            &volume_requirements,
+        ));
+        if let Some(source_costs) = source.costs.as_ref() {
+            source.explanation_steps.push(vm_source_cost_formula_step(
+                resource,
+                input.settings,
+                source_costs,
+            ));
+        }
+
+        let unconfirmed_volume_role = volume_requirements
+            .iter()
+            .any(|volume| volume.role == VmDiskRole::Unknown);
+        let local_capacity = resource
+            .requirements
+            .required_local_temp_disk_gb
+            .unwrap_or(DecimalValue::ZERO);
+        let incomplete_reason = if unconfirmed_volume_role {
+            Some(VmSelectionReason {
+                code: VmSelectionReasonCode::VolumeRoleUnconfirmed,
+                detail: "Every persistent volume must be confirmed as the OS or a data disk before target selection."
+                    .to_owned(),
+            })
+        } else if resource.requirements.instance_store_use == VmInstanceStoreUse::Unknown {
+            Some(VmSelectionReason {
+                code: VmSelectionReasonCode::InstanceStoreReviewRequired,
+                detail: "Source instance-store use is unknown and must be confirmed before target selection."
+                    .to_owned(),
+            })
+        } else if resource.requirements.instance_store_use == VmInstanceStoreUse::Used
+            && (local_capacity.0 <= Decimal::ZERO
+                || resource
+                    .requirements
+                    .ephemeral_data_loss_acceptable
+                    .is_none())
+        {
+            Some(VmSelectionReason {
+                code: VmSelectionReasonCode::InstanceStoreReviewRequired,
+                detail: "Used instance storage requires positive capacity and an explicit ephemeral data-loss decision."
+                    .to_owned(),
+            })
+        } else {
+            None
+        };
+        if let Some(incomplete_reason) = incomplete_reason {
+            semantic_reasons.push(incomplete_reason);
+            return Ok(ResourceCalculation {
+                resource_id: resource.shared.id,
+                storage_inputs,
+                mapping_status: None,
+                aws_pricing_status: source.pricing_status,
+                azure_pricing_status: PricingStatus::NotRequired,
+                target_selection: None,
+                vm_target_selection: Some(VmTargetSelection {
+                    mapping_status: MappingStatus::NoMapping,
+                    recommendation_status: VmRecommendationStatus::Incomplete,
+                    requested_lineage: effective_source_class.target_lineage(),
+                    selected: None,
+                    candidates: Vec::new(),
+                    outcome_reasons: semantic_reasons,
+                }),
+                source_costs: source.costs,
+                azure_costs: None,
+                purchase_option_discounts: None,
+                savings: None,
+                explanation_steps: source.explanation_steps,
+                unresolved_components: source.unresolved_components,
+            });
+        }
+        if resource.requirements.instance_store_use == VmInstanceStoreUse::Used
+            && resource.requirements.ephemeral_data_loss_acceptable == Some(false)
+        {
+            semantic_reasons.push(VmSelectionReason {
+                code: VmSelectionReasonCode::EphemeralDataLossIncompatible,
+                detail: "The workload cannot tolerate ephemeral data loss, so an Azure temporary disk cannot satisfy the declared instance-store requirement."
+                    .to_owned(),
+            });
+            return Ok(ResourceCalculation {
+                resource_id: resource.shared.id,
+                storage_inputs,
+                mapping_status: Some(MappingStatus::NoMapping),
+                aws_pricing_status: source.pricing_status,
+                azure_pricing_status: PricingStatus::NotRequired,
+                target_selection: None,
+                vm_target_selection: Some(VmTargetSelection {
+                    mapping_status: MappingStatus::NoMapping,
+                    recommendation_status: VmRecommendationStatus::NoEligibleTarget,
+                    requested_lineage: effective_source_class.target_lineage(),
+                    selected: None,
+                    candidates: Vec::new(),
+                    outcome_reasons: semantic_reasons,
+                }),
+                source_costs: source.costs,
+                azure_costs: None,
+                purchase_option_discounts: None,
+                savings: None,
+                explanation_steps: source.explanation_steps,
+                unresolved_components: source.unresolved_components,
+            });
+        }
+
+        let price_availability = input.azure_snapshot.map(vm_price_availability);
+        let mut target_selection = select_vm_target(
+            &self.vm_capabilities,
+            &self.managed_disk_capabilities,
+            &VmTargetSelectionRequest {
+                azure_region: &input.settings.azure_region,
+                source_class: effective_source_class,
+                minimum_vcpu: source_vcpu,
+                minimum_memory_gb: resource.shared.source_ram_gb_per_instance,
+                requires_local_temp_disk: resource.requirements.instance_store_use
+                    == VmInstanceStoreUse::Used,
+                minimum_local_temp_disk_gb: local_capacity,
+                volumes: &volume_requirements,
+                requested_target_arm_sku: resource.requirements.requested_target_arm_sku.as_deref(),
+                price_availability: price_availability.as_ref(),
+            },
+        )?;
+        if target_selection.mapping_status == MappingStatus::Mapped {
+            target_selection.recommendation_status = recommendation_status;
+        }
+        target_selection.outcome_reasons.extend(semantic_reasons);
+
+        if target_selection.mapping_status == MappingStatus::NoMapping {
+            return Ok(ResourceCalculation {
+                resource_id: resource.shared.id,
+                storage_inputs,
+                mapping_status: Some(MappingStatus::NoMapping),
+                aws_pricing_status: source.pricing_status,
+                azure_pricing_status: PricingStatus::NotRequired,
+                target_selection: None,
+                vm_target_selection: Some(target_selection),
+                source_costs: source.costs,
+                azure_costs: None,
+                purchase_option_discounts: None,
+                savings: None,
+                explanation_steps: source.explanation_steps,
+                unresolved_components: source.unresolved_components,
+            });
+        }
+
+        let selected = target_selection
+            .selected
+            .as_ref()
+            .ok_or(CalculationError::InvalidTargetSelection)?;
+        storage_inputs.azure_storage_gb_per_instance =
+            DecimalValue(selected.disks.iter().map(|disk| disk.capacity_gb.0).sum());
+        let (azure_costs, azure_pricing_status, unresolved, explanation_steps) =
+            resolve_azure_vm_costs(selected, resource, input);
+        if azure_costs.is_none() {
+            target_selection.recommendation_status = VmRecommendationStatus::Incomplete;
+            target_selection.outcome_reasons.push(VmSelectionReason {
+                code: VmSelectionReasonCode::PriceUnavailable,
+                detail: "The selected VM or one of its managed disks lacks a complete coherent target price."
+                    .to_owned(),
+            });
+        }
+        source.unresolved_components.extend(unresolved);
+        source.explanation_steps.extend(explanation_steps);
+        let savings =
+            source
+                .costs
+                .as_ref()
+                .zip(azure_costs.as_ref())
+                .map(|(source_costs, azure_costs)| {
+                    calculate_savings(
+                        source_costs,
+                        azure_costs,
+                        input.settings.selected_parity_adjustment,
+                    )
+                });
+        if let Some(((source_costs, azure_costs), savings)) = source
+            .costs
+            .as_ref()
+            .zip(azure_costs.as_ref())
+            .zip(savings.as_ref())
+        {
+            source.explanation_steps.extend([
+                savings_formula_step(source_costs, azure_costs, savings),
+                parity_formula_step(source_costs, azure_costs, savings),
+            ]);
+        }
+
+        Ok(ResourceCalculation {
+            resource_id: resource.shared.id,
+            storage_inputs,
+            mapping_status: Some(MappingStatus::Mapped),
+            aws_pricing_status: source.pricing_status,
+            azure_pricing_status,
+            target_selection: None,
+            vm_target_selection: Some(target_selection),
+            source_costs: source.costs,
+            azure_costs,
+            purchase_option_discounts: None,
+            savings,
+            explanation_steps: source.explanation_steps,
+            unresolved_components: source.unresolved_components,
+        })
+    }
+}
+
+fn vm_price_availability(snapshot: &AzurePriceSnapshot) -> VmPriceAvailability {
+    VmPriceAvailability {
+        vm_hourly_rates: snapshot
+            .vm_rates
+            .iter()
+            .map(|record| (record.arm_sku_name.to_ascii_lowercase(), record.hourly_rate))
+            .collect(),
+        managed_disk_dimensions: snapshot
+            .managed_disk_rates
+            .iter()
+            .map(|record| VmDiskPriceKey {
+                offer_key: record.offer_key.clone(),
+                tier_key: record.tier_key.clone(),
+                dimension: match record.dimension {
+                    AzureManagedDiskPriceDimension::CapacityTier => {
+                        VmDiskPriceDimension::CapacityTier
+                    }
+                    AzureManagedDiskPriceDimension::CapacityGb => VmDiskPriceDimension::CapacityGb,
+                    AzureManagedDiskPriceDimension::AdditionalIops => {
+                        VmDiskPriceDimension::AdditionalIops
+                    }
+                    AzureManagedDiskPriceDimension::AdditionalThroughput => {
+                        VmDiskPriceDimension::AdditionalThroughput
+                    }
+                },
+            })
+            .collect::<BTreeSet<_>>(),
     }
 }
 
@@ -492,12 +883,17 @@ fn storage_inputs(resource: &Resource) -> StorageInputs {
         ),
         Resource::Rds(_) | Resource::OnPrem(_) => DecimalValue::ZERO,
     };
+    let azure_storage_gb_per_instance = if matches!(resource, Resource::Ec2Vm(_)) {
+        persistent_ebs_gb_per_instance
+    } else {
+        azure_mi_configured_storage_gb(DecimalValue(
+            sql_data_gb_per_instance.0 + persistent_ebs_gb_per_instance.0,
+        ))
+    };
     StorageInputs {
         sql_data_gb_per_instance,
         persistent_ebs_gb_per_instance,
-        azure_storage_gb_per_instance: azure_mi_configured_storage_gb(DecimalValue(
-            sql_data_gb_per_instance.0 + persistent_ebs_gb_per_instance.0,
-        )),
+        azure_storage_gb_per_instance,
     }
 }
 
@@ -593,20 +989,47 @@ fn resolve_rds_source(resource: &RdsResource, input: &CalculationInput<'_>) -> R
     }
 }
 
-fn resolve_ec2_vm_source() -> ResolvedSource {
-    ResolvedSource {
-        source_vcpu: None,
-        source_max_iops: None,
-        costs: None,
-        pricing_status: PricingStatus::Unavailable,
-        explanation_steps: Vec::new(),
-        unresolved_components: vec![UnresolvedComponent {
-            provider: None,
-            code: "ec2_vm_pricing_unavailable".to_owned(),
-            message:
-                "AWS EC2 virtual machine pricing and Azure Virtual Machine target selection are not available yet."
-                    .to_owned(),
-        }],
+fn resolve_ec2_vm_source(resource: &Ec2VmResource, input: &CalculationInput<'_>) -> ResolvedSource {
+    let Some(snapshot) = input.aws_snapshot else {
+        return unavailable_source(Provider::Aws, "aws_snapshot_unavailable");
+    };
+    let Some(record) = snapshot.ec2_rate(&resource.instance_type) else {
+        return unavailable_source(Provider::Aws, "ec2_vm_rate_unavailable");
+    };
+    let ebs_rates = snapshot
+        .ebs_rates
+        .iter()
+        .map(|record| record.rate.clone())
+        .collect::<Vec<_>>();
+    let source_max_iops = resource
+        .volumes
+        .iter()
+        .filter(|volume| volume.volume_type != EbsVolumeType::Ephemeral)
+        .filter_map(|volume| volume.provisioned_iops)
+        .fold(0_u64, u64::saturating_add);
+    match calculate_ec2_vm_source(resource, record.rate, &ebs_rates, input.settings) {
+        Ok(costs) => ResolvedSource {
+            source_vcpu: Some(record.rate.source_vcpu),
+            source_max_iops: Some(source_max_iops),
+            costs: Some(costs),
+            pricing_status: pricing_status(snapshot.metadata.status),
+            explanation_steps: vec![source_provenance_step(
+                &record.provenance.source_url,
+                &snapshot.metadata.retrieved_at,
+            )],
+            unresolved_components: Vec::new(),
+        },
+        Err(error) => ResolvedSource {
+            source_vcpu: Some(record.rate.source_vcpu),
+            source_max_iops: Some(source_max_iops),
+            costs: None,
+            pricing_status: PricingStatus::Unavailable,
+            explanation_steps: vec![source_provenance_step(
+                &record.provenance.source_url,
+                &snapshot.metadata.retrieved_at,
+            )],
+            unresolved_components: vec![cost_unresolved(Provider::Aws, error)],
+        },
     }
 }
 
@@ -737,6 +1160,151 @@ fn resolve_azure_costs(
             Vec::new(),
         ),
     }
+}
+
+fn resolve_azure_vm_costs(
+    selected: &SelectedVmTarget,
+    resource: &Ec2VmResource,
+    input: &CalculationInput<'_>,
+) -> (
+    Option<AzureCostBreakdown>,
+    PricingStatus,
+    Vec<UnresolvedComponent>,
+    Vec<ExplanationStep>,
+) {
+    let Some(snapshot) = input.azure_snapshot else {
+        return (
+            None,
+            PricingStatus::Unavailable,
+            vec![UnresolvedComponent {
+                provider: Some(Provider::Azure),
+                code: "azure_snapshot_unavailable".to_owned(),
+                message: "A usable Azure price snapshot is required for VM target cost.".to_owned(),
+            }],
+            Vec::new(),
+        );
+    };
+    let Some(vm_rate) = snapshot.vm_rate(&selected.arm_sku_name) else {
+        return (
+            None,
+            PricingStatus::Unavailable,
+            vec![UnresolvedComponent {
+                provider: Some(Provider::Azure),
+                code: "azure_vm_rate_unavailable".to_owned(),
+                message: format!(
+                    "The selected Azure VM {} does not have a complete Windows PAYG rate.",
+                    selected.arm_sku_name
+                ),
+            }],
+            Vec::new(),
+        );
+    };
+
+    let mut monthly_disks = Decimal::ZERO;
+    let mut disk_source_urls = Vec::new();
+    for disk in &selected.disks {
+        match resolve_managed_disk_monthly(snapshot, disk) {
+            Ok((cost, source_urls)) => {
+                monthly_disks += cost.0;
+                disk_source_urls.extend(source_urls);
+            }
+            Err(error) => {
+                return (
+                    None,
+                    PricingStatus::Unavailable,
+                    vec![cost_unresolved(Provider::Azure, error)],
+                    Vec::new(),
+                );
+            }
+        }
+    }
+    disk_source_urls.sort();
+    disk_source_urls.dedup();
+
+    match calculate_azure_vm(
+        resource.shared.quantity,
+        resource.shared.annual_hours_per_instance,
+        vm_rate.hourly_rate,
+        DecimalValue(monthly_disks),
+        input.settings,
+    ) {
+        Ok(costs) => (
+            Some(costs.clone()),
+            pricing_status(snapshot.metadata.status),
+            Vec::new(),
+            vec![
+                target_provenance_step(
+                    &vm_rate.provenance.source_url,
+                    &snapshot.metadata.retrieved_at,
+                ),
+                vm_target_selection_step(selected, &disk_source_urls),
+                vm_azure_cost_formula_step(
+                    selected,
+                    resource,
+                    vm_rate.hourly_rate,
+                    DecimalValue(monthly_disks),
+                    input.settings,
+                    &costs,
+                ),
+            ],
+        ),
+        Err(error) => (
+            None,
+            PricingStatus::Unavailable,
+            vec![cost_unresolved(Provider::Azure, error)],
+            Vec::new(),
+        ),
+    }
+}
+
+fn resolve_managed_disk_monthly(
+    snapshot: &AzurePriceSnapshot,
+    disk: &SelectedManagedDisk,
+) -> Result<(DecimalValue, Vec<String>), CostError> {
+    let (capacity_dimension, tier_key) = if let Some(tier_key) = disk.tier_key.as_deref() {
+        (AzureManagedDiskPriceDimension::CapacityTier, Some(tier_key))
+    } else {
+        (AzureManagedDiskPriceDimension::CapacityGb, None)
+    };
+    let capacity = snapshot
+        .managed_disk_rate(&disk.offer_key, tier_key, capacity_dimension)
+        .ok_or(CostError::MissingAzureManagedDiskRate)?;
+    let mut source_urls = vec![capacity.provenance.source_url.clone()];
+    let (iops_rate, throughput_rate) = if disk.tier_key.is_some() {
+        (None, None)
+    } else {
+        let iops = snapshot
+            .managed_disk_rate(
+                &disk.offer_key,
+                None,
+                AzureManagedDiskPriceDimension::AdditionalIops,
+            )
+            .ok_or(CostError::MissingAzureManagedDiskRate)?;
+        let throughput = snapshot
+            .managed_disk_rate(
+                &disk.offer_key,
+                None,
+                AzureManagedDiskPriceDimension::AdditionalThroughput,
+            )
+            .ok_or(CostError::MissingAzureManagedDiskRate)?;
+        source_urls.extend([
+            iops.provenance.source_url.clone(),
+            throughput.provenance.source_url.clone(),
+        ]);
+        (
+            Some(iops.normalized_monthly_rate),
+            Some(throughput.normalized_monthly_rate),
+        )
+    };
+    let cost = calculate_azure_managed_disk_monthly(
+        disk,
+        AzureManagedDiskRateSet {
+            capacity_monthly: capacity.normalized_monthly_rate,
+            additional_iops_monthly_per_unit: iops_rate,
+            additional_throughput_monthly_per_mbps: throughput_rate,
+        },
+    )?;
+    Ok((cost, source_urls))
 }
 
 fn purchase_option_discounts(
@@ -907,6 +1475,264 @@ fn source_input_step(
             (
                 "annual_hours_per_instance".to_owned(),
                 shared.annual_hours_per_instance.to_string(),
+            ),
+        ]),
+    }
+}
+
+fn vm_assumptions_step(resource: &Ec2VmResource) -> ExplanationStep {
+    let requirements = &resource.requirements;
+    ExplanationStep {
+        code: "vm_assumptions".to_owned(),
+        message: "The approved first-release EC2 VM assumptions were applied and remain explicit."
+            .to_owned(),
+        values: BTreeMap::from([
+            ("instance_type".to_owned(), resource.instance_type.clone()),
+            ("source_operating_system".to_owned(), "windows".to_owned()),
+            ("source_tenancy".to_owned(), "shared".to_owned()),
+            ("source_purchase_option".to_owned(), "on_demand".to_owned()),
+            (
+                "target_license".to_owned(),
+                "windows_license_included".to_owned(),
+            ),
+            ("azure_hybrid_benefit".to_owned(), "false".to_owned()),
+            (
+                "burst_policy".to_owned(),
+                vm_burst_policy_name(requirements.burst_policy).to_owned(),
+            ),
+            (
+                "source_instance_store".to_owned(),
+                vm_instance_store_name(requirements.instance_store_use).to_owned(),
+            ),
+            (
+                "required_local_temp_disk_gb".to_owned(),
+                requirements
+                    .required_local_temp_disk_gb
+                    .map_or_else(String::new, |value| value.to_string()),
+            ),
+            (
+                "ephemeral_data_loss_acceptable".to_owned(),
+                requirements
+                    .ephemeral_data_loss_acceptable
+                    .map_or_else(String::new, |value| value.to_string()),
+            ),
+            (
+                "high_frequency_requirement".to_owned(),
+                vm_high_frequency_requirement_name(requirements.high_frequency_requirement)
+                    .to_owned(),
+            ),
+            (
+                "requested_target_arm_sku".to_owned(),
+                requirements
+                    .requested_target_arm_sku
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+            (
+                "target_topology".to_owned(),
+                "one_vm_per_source_vm".to_owned(),
+            ),
+            (
+                "disk_topology".to_owned(),
+                "one_managed_disk_per_persistent_ebs_volume".to_owned(),
+            ),
+        ]),
+    }
+}
+
+fn vm_burst_policy_name(policy: VmBurstPolicy) -> &'static str {
+    match policy {
+        VmBurstPolicy::ConfirmedBurstCompatible => "confirmed_burst_compatible",
+        VmBurstPolicy::RequiresSustainedCpu => "requires_sustained_cpu",
+        VmBurstPolicy::Unknown => "unknown",
+        VmBurstPolicy::NotApplicable => "not_applicable",
+    }
+}
+
+fn vm_instance_store_name(use_state: VmInstanceStoreUse) -> &'static str {
+    match use_state {
+        VmInstanceStoreUse::Unknown => "unknown",
+        VmInstanceStoreUse::NotUsed => "not_used",
+        VmInstanceStoreUse::Used => "used",
+    }
+}
+
+fn vm_high_frequency_requirement_name(requirement: VmHighFrequencyRequirement) -> &'static str {
+    match requirement {
+        VmHighFrequencyRequirement::Required => "required",
+        VmHighFrequencyRequirement::Unknown => "unknown",
+        VmHighFrequencyRequirement::CapacityFitAccepted => "capacity_fit_accepted",
+        VmHighFrequencyRequirement::NotApplicable => "not_applicable",
+    }
+}
+
+fn vm_source_input_step(
+    resource: &Ec2VmResource,
+    source_vcpu: u32,
+    source_class: SourceClass,
+    volumes: &[VmVolumeRequirement],
+) -> ExplanationStep {
+    let capacity: Decimal = volumes.iter().map(|volume| volume.capacity_gb.0).sum();
+    ExplanationStep {
+        code: "vm_source_inputs".to_owned(),
+        message: "The source VM shape and persistent volumes were preserved without consolidation."
+            .to_owned(),
+        values: BTreeMap::from([
+            ("source_vcpu".to_owned(), source_vcpu.to_string()),
+            (
+                "source_ram_gb".to_owned(),
+                resource.shared.source_ram_gb_per_instance.to_string(),
+            ),
+            (
+                "source_class".to_owned(),
+                format!("{source_class:?}").to_ascii_lowercase(),
+            ),
+            (
+                "persistent_volume_count".to_owned(),
+                volumes.len().to_string(),
+            ),
+            ("persistent_volume_gb".to_owned(), capacity.to_string()),
+            ("quantity".to_owned(), resource.shared.quantity.to_string()),
+            (
+                "annual_hours_per_instance".to_owned(),
+                resource.shared.annual_hours_per_instance.to_string(),
+            ),
+        ]),
+    }
+}
+
+fn vm_source_cost_formula_step(
+    resource: &Ec2VmResource,
+    settings: &ProjectSettings,
+    costs: &SourceCostBreakdown,
+) -> ExplanationStep {
+    let quantity = Decimal::from(resource.shared.quantity);
+    let hours = resource.shared.annual_hours_per_instance.0;
+    ExplanationStep {
+        code: "source_cost_formula".to_owned(),
+        message: "AWS Windows Shared On-Demand compute and persistent EBS costs were calculated from the resolved snapshot."
+            .to_owned(),
+        values: BTreeMap::from([
+            (
+                "compute_formula".to_owned(),
+                "compute_gross = quantity * annual_hours_per_instance * windows_shared_ondemand_hourly"
+                    .to_owned(),
+            ),
+            (
+                "windows_shared_ondemand_hourly".to_owned(),
+                divide_or_zero(costs.compute_gross.0, quantity * hours).to_string(),
+            ),
+            ("compute_gross".to_owned(), costs.compute_gross.to_string()),
+            (
+                "source_compute_discount".to_owned(),
+                settings.source_compute_discount.to_string(),
+            ),
+            ("compute_net".to_owned(), costs.compute_net.to_string()),
+            (
+                "storage_formula".to_owned(),
+                "storage_gross = quantity * 12 * sum(ebs_volume_monthly_cost)".to_owned(),
+            ),
+            ("storage_gross".to_owned(), costs.storage_gross.to_string()),
+            (
+                "source_storage_discount".to_owned(),
+                settings.source_storage_discount.to_string(),
+            ),
+            ("storage_net".to_owned(), costs.storage_net.to_string()),
+            ("source_total".to_owned(), costs.total.to_string()),
+        ]),
+    }
+}
+
+fn vm_target_selection_step(
+    selected: &SelectedVmTarget,
+    disk_source_urls: &[String],
+) -> ExplanationStep {
+    let disk_summary = selected
+        .disks
+        .iter()
+        .map(|disk| {
+            format!(
+                "{}:{}:{}GiB:{}IOPS:{}MBps",
+                disk.label,
+                disk.tier_key.as_deref().unwrap_or(&disk.offer_key),
+                disk.capacity_gb,
+                disk.provisioned_iops,
+                disk.provisioned_throughput_mbps
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    ExplanationStep {
+        code: "vm_target_selection".to_owned(),
+        message: "The smallest reviewed current-generation Azure VM and one capability-fit managed disk per source volume were selected."
+            .to_owned(),
+        values: BTreeMap::from([
+            ("arm_sku_name".to_owned(), selected.arm_sku_name.clone()),
+            ("lineage".to_owned(), format!("{:?}", selected.lineage).to_ascii_lowercase()),
+            ("generation".to_owned(), selected.generation.clone()),
+            ("vcpus".to_owned(), selected.vcpus.to_string()),
+            ("memory_gb".to_owned(), selected.memory_gb.to_string()),
+            ("managed_disks".to_owned(), disk_summary),
+            ("disk_source_urls".to_owned(), disk_source_urls.join(" ")),
+        ]),
+    }
+}
+
+fn vm_azure_cost_formula_step(
+    selected: &SelectedVmTarget,
+    resource: &Ec2VmResource,
+    vm_hourly_rate: DecimalValue,
+    managed_disk_monthly_per_instance: DecimalValue,
+    settings: &ProjectSettings,
+    costs: &AzureCostBreakdown,
+) -> ExplanationStep {
+    ExplanationStep {
+        code: "azure_vm_cost_formula".to_owned(),
+        message: "Azure Windows PAYG VM compute and selected managed-disk costs were calculated from one coherent snapshot."
+            .to_owned(),
+        values: BTreeMap::from([
+            ("arm_sku_name".to_owned(), selected.arm_sku_name.clone()),
+            (
+                "compute_formula".to_owned(),
+                "compute_gross = quantity * annual_hours_per_instance * windows_payg_hourly"
+                    .to_owned(),
+            ),
+            ("windows_payg_hourly".to_owned(), vm_hourly_rate.to_string()),
+            ("compute_gross".to_owned(), costs.compute_gross.to_string()),
+            (
+                "azure_compute_discount".to_owned(),
+                settings.azure_compute_discount.to_string(),
+            ),
+            (
+                "storage_formula".to_owned(),
+                "storage_gross = quantity * 12 * sum(managed_disk_monthly_cost)".to_owned(),
+            ),
+            (
+                "managed_disk_monthly_per_instance".to_owned(),
+                managed_disk_monthly_per_instance.to_string(),
+            ),
+            ("storage_gross".to_owned(), costs.storage_gross.to_string()),
+            (
+                "azure_storage_discount".to_owned(),
+                settings.azure_storage_discount.to_string(),
+            ),
+            ("storage_net".to_owned(), costs.storage_net.to_string()),
+            ("license_gross".to_owned(), "0".to_owned()),
+            (
+                "license_assumption".to_owned(),
+                "windows_license_included_in_compute_rate".to_owned(),
+            ),
+            (
+                "quantity".to_owned(),
+                resource.shared.quantity.to_string(),
+            ),
+            (
+                "annual_hours_per_instance".to_owned(),
+                resource.shared.annual_hours_per_instance.to_string(),
+            ),
+            (
+                "azure_total_before_parity".to_owned(),
+                costs.total_before_parity.to_string(),
             ),
         ]),
     }
@@ -1458,18 +2284,24 @@ mod tests {
     use super::*;
     use crate::{
         calculation::{
-            cost::{AzureRate, Ec2Rate},
+            cost::{AzureRate, EbsRate, Ec2Rate},
             target_selector::{SelectionReasonCode, ServiceTier, TargetCandidate},
+            vm_target_selector::{
+                ManagedDiskOffer, ManagedDiskTier, VmLifecycle, VmLineage, VmSizeCandidate,
+            },
         },
         domain::{
             project::SqlPaygSettings,
             resource::{
-                EbsVolume, EbsVolumeType, LicenseBasis, ProjectType, PurchaseOption,
-                SharedResource, SqlEdition, SqlWorkload,
+                EbsVolume, EbsVolumeType, Ec2VmRequirements, Ec2VmResource, LicenseBasis,
+                ProjectType, PurchaseOption, SharedResource, SqlEdition, SqlWorkload,
+                VmBurstPolicy, VmDiskRole, VmHighFrequencyRequirement, VmInstanceStoreUse,
+                VmVolume,
             },
         },
         pricing::snapshot::{
-            AwsEc2RateRecord, AzureMiRateRecord, RateProvenance, SnapshotCreationMetadata,
+            AwsEbsRateRecord, AwsEc2RateRecord, AzureManagedDiskRateRecord, AzureMiRateRecord,
+            AzureVmRateRecord, RateProvenance, SnapshotCreationMetadata,
         },
     };
 
@@ -1546,6 +2378,248 @@ mod tests {
             DecimalValue::ZERO
         );
         assert!(revision.portfolio_totals.aws_all_rows_total.is_some());
+    }
+
+    #[test]
+    fn ec2_vm_workflow_selects_vm_and_disk_and_calculates_exact_annual_costs() {
+        let base = engine(None);
+        let engine = CalculationEngine::with_vm_catalogs(
+            Arc::clone(&base.capabilities),
+            Arc::new(VmCapabilityCatalog {
+                schema_version: "test".to_owned(),
+                candidates: vec![VmSizeCandidate {
+                    arm_sku_name: "Standard_D8s_v5".to_owned(),
+                    display_family: "Dsv5".to_owned(),
+                    lineage: VmLineage::GeneralPurpose,
+                    generation: "v5".to_owned(),
+                    generation_rank: 5,
+                    lifecycle: VmLifecycle::Current,
+                    azure_region: "swedencentral".to_owned(),
+                    cpu_architecture: "x64".to_owned(),
+                    windows_eligible: true,
+                    vcpus: 8,
+                    memory_gb: decimal("32"),
+                    max_data_disk_count: 16,
+                    premium_io: true,
+                    uncached_disk_iops: 12_800,
+                    uncached_disk_throughput_mbps: 200,
+                    local_temp_disk_gb: None,
+                    source_url: "https://example.test/vm-capability".to_owned(),
+                    documentation_url: "https://example.test/vm-docs".to_owned(),
+                    reviewed_date: "2026-08-24".to_owned(),
+                }],
+            }),
+            Arc::new(ManagedDiskCatalog {
+                schema_version: "test".to_owned(),
+                offers: vec![ManagedDiskOffer {
+                    offer_key: "premium-ssd-lrs".to_owned(),
+                    display_name: "Premium SSD LRS".to_owned(),
+                    redundancy: "LRS".to_owned(),
+                    allowed_roles: vec![VmDiskRole::Os, VmDiskRole::Data],
+                    performance_is_provisioned_independently: false,
+                    azure_regions: vec!["swedencentral".to_owned()],
+                    included_iops: None,
+                    included_throughput_mbps: None,
+                    maximum_iops: 20_000,
+                    maximum_throughput_mbps: 900,
+                    capacity_increment_gb: None,
+                    minimum_capacity_gb: None,
+                    maximum_capacity_gb: decimal("32768"),
+                    tiers: vec![ManagedDiskTier {
+                        tier_key: "P30".to_owned(),
+                        capacity_gb: decimal("1024"),
+                        provisioned_iops: 5_000,
+                        provisioned_throughput_mbps: decimal("200"),
+                    }],
+                    source_url: "https://example.test/disk-capability".to_owned(),
+                    reviewed_date: "2026-08-24".to_owned(),
+                }],
+            }),
+            "1.0.0",
+        )
+        .expect("VM calculation engine");
+        let resource_id = Uuid::new_v4();
+        let resource = Resource::Ec2Vm(Ec2VmResource {
+            shared: SharedResource {
+                id: resource_id,
+                workload_name: "Synthetic Windows VM".to_owned(),
+                server_name: None,
+                quantity: 1,
+                source_ram_gb_per_instance: decimal("32"),
+                annual_hours_per_instance: decimal("8760"),
+            },
+            instance_type: "m5.2xlarge".to_owned(),
+            requirements: Default::default(),
+            volumes: vec![VmVolume {
+                id: Uuid::new_v4(),
+                label: "OS".to_owned(),
+                aws_volume_id: None,
+                volume_type: EbsVolumeType::Gp3,
+                role: VmDiskRole::Os,
+                capacity_gb: decimal("1024"),
+                provisioned_iops: Some(3_000),
+                throughput_mibps: Some(decimal("125")),
+            }],
+        });
+        let mut settings = settings();
+        settings.project_type = ProjectType::Ec2Vm;
+        let aws = vm_aws_snapshot();
+        let azure = vm_azure_snapshot();
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: Some(&azure),
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("EC2 VM calculation");
+
+        let row = &revision.resource_results[0];
+        let selected = row
+            .vm_target_selection
+            .as_ref()
+            .and_then(|selection| selection.selected.as_ref())
+            .expect("selected VM target");
+        assert_eq!(row.resource_id, resource_id);
+        assert_eq!(row.mapping_status, Some(MappingStatus::Mapped));
+        assert!(row.target_selection.is_none());
+        assert_eq!(selected.arm_sku_name, "Standard_D8s_v5");
+        assert_eq!(selected.disks[0].tier_key.as_deref(), Some("P30"));
+        assert_eq!(
+            row.source_costs.as_ref().expect("source costs").total,
+            decimal("9743.04")
+        );
+        let azure_costs = row.azure_costs.as_ref().expect("Azure costs");
+        assert_eq!(azure_costs.total_before_parity, decimal("8482.56"));
+        assert_eq!(azure_costs.license_gross, DecimalValue::ZERO);
+        assert_eq!(azure_costs.additional_ram_gross, DecimalValue::ZERO);
+        assert_eq!(
+            row.storage_inputs.azure_storage_gb_per_instance,
+            decimal("1024")
+        );
+        assert_eq!(revision.portfolio_totals.comparable_resource_count, 1);
+        assert!(row.explanation_steps.iter().any(|step| {
+            step.code == "vm_assumptions"
+                && step.values.get("source_instance_store").map(String::as_str) == Some("not_used")
+        }));
+    }
+
+    #[test]
+    fn unknown_t3_burst_policy_uses_conservative_d_series_and_requires_review() {
+        let engine = reviewed_vm_engine();
+        let mut settings = settings();
+        settings.project_type = ProjectType::Ec2Vm;
+        let mut requirements = Ec2VmRequirements::defaults_for("t3.large");
+        requirements.burst_policy = VmBurstPolicy::Unknown;
+        let resource = reviewed_vm_resource("t3.large", "8", requirements);
+        let aws = vm_aws_snapshot_for("t3.large", 2, "8");
+        let azure = reviewed_vm_azure_snapshot("Standard_D2ds_v7");
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: Some(&azure),
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("T3 calculation");
+
+        let selection = revision.resource_results[0]
+            .vm_target_selection
+            .as_ref()
+            .expect("VM selection");
+        assert_eq!(
+            selection.recommendation_status,
+            VmRecommendationStatus::CapacityFitReviewRequired
+        );
+        assert_eq!(
+            selection
+                .selected
+                .as_ref()
+                .map(|target| target.arm_sku_name.as_str()),
+            Some("Standard_D2ds_v7")
+        );
+        assert!(
+            selection
+                .outcome_reasons
+                .iter()
+                .any(|reason| { reason.code == VmSelectionReasonCode::BurstPolicyReviewRequired })
+        );
+    }
+
+    #[test]
+    fn high_frequency_source_is_never_recommended_from_capacity_alone() {
+        let engine = reviewed_vm_engine();
+        let mut settings = settings();
+        settings.project_type = ProjectType::Ec2Vm;
+        let mut requirements = Ec2VmRequirements::defaults_for("z1d.2xlarge");
+        requirements.high_frequency_requirement = VmHighFrequencyRequirement::CapacityFitAccepted;
+        let resource = reviewed_vm_resource("z1d.2xlarge", "64", requirements);
+        let aws = vm_aws_snapshot_for("z1d.2xlarge", 8, "64");
+        let azure = reviewed_vm_azure_snapshot("Standard_E8ds_v7");
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: Some(&azure),
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("high-frequency calculation");
+
+        let selection = revision.resource_results[0]
+            .vm_target_selection
+            .as_ref()
+            .expect("VM selection");
+        assert_eq!(
+            selection.recommendation_status,
+            VmRecommendationStatus::CapacityFitReviewRequired
+        );
+        assert!(
+            selection.outcome_reasons.iter().any(|reason| {
+                reason.code == VmSelectionReasonCode::HighFrequencyReviewRequired
+            })
+        );
+    }
+
+    #[test]
+    fn unknown_instance_store_use_is_incomplete_without_hiding_source_cost() {
+        let engine = reviewed_vm_engine();
+        let mut settings = settings();
+        settings.project_type = ProjectType::Ec2Vm;
+        let mut requirements = Ec2VmRequirements::defaults_for("r6id.8xlarge");
+        requirements.instance_store_use = VmInstanceStoreUse::Unknown;
+        let resource = reviewed_vm_resource("r6id.8xlarge", "256", requirements);
+        let aws = vm_aws_snapshot_for("r6id.8xlarge", 32, "256");
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: None,
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("incomplete instance-store calculation");
+
+        let row = &revision.resource_results[0];
+        let selection = row.vm_target_selection.as_ref().expect("VM selection");
+        assert_eq!(
+            selection.recommendation_status,
+            VmRecommendationStatus::Incomplete
+        );
+        assert!(selection.selected.is_none());
+        assert!(row.source_costs.is_some());
+        assert!(row.azure_costs.is_none());
+        assert!(
+            selection.outcome_reasons.iter().any(|reason| {
+                reason.code == VmSelectionReasonCode::InstanceStoreReviewRequired
+            })
+        );
     }
 
     #[test]
@@ -2137,6 +3211,98 @@ mod tests {
         aws_snapshot_for("m-test", 8, "64")
     }
 
+    fn vm_aws_snapshot() -> AwsPriceSnapshot {
+        vm_aws_snapshot_for("m5.2xlarge", 8, "32")
+    }
+
+    fn vm_aws_snapshot_for(
+        instance_type: &str,
+        source_vcpu: u32,
+        catalog_memory_gb: &str,
+    ) -> AwsPriceSnapshot {
+        AwsPriceSnapshot::create(
+            snapshot_metadata("aws-vm"),
+            "eu-west-1",
+            vec![AwsEc2RateRecord {
+                stable_key: instance_type.to_owned(),
+                instance_type: instance_type.to_owned(),
+                rate: Ec2Rate {
+                    source_vcpu,
+                    catalog_memory_gb: decimal(catalog_memory_gb),
+                    compute_hourly: decimal("1"),
+                    standard_license_hourly: None,
+                    enterprise_license_hourly: None,
+                },
+                provenance: provenance("https://example.test/aws-vm"),
+            }],
+            Vec::new(),
+            vec![AwsEbsRateRecord {
+                stable_key: "gp3".to_owned(),
+                rate: EbsRate {
+                    volume_type: EbsVolumeType::Gp3,
+                    capacity_monthly_per_gb: decimal("0.08"),
+                    included_iops: 3_000,
+                    iops_monthly_per_unit: Some(decimal("0.005")),
+                    iops_tiers: Vec::new(),
+                    included_throughput_mibps: decimal("125"),
+                    throughput_monthly_per_mibps: Some(decimal("0.04")),
+                },
+                provenance: provenance("https://example.test/aws-ebs"),
+            }],
+        )
+        .expect("AWS VM snapshot")
+    }
+
+    fn reviewed_vm_engine() -> CalculationEngine {
+        let base = engine(None);
+        CalculationEngine::with_vm_catalogs(
+            Arc::clone(&base.capabilities),
+            Arc::new(
+                serde_json::from_str(include_str!(
+                    "../../../app/catalogs/azure-vm-capabilities.json"
+                ))
+                .expect("reviewed VM catalog"),
+            ),
+            Arc::new(
+                serde_json::from_str(include_str!(
+                    "../../../app/catalogs/azure-managed-disk-capabilities.json"
+                ))
+                .expect("reviewed disk catalog"),
+            ),
+            "1.0.0",
+        )
+        .expect("reviewed VM engine")
+    }
+
+    fn reviewed_vm_resource(
+        instance_type: &str,
+        memory_gb: &str,
+        requirements: Ec2VmRequirements,
+    ) -> Resource {
+        Resource::Ec2Vm(Ec2VmResource {
+            shared: SharedResource {
+                id: Uuid::new_v4(),
+                workload_name: "Synthetic Windows VM".to_owned(),
+                server_name: None,
+                quantity: 1,
+                source_ram_gb_per_instance: decimal(memory_gb),
+                annual_hours_per_instance: decimal("8760"),
+            },
+            instance_type: instance_type.to_owned(),
+            requirements,
+            volumes: vec![VmVolume {
+                id: Uuid::new_v4(),
+                label: "OS".to_owned(),
+                aws_volume_id: None,
+                volume_type: EbsVolumeType::Gp3,
+                role: VmDiskRole::Os,
+                capacity_gb: decimal("32"),
+                provisioned_iops: Some(120),
+                throughput_mibps: Some(decimal("25")),
+            }],
+        })
+    }
+
     fn aws_snapshot_for(
         instance_type: &str,
         source_vcpu: u32,
@@ -2208,6 +3374,60 @@ mod tests {
                 .collect(),
         )
         .expect("Azure snapshot")
+    }
+
+    fn vm_azure_snapshot() -> AzurePriceSnapshot {
+        AzurePriceSnapshot::create_with_vm_rates(
+            snapshot_metadata("azure-vm"),
+            "swedencentral",
+            Vec::new(),
+            vec![AzureVmRateRecord {
+                stable_key: "Standard_D8s_v5".to_owned(),
+                arm_sku_name: "Standard_D8s_v5".to_owned(),
+                hourly_rate: decimal("0.8"),
+                unit_of_measure: "1 Hour".to_owned(),
+                raw_price_lexeme: "0.8".to_owned(),
+                provenance: provenance("https://example.test/azure-vm"),
+            }],
+            vec![AzureManagedDiskRateRecord {
+                stable_key: "premium-ssd-lrs|P30".to_owned(),
+                offer_key: "premium-ssd-lrs".to_owned(),
+                tier_key: Some("P30".to_owned()),
+                dimension: AzureManagedDiskPriceDimension::CapacityTier,
+                normalized_monthly_rate: decimal("122.88"),
+                unit_of_measure: "1/Month".to_owned(),
+                raw_price_lexeme: "122.88".to_owned(),
+                provenance: provenance("https://example.test/azure-disk"),
+            }],
+        )
+        .expect("Azure VM snapshot")
+    }
+
+    fn reviewed_vm_azure_snapshot(arm_sku_name: &str) -> AzurePriceSnapshot {
+        AzurePriceSnapshot::create_with_vm_rates(
+            snapshot_metadata("azure-reviewed-vm"),
+            "swedencentral",
+            Vec::new(),
+            vec![AzureVmRateRecord {
+                stable_key: arm_sku_name.to_ascii_lowercase(),
+                arm_sku_name: arm_sku_name.to_owned(),
+                hourly_rate: decimal("0.8"),
+                unit_of_measure: "1 Hour".to_owned(),
+                raw_price_lexeme: "0.8".to_owned(),
+                provenance: provenance("https://example.test/azure-reviewed-vm"),
+            }],
+            vec![AzureManagedDiskRateRecord {
+                stable_key: "premium_ssd_lrs|P4".to_owned(),
+                offer_key: "premium_ssd_lrs".to_owned(),
+                tier_key: Some("P4".to_owned()),
+                dimension: AzureManagedDiskPriceDimension::CapacityTier,
+                normalized_monthly_rate: decimal("5"),
+                unit_of_measure: "1/Month".to_owned(),
+                raw_price_lexeme: "5".to_owned(),
+                provenance: provenance("https://example.test/azure-reviewed-disk"),
+            }],
+        )
+        .expect("reviewed Azure VM snapshot")
     }
 
     fn snapshot_metadata(provider: &str) -> SnapshotCreationMetadata {

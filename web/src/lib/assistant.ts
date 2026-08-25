@@ -107,7 +107,7 @@ function parseImageClassification(value: unknown): AssistantImageProjectClassifi
   const confidence = readString(classification, 'confidence');
   if (
     !classification ||
-    !['ec2', 'rds', 'on_prem', 'sql_payg', 'unknown'].includes(projectType ?? '') ||
+    !['ec2', 'ec2_vm', 'rds', 'on_prem', 'sql_payg', 'unknown'].includes(projectType ?? '') ||
     !['high', 'medium', 'low'].includes(confidence ?? '')
   ) {
     throw new Error('The assistant image response was not recognized.');

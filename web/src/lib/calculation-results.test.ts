@@ -95,7 +95,14 @@ describe('calculation result rows', () => {
         sourceRamGbPerInstance: '256',
         annualHoursPerInstance: '8760',
         miPurchaseOption: 'ahb',
+        burstPolicy: null,
+        instanceStoreUse: null,
+        requiredLocalTempDiskGb: null,
+        ephemeralDataLossAcceptable: null,
+        highFrequencyRequirement: null,
+        requestedTargetArmSku: null,
         mappingStatus: 'mapped',
+        recommendationStatus: null,
         awsPricingStatus: 'fresh',
         azurePricingStatus: 'cached',
         sourceVcpu: '32',
@@ -152,5 +159,77 @@ describe('calculation result rows', () => {
     expect(row.sourceTotal).toBeNull();
     expect(row.azureTotalBeforeParity).toBeNull();
     expect(row.difference).toBeNull();
+  });
+
+  it('projects VM requirements and target fields without fabricating SQL inputs', () => {
+    const resource: ResourceDraft = {
+      id: '22222222-2222-4222-8222-222222222222',
+      source_type: 'ec2_vm',
+      workload_name: 'Windows app',
+      server_name: 'vm-01',
+      quantity: 1,
+      source_ram_gb_per_instance: '8',
+      annual_hours_per_instance: '8760',
+      instance_type: 't3.large',
+      requirements: {
+        burst_policy: 'unknown',
+        instance_store_use: 'not_used',
+        required_local_temp_disk_gb: null,
+        ephemeral_data_loss_acceptable: null,
+        high_frequency_requirement: 'not_applicable',
+        requested_target_arm_sku: 'Standard_D4s_v7'
+      },
+      volumes: [
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          label: 'OS',
+          aws_volume_id: null,
+          volume_type: 'gp3',
+          role: 'os',
+          capacity_gb: '1024',
+          provisioned_iops: 3000,
+          throughput_mibps: '125'
+        }
+      ]
+    };
+    const [row] = buildCalculationResultRows(
+      {
+        resource_results: [
+          {
+            resource_id: resource.id,
+            mapping_status: 'mapped',
+            vm_target_selection: {
+              recommendation_status: 'capacity_fit_review_required',
+              selected: {
+                arm_sku_name: 'Standard_D4s_v7',
+                display_family: 'Dsv7',
+                vcpus: 4,
+                memory_gb: '16',
+                disks: [{ tier_key: 'P30' }]
+              }
+            }
+          }
+        ]
+      },
+      [resource]
+    );
+
+    expect(row).toMatchObject({
+      sourceType: 'ec2_vm',
+      sourceSku: 't3.large',
+      sqlEdition: null,
+      licenseBasis: null,
+      miPurchaseOption: null,
+      burstPolicy: 'unknown',
+      instanceStoreUse: 'not_used',
+      highFrequencyRequirement: 'not_applicable',
+      requestedTargetArmSku: 'Standard_D4s_v7',
+      recommendationStatus: 'capacity_fit_review_required',
+      selectedMemoryGb: '16',
+      serviceTier: 'Standard_D4s_v7',
+      hardwareFamily: 'Dsv7',
+      storageArchitecture: 'P30',
+      vcores: 4
+    });
   });
 });

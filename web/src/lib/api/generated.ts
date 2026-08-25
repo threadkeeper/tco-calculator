@@ -544,7 +544,7 @@ export interface components {
         AssistantProposal: components["schemas"]["AssistantProjectPatchProposal"] | components["schemas"]["AssistantNewProjectDraftProposal"];
         AssistantImageProjectClassification: {
             /** @enum {string} */
-            project_type: "ec2" | "rds" | "on_prem" | "sql_payg" | "unknown";
+            project_type: "ec2" | "ec2_vm" | "rds" | "on_prem" | "sql_payg" | "unknown";
             /** @enum {string} */
             confidence: "high" | "medium" | "low";
             evidence: string[];
@@ -693,6 +693,7 @@ export interface components {
             aws_pricing_status: components["schemas"]["PricingStatus"];
             azure_pricing_status: components["schemas"]["PricingStatus"];
             target_selection: components["schemas"]["TargetSelection"] | null;
+            vm_target_selection: components["schemas"]["VmTargetSelection"] | null;
             source_costs: components["schemas"]["SourceCostBreakdown"] | null;
             azure_costs: components["schemas"]["AzureCostBreakdown"] | null;
             purchase_option_discounts: components["schemas"]["PurchaseOptionDiscounts"] | null;
@@ -767,6 +768,63 @@ export interface components {
             candidates: components["schemas"]["CandidateEvaluation"][];
             outcome_reasons: components["schemas"]["SelectionReason"][];
             storage_escalation: components["schemas"]["StorageEscalation"] | null;
+        };
+        VmTargetSelection: {
+            /** @enum {string} */
+            mapping_status: "mapped" | "no_mapping";
+            recommendation_status: components["schemas"]["VmRecommendationStatus"];
+            requested_lineage: components["schemas"]["VmLineage"];
+            selected: components["schemas"]["SelectedVmTarget"] | null;
+            candidates: components["schemas"]["VmCandidateEvaluation"][];
+            outcome_reasons: components["schemas"]["VmSelectionReason"][];
+        };
+        /** @enum {string} */
+        VmLineage: "burstable" | "general_purpose" | "memory_optimized";
+        /** @enum {string} */
+        VmRecommendationStatus: "recommended" | "capacity_fit_review_required" | "incomplete" | "no_eligible_target";
+        /** @enum {string} */
+        VmLifecycle: "current" | "previous";
+        SelectedVmTarget: {
+            arm_sku_name: string;
+            display_family: string;
+            lineage: components["schemas"]["VmLineage"];
+            generation: string;
+            generation_rank: number;
+            lifecycle: components["schemas"]["VmLifecycle"];
+            azure_region: string;
+            vcpus: number;
+            memory_gb: components["schemas"]["Decimal"];
+            max_data_disk_count: number;
+            uncached_disk_iops: number;
+            uncached_disk_throughput_mbps: number;
+            local_temp_disk_gb: components["schemas"]["Decimal"] | null;
+            disks: components["schemas"]["SelectedManagedDisk"][];
+        };
+        SelectedManagedDisk: {
+            /** Format: uuid */
+            volume_id: string;
+            label: string;
+            role: components["schemas"]["VmDiskRole"];
+            offer_key: string;
+            display_name: string;
+            tier_key: string | null;
+            capacity_gb: components["schemas"]["Decimal"];
+            provisioned_iops: number;
+            provisioned_throughput_mbps: components["schemas"]["Decimal"];
+            billed_additional_iops: number;
+            billed_additional_throughput_mbps: components["schemas"]["Decimal"];
+        };
+        VmCandidateEvaluation: {
+            arm_sku_name: string;
+            vcpus: number;
+            memory_gb: components["schemas"]["Decimal"];
+            eligible: boolean;
+            rejection_reasons: components["schemas"]["VmSelectionReason"][];
+        };
+        VmSelectionReason: {
+            /** @enum {string} */
+            code: "region_unavailable" | "lineage_mismatch" | "lifecycle_ineligible" | "windows_unsupported" | "architecture_unsupported" | "premium_io_unsupported" | "insufficient_vcpu" | "insufficient_memory" | "insufficient_local_temp_disk" | "data_disk_count_exceeded" | "no_eligible_disk_offer" | "aggregate_disk_iops_exceeded" | "aggregate_disk_throughput_exceeded" | "target_override_ineligible" | "burst_policy_review_required" | "instance_store_review_required" | "ephemeral_data_loss_incompatible" | "high_frequency_review_required" | "volume_role_unconfirmed" | "price_unavailable";
+            detail: string;
         };
         /** @enum {string} */
         ServiceTier: "next_generation_general_purpose" | "business_critical";
@@ -920,7 +978,7 @@ export interface components {
         };
         ProjectSettings: {
             /** @enum {string} */
-            project_type: "ec2" | "rds" | "on_prem" | "sql_payg";
+            project_type: "ec2" | "ec2_vm" | "rds" | "on_prem" | "sql_payg";
             aws_region: string | null;
             azure_region: string;
             /** @constant */
@@ -948,7 +1006,7 @@ export interface components {
             standard_licensed_cores: number;
             software_assurance_annual_usd: components["schemas"]["Decimal"];
         };
-        Resource: components["schemas"]["Ec2Resource"] | components["schemas"]["RdsResource"] | components["schemas"]["OnPremResource"];
+        Resource: components["schemas"]["Ec2Resource"] | components["schemas"]["Ec2VmResource"] | components["schemas"]["RdsResource"] | components["schemas"]["OnPremResource"];
         SharedResourceProperties: {
             /** Format: uuid */
             id: string;
@@ -975,6 +1033,56 @@ export interface components {
              * @enum {string}
              */
             source_type: "ec2";
+        };
+        SharedVmResourceProperties: {
+            /** Format: uuid */
+            id: string;
+            workload_name: string;
+            server_name: string | null;
+            quantity: number;
+            source_ram_gb_per_instance: components["schemas"]["Decimal"];
+            annual_hours_per_instance: components["schemas"]["Decimal"];
+        };
+        Ec2VmResource: components["schemas"]["SharedVmResourceProperties"] & {
+            /** @constant */
+            source_type: "ec2_vm";
+            instance_type: string;
+            requirements: components["schemas"]["Ec2VmRequirements"];
+            volumes: components["schemas"]["VmVolume"][];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            source_type: "ec2_vm";
+        };
+        Ec2VmRequirements: {
+            burst_policy: components["schemas"]["VmBurstPolicy"];
+            instance_store_use: components["schemas"]["VmInstanceStoreUse"];
+            required_local_temp_disk_gb: components["schemas"]["Decimal"] | null;
+            ephemeral_data_loss_acceptable: boolean | null;
+            high_frequency_requirement: components["schemas"]["VmHighFrequencyRequirement"];
+            requested_target_arm_sku: string | null;
+        };
+        /** @enum {string} */
+        VmBurstPolicy: "confirmed_burst_compatible" | "requires_sustained_cpu" | "unknown" | "not_applicable";
+        /** @enum {string} */
+        VmInstanceStoreUse: "unknown" | "not_used" | "used";
+        /** @enum {string} */
+        VmHighFrequencyRequirement: "required" | "unknown" | "capacity_fit_accepted" | "not_applicable";
+        /** @enum {string} */
+        VmDiskRole: "os" | "data" | "unknown";
+        VmVolume: {
+            /** Format: uuid */
+            id: string;
+            label: string;
+            aws_volume_id: string | null;
+            /** @enum {string} */
+            volume_type: "gp3" | "io2";
+            role: components["schemas"]["VmDiskRole"];
+            capacity_gb: components["schemas"]["Decimal"];
+            provisioned_iops: number;
+            throughput_mibps: components["schemas"]["Decimal"] | null;
         };
         EbsVolume: {
             /** Format: uuid */
@@ -1035,7 +1143,7 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            project_type: "ec2" | "rds" | "on_prem" | "sql_payg";
+            project_type: "ec2" | "ec2_vm" | "rds" | "on_prem" | "sql_payg";
             /** Format: date-time */
             modified_at: string;
             source_region: string | null;

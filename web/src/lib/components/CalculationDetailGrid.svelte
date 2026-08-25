@@ -27,8 +27,9 @@
   } = $props();
 
   const rows = $derived(buildCalculationResultRows(calculation, project.resources));
+  const isVmProject = $derived(project.settings.project_type === 'ec2_vm');
 
-  const groups: ResultGroup[] = [
+  const sqlGroups: ResultGroup[] = [
     {
       label: 'Workload',
       tone: 'workload',
@@ -110,6 +111,90 @@
     }
   ];
 
+  const vmGroups: ResultGroup[] = [
+    {
+      label: 'Workload',
+      tone: 'workload',
+      columns: [
+        column('Name', 'text', (row) => row.workloadName),
+        column('Server name', 'text', (row) => row.serverName),
+        column('Source SKU', 'text', (row) => row.sourceSku),
+        column('Qty', 'number', (row) => row.quantity),
+        column('Burst policy', 'text', (row) => row.burstPolicy),
+        column('Instance store', 'text', (row) => row.instanceStoreUse),
+        column('Local temp GB', 'number', (row) => row.requiredLocalTempDiskGb),
+        column('Ephemeral loss accepted', 'text', (row) =>
+          row.ephemeralDataLossAcceptable === null
+            ? null
+            : row.ephemeralDataLossAcceptable
+              ? 'yes'
+              : 'no'
+        ),
+        column('High-frequency', 'text', (row) => row.highFrequencyRequirement),
+        column('Target override', 'text', (row) => row.requestedTargetArmSku),
+        column('Persistent EBS GB', 'number', (row) => row.persistentEbsGbPerInstance),
+        column('Source RAM GB', 'number', (row) => row.sourceRamGbPerInstance),
+        column('Annual hours', 'number', (row) => row.annualHoursPerInstance)
+      ]
+    },
+    {
+      label: 'Derived Azure VM',
+      tone: 'target',
+      columns: [
+        column('Managed disk GB', 'number', (row) => row.azureStorageGbPerInstance),
+        column('VM RAM GB', 'number', (row) => row.selectedMemoryGb),
+        column('VM SKU', 'text', (row) => row.serviceTier),
+        column('Family', 'text', (row) => row.hardwareFamily),
+        column('Managed disks', 'text', (row) => row.storageArchitecture),
+        column('vCPU', 'number', (row) => row.vcores),
+        column('Recommendation', 'text', (row) => row.recommendationStatus)
+      ]
+    },
+    {
+      label: 'Source cost',
+      tone: 'source',
+      columns: [
+        column('Compute gross', 'money', (row) => row.sourceComputeGross),
+        column('Compute net', 'money', (row) => row.sourceComputeNet),
+        column('Storage gross', 'money', (row) => row.sourceStorageGross),
+        column('Storage net', 'money', (row) => row.sourceStorageNet),
+        column('Net total', 'money', (row) => row.sourceTotal)
+      ]
+    },
+    {
+      label: 'Azure VM cost',
+      tone: 'azure',
+      columns: [
+        column('Compute gross', 'money', (row) => row.azureComputeGross),
+        column('Compute net', 'money', (row) => row.azureComputePlusRamNet),
+        column('Storage gross', 'money', (row) => row.azureStorageGross),
+        column('Storage net', 'money', (row) => row.azureStorageNet),
+        column('VM net before parity', 'money', (row) => row.azureTotalBeforeParity)
+      ]
+    },
+    {
+      label: 'Savings before parity',
+      tone: 'savings',
+      columns: [
+        column('Compute', 'money', (row) => row.computeSavings),
+        column('Storage', 'money', (row) => row.storageSavings),
+        column('Total', 'money', (row) => row.totalSavings)
+      ]
+    },
+    {
+      label: 'Parity',
+      tone: 'parity',
+      columns: [
+        column('Required adjustment', 'rate', (row) => row.requiredAdjustment),
+        column('Selected adjustment', 'rate', (row) => row.selectedAdjustment),
+        column('Azure after parity', 'money', (row) => row.azureAfterSelectedParity),
+        column('Difference (Azure - source)', 'signed-money', (row) => row.difference)
+      ]
+    }
+  ];
+
+  const groups = $derived(isVmProject ? vmGroups : sqlGroups);
+
   function column(
     label: string,
     kind: CellKind,
@@ -177,7 +262,10 @@
 
   <div class="table-shell" aria-label="Scrollable resource cost comparison">
     <table>
-      <caption>Annual source and Azure SQL Managed Instance cost details by resource</caption>
+      <caption
+        >Annual source and {isVmProject ? 'Azure Virtual Machine' : 'Azure SQL Managed Instance'} cost
+        details by resource</caption
+      >
       <thead>
         <tr class="group-row">
           {#each groups as group (group.label)}

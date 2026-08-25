@@ -2,15 +2,15 @@
   "aws": {
     "metadata": {
       "status": "stale",
-      "retrieved_at": "2026-08-07T07:41:09Z",
-      "source_published_at": "2026-08-06T17:17:52Z",
+      "retrieved_at": "2026-08-25T11:43:53.122794Z",
+      "source_published_at": "2026-08-24T19:31:47Z",
       "currency": "USD",
       "source_urls": [
-        "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/Bring%20your%20own%20license/Yes/index.json",
-        "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/20260806022930/eu-west-1/index.json",
-        "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDSOCPULicenseFees/20260529185918/eu-west-1/index.json"
+        "https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/ec2/USD/current/ebs-calculator.json",
+        "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json",
+        "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/20260806022930/eu-west-1/index.json"
       ],
-      "parser_schema_version": "local-public-fixture-v1",
+      "parser_schema_version": "local-public-fixture-v2",
       "warnings": [
         "Local development uses a frozen public-price fixture; refresh on an approved build machine before relying on current rates."
       ]
@@ -18,21 +18,150 @@
     "source_region": "eu-west-1",
     "ec2_rates": [
       {
+        "stable_key": "eu-west-1|on-demand|shared|windows|m6i.large",
+        "instance_type": "m6i.large",
+        "source_vcpu": 2,
+        "catalog_memory_gb": "8",
+        "compute_hourly": "0.1990000000",
+        "standard_license_hourly": "0.4800000000",
+        "enterprise_license_hourly": "1.5000000000",
+        "provenance": {
+          "source_url": "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json",
+          "effective_at": "2026-08-24T19:31:47Z",
+          "source_version": "plc-ec2-calc-artifact-usd-20260824193147",
+          "meter_ids": [
+            "95MZGSQFH4AYSH6E.JRTCKXETXF.6YS6EN2CT7",
+            "HMWBMKKHXSQ6TDBD.JRTCKXETXF.6YS6EN2CT7"
+          ]
+        }
+      },
+      {
+        "stable_key": "eu-west-1|on-demand|shared|windows|r5.8xlarge",
+        "instance_type": "r5.8xlarge",
+        "source_vcpu": 32,
+        "catalog_memory_gb": "256",
+        "compute_hourly": "3.7280000000",
+        "standard_license_hourly": "3.8400000000",
+        "enterprise_license_hourly": "12.0000000000",
+        "provenance": {
+          "source_url": "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json",
+          "effective_at": "2026-08-24T19:31:47Z",
+          "source_version": "plc-ec2-calc-artifact-usd-20260824193147",
+          "meter_ids": [
+            "8B72SNYFQZR5BK9C.JRTCKXETXF.6YS6EN2CT7",
+            "DK64N67K3YUXHNSH.JRTCKXETXF.6YS6EN2CT7",
+            "K9GE9S895R6BAXKE.JRTCKXETXF.6YS6EN2CT7"
+          ]
+        }
+      },
+      {
+        "stable_key": "eu-west-1|on-demand|shared|windows|r6id.12xlarge",
+        "instance_type": "r6id.12xlarge",
+        "source_vcpu": 48,
+        "catalog_memory_gb": "384",
+        "compute_hourly": "6.2400000000",
+        "standard_license_hourly": "5.7600000000",
+        "enterprise_license_hourly": "18.0000000000",
+        "provenance": {
+          "source_url": "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json",
+          "effective_at": "2026-08-24T19:31:47Z",
+          "source_version": "plc-ec2-calc-artifact-usd-20260824193147",
+          "meter_ids": [
+            "434ZUXY3SRBHDBNM.JRTCKXETXF.6YS6EN2CT7",
+            "AWPJRSKY38GXH3TP.JRTCKXETXF.6YS6EN2CT7",
+            "ER6WKWVREXJNCJTF.JRTCKXETXF.6YS6EN2CT7"
+          ]
+        }
+      },
+      {
         "stable_key": "eu-west-1|on-demand|shared|windows|r6id.8xlarge",
         "instance_type": "r6id.8xlarge",
         "source_vcpu": 32,
-        "catalog_memory_gb": "256.0000000000",
-        "compute_hourly": "2.6880000000",
-        "standard_license_hourly": "5.3120000000",
-        "enterprise_license_hourly": "13.4720000000",
+        "catalog_memory_gb": "256",
+        "compute_hourly": "4.1600000000",
+        "standard_license_hourly": "3.8400000000",
+        "enterprise_license_hourly": "12.0000000000",
         "provenance": {
-          "source_url": "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/Bring%20your%20own%20license/Yes/index.json",
-          "effective_at": "2026-08-06T17:17:52Z",
-          "source_version": "20260806171752",
+          "source_url": "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json",
+          "effective_at": "2026-08-24T19:31:47Z",
+          "source_version": "plc-ec2-calc-artifact-usd-20260824193147",
           "meter_ids": [
-            "WBZEUSYHP4AGTFTW.JRTCKXETXF.6YS6EN2CT7",
+            "PQGQRU8BR5FMRZNZ.JRTCKXETXF.6YS6EN2CT7",
             "SSA9PHVFXBY73R5N.JRTCKXETXF.6YS6EN2CT7",
             "ZXYD8JMFAWZWR2UA.JRTCKXETXF.6YS6EN2CT7"
+          ]
+        }
+      },
+      {
+        "stable_key": "eu-west-1|on-demand|shared|windows|r7i.large",
+        "instance_type": "r7i.large",
+        "source_vcpu": 2,
+        "catalog_memory_gb": "16",
+        "compute_hourly": "0.2400500000",
+        "standard_license_hourly": "0.4800000000",
+        "enterprise_license_hourly": "1.5000000000",
+        "provenance": {
+          "source_url": "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json",
+          "effective_at": "2026-08-24T19:31:47Z",
+          "source_version": "plc-ec2-calc-artifact-usd-20260824193147",
+          "meter_ids": [
+            "DU72FU65NQNJ7RSQ.JRTCKXETXF.6YS6EN2CT7",
+            "KJRSQKWFSE9H2G84.JRTCKXETXF.6YS6EN2CT7"
+          ]
+        }
+      },
+      {
+        "stable_key": "eu-west-1|on-demand|shared|windows|t3.large",
+        "instance_type": "t3.large",
+        "source_vcpu": 2,
+        "catalog_memory_gb": "8",
+        "compute_hourly": "0.1188000000",
+        "standard_license_hourly": "0.4796000000",
+        "enterprise_license_hourly": "1.5000000000",
+        "provenance": {
+          "source_url": "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json",
+          "effective_at": "2026-08-24T19:31:47Z",
+          "source_version": "plc-ec2-calc-artifact-usd-20260824193147",
+          "meter_ids": [
+            "9MXM7TV5VDJDB656.JRTCKXETXF.6YS6EN2CT7"
+          ]
+        }
+      },
+      {
+        "stable_key": "eu-west-1|on-demand|shared|windows|t3.xlarge",
+        "instance_type": "t3.xlarge",
+        "source_vcpu": 4,
+        "catalog_memory_gb": "16",
+        "compute_hourly": "0.2560000000",
+        "standard_license_hourly": "0.4800000000",
+        "enterprise_license_hourly": "1.5000000000",
+        "provenance": {
+          "source_url": "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json",
+          "effective_at": "2026-08-24T19:31:47Z",
+          "source_version": "plc-ec2-calc-artifact-usd-20260824193147",
+          "meter_ids": [
+            "9938Y3AQJ479Y4QF.JRTCKXETXF.6YS6EN2CT7",
+            "9F7YSQ5ATDAGA5TN.JRTCKXETXF.6YS6EN2CT7",
+            "ZHB92GJSG9BN5C3P.JRTCKXETXF.6YS6EN2CT7"
+          ]
+        }
+      },
+      {
+        "stable_key": "eu-west-1|on-demand|shared|windows|z1d.2xlarge",
+        "instance_type": "z1d.2xlarge",
+        "source_vcpu": 8,
+        "catalog_memory_gb": "64",
+        "compute_hourly": "1.2000000000",
+        "standard_license_hourly": "0.9600000000",
+        "enterprise_license_hourly": "3.0000000000",
+        "provenance": {
+          "source_url": "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json",
+          "effective_at": "2026-08-24T19:31:47Z",
+          "source_version": "plc-ec2-calc-artifact-usd-20260824193147",
+          "meter_ids": [
+            "4EGA4NW9AS2WWPAJ.JRTCKXETXF.6YS6EN2CT7",
+            "9P3MRSCBHWJTTTW2.JRTCKXETXF.6YS6EN2CT7",
+            "NCNNAAVQ8D6S4HHR.JRTCKXETXF.6YS6EN2CT7"
           ]
         }
       }
@@ -62,19 +191,53 @@
         }
       }
     ],
-    "ebs_rates": []
+    "ebs_rates": [
+      {
+        "stable_key": "eu-west-1|gp3",
+        "volume_type": "gp3",
+        "capacity_monthly_per_gb": "0.0880000000",
+        "included_iops": 3000,
+        "iops_monthly_per_unit": "0.0055000000",
+        "iops_tiers": [],
+        "included_throughput_mibps": "125",
+        "throughput_monthly_per_mibps": "0.0440000000",
+        "provenance": {
+          "source_url": "https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/ec2/USD/current/ebs-calculator.json",
+          "effective_at": "2026-08-24T19:31:47Z",
+          "source_version": "plc-ec2-usd-20260824193147",
+          "meter_ids": [
+            "RC6HKYUDYUP35XBV.JRTCKXETXF.6YS6EN2CT7",
+            "RCDVGPFWPEZE4D4N.JRTCKXETXF.6YS6EN2CT7",
+            "TXACT7E3PV6ZX2NM.JRTCKXETXF.6YS6EN2CT7"
+          ]
+        }
+      }
+    ]
   },
   "azure": {
     "metadata": {
       "status": "stale",
-      "retrieved_at": "2026-08-06T14:56:39Z",
-      "source_published_at": null,
+      "retrieved_at": "2026-08-25T11:43:53.1229507Z",
+      "source_published_at": "2026-05-01T00:00:00Z",
       "currency": "USD",
       "source_urls": [
         "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca",
-        "https://prices.azure.com/api/retail/prices?currencyCode='USD'&$filter=serviceName%20eq%20'SQL%20Managed%20Instance'%20and%20armRegionName%20eq%20'swedencentral'"
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=1000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=10000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=11000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=12000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=2000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=3000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=4000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=5000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=6000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=7000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=8000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=9000",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+        "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27"
       ],
-      "parser_schema_version": "local-public-fixture-v1",
+      "parser_schema_version": "local-public-fixture-v2",
       "warnings": [
         "Local development uses a frozen public-price fixture; refresh on an approved build machine before relying on current rates."
       ]
@@ -222,6 +385,1214 @@
           "meter_ids": [
             "5677937d-9840-5fff-a82e-bc2f0aadb4ef",
             "84c8c05b-dcea-5a14-98a5-155bed49e107"
+          ]
+        }
+      }
+    ],
+    "vm_rates": [
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b16ls_v2",
+        "arm_sku_name": "Standard_B16ls_v2",
+        "hourly_rate": "0.686",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.686",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=6000",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "7e0830a0-6c00-5ad5-97d8-94067419b09f"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b16s_v2",
+        "arm_sku_name": "Standard_B16s_v2",
+        "hourly_rate": "0.765",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.765",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=8000",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "ad94b8cb-5a58-5b3f-906b-ce5e84ffec1c"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b2ls_v2",
+        "arm_sku_name": "Standard_B2ls_v2",
+        "hourly_rate": "0.0524",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.0524",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "1254ce35-cb00-5e1f-af92-0d9c18a8554e"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b2s_v2",
+        "arm_sku_name": "Standard_B2s_v2",
+        "hourly_rate": "0.0956",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.0956",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=5000",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "72d28b44-2a44-5e55-a44e-43cbc711828c"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b2ts_v2",
+        "arm_sku_name": "Standard_B2ts_v2",
+        "hourly_rate": "0.02",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.02",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=12000",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "f76b3715-7907-55ce-b6cd-3da33f6e875f"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b32ls_v2",
+        "arm_sku_name": "Standard_B32ls_v2",
+        "hourly_rate": "1.371",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "1.371",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=12000",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "fd0d1f36-19a0-585b-a525-07bdbf4dd0fa"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b32s_v2",
+        "arm_sku_name": "Standard_B32s_v2",
+        "hourly_rate": "1.53",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "1.53",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=12000",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "f43f96b9-e7da-5f8a-9653-3ded563e0863"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b4ls_v2",
+        "arm_sku_name": "Standard_B4ls_v2",
+        "hourly_rate": "0.171",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.171",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=2000",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "39f71ef3-074b-50aa-b7d4-c6903e760b30"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b4s_v2",
+        "arm_sku_name": "Standard_B4s_v2",
+        "hourly_rate": "0.191",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.191",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=7000",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "94ed531a-20c8-5520-bba9-64e751282f49"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b8ls_v2",
+        "arm_sku_name": "Standard_B8ls_v2",
+        "hourly_rate": "0.343",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.343",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=7000",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "91216a38-cf35-57e3-bfd7-7838e6e2b3eb"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_b8s_v2",
+        "arm_sku_name": "Standard_B8s_v2",
+        "hourly_rate": "0.382",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.382",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=2000",
+          "effective_at": "2023-09-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "396ecd69-84be-5f61-b053-1e42de7d249c"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d128ds_v7",
+        "arm_sku_name": "Standard_D128ds_v7",
+        "hourly_rate": "16.513",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "16.513",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=11000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "ed6e87d5-8a30-578b-bf83-05f5e438a946"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d128s_v7",
+        "arm_sku_name": "Standard_D128s_v7",
+        "hourly_rate": "14.504",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "14.504",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=3000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "4b4ada6a-683b-55d4-8800-4ddeff276366"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d16ds_v7",
+        "arm_sku_name": "Standard_D16ds_v7",
+        "hourly_rate": "2.064",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "2.064",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=4000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "60f135bd-8d21-5ab6-b5f3-0c5399c31e3e"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d16s_v7",
+        "arm_sku_name": "Standard_D16s_v7",
+        "hourly_rate": "1.813",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "1.813",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=2000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "2f7861ce-a22b-5365-b654-196d17e41e7c"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d192ds_v7",
+        "arm_sku_name": "Standard_D192ds_v7",
+        "hourly_rate": "24.77",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "24.77",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=9000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "b3694d0c-110f-5770-864e-efaa728a7038"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d192s_v7",
+        "arm_sku_name": "Standard_D192s_v7",
+        "hourly_rate": "21.756",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "21.756",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=6000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "78c204df-580b-5dd6-8cce-901381adc860"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d248ds_v7",
+        "arm_sku_name": "Standard_D248ds_v7",
+        "hourly_rate": "31.994",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "31.994",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=11000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "df103357-2431-5c4f-b716-b952bf504d3c"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d248s_v7",
+        "arm_sku_name": "Standard_D248s_v7",
+        "hourly_rate": "28.101",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "28.101",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=12000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "f5e5b14e-a338-5ec1-ad8a-f21a095ac2cc"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d2ds_v7",
+        "arm_sku_name": "Standard_D2ds_v7",
+        "hourly_rate": "0.258",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.258",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=1000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "1bb40140-f236-5929-bbb4-a31b179e64d0"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d2s_v7",
+        "arm_sku_name": "Standard_D2s_v7",
+        "hourly_rate": "0.227",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.227",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=9000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "c39c3fdf-60dc-5ab9-bcb4-aaa0c2924472"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d32ds_v7",
+        "arm_sku_name": "Standard_D32ds_v7",
+        "hourly_rate": "4.128",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "4.128",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=8000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "a1cacd30-4eb0-5c01-a060-8d0de987705c"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d32s_v7",
+        "arm_sku_name": "Standard_D32s_v7",
+        "hourly_rate": "3.626",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "3.626",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "13fd83c5-b445-50b9-bead-07a1c17259f8"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d372ds_v7",
+        "arm_sku_name": "Standard_D372ds_v7",
+        "hourly_rate": "47.992",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "47.992",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=6000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "83dbfee1-7691-55e5-93da-fa62588fd68e"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d372s_v7",
+        "arm_sku_name": "Standard_D372s_v7",
+        "hourly_rate": "42.151",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "42.151",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=5000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "6935544a-f5bd-53e3-b379-e84d217729e0"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d48ds_v7",
+        "arm_sku_name": "Standard_D48ds_v7",
+        "hourly_rate": "6.192",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "6.192",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=1000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "24670aaa-811b-53e7-b1ef-e20e069c25de"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d48s_v7",
+        "arm_sku_name": "Standard_D48s_v7",
+        "hourly_rate": "5.439",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "5.439",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=4000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "5e649289-5621-57a5-9ce5-ffe1763d893f"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d4ds_v7",
+        "arm_sku_name": "Standard_D4ds_v7",
+        "hourly_rate": "0.516",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.516",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=9000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "c10b24eb-2da9-5d71-bc11-4656eff65773"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d4s_v7",
+        "arm_sku_name": "Standard_D4s_v7",
+        "hourly_rate": "0.453",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.453",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=3000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "422e1668-9cbd-5bdd-9f57-637edb40f82e"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d64ds_v7",
+        "arm_sku_name": "Standard_D64ds_v7",
+        "hourly_rate": "8.257",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "8.257",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=1000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "26cdb43e-063d-5720-b396-15d330ab33b2"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d64s_v7",
+        "arm_sku_name": "Standard_D64s_v7",
+        "hourly_rate": "7.252",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "7.252",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=7000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "8d0aad05-d096-5bc6-99c4-70622b3ea6ec"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d8ds_v7",
+        "arm_sku_name": "Standard_D8ds_v7",
+        "hourly_rate": "1.032",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "1.032",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=8000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "a3b4cadf-4542-5ecc-b0db-9c571d28f7eb"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d8s_v7",
+        "arm_sku_name": "Standard_D8s_v7",
+        "hourly_rate": "0.906",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.906",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=2000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "2ad97385-6c19-58e6-b986-ad3dde054aab"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d96ds_v7",
+        "arm_sku_name": "Standard_D96ds_v7",
+        "hourly_rate": "12.385",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "12.385",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=8000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "9e02e32a-fdbf-5022-aa92-1aeb18894fb6"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_d96s_v7",
+        "arm_sku_name": "Standard_D96s_v7",
+        "hourly_rate": "10.878",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "10.878",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=9000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "c7687728-f76b-5320-a50e-53d0f371c6e3"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e128ds_v7",
+        "arm_sku_name": "Standard_E128ds_v7",
+        "hourly_rate": "19.428",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "19.428",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=3000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "4ed478cf-ce4e-5b70-8fd7-73bbf02f075b"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e128s_v7",
+        "arm_sku_name": "Standard_E128s_v7",
+        "hourly_rate": "17.197",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "17.197",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=6000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "8562ff63-2c46-5a5d-93c8-858a4348cec3"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e16ds_v7",
+        "arm_sku_name": "Standard_E16ds_v7",
+        "hourly_rate": "2.428",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "2.428",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=2000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "2b33bf9e-489a-561b-9695-fe681e0e272d"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e16s_v7",
+        "arm_sku_name": "Standard_E16s_v7",
+        "hourly_rate": "2.15",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "2.15",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "13755adc-ad36-5f56-bb3e-fdd803b23c2c"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e192ds_v7",
+        "arm_sku_name": "Standard_E192ds_v7",
+        "hourly_rate": "29.142",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "29.142",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=1000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "17587cd1-2db0-504d-a9e1-f705ded6148e"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e192s_v7",
+        "arm_sku_name": "Standard_E192s_v7",
+        "hourly_rate": "25.795",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "25.795",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=5000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "6b3b0773-9784-50bd-b2aa-9f59d89b27a0"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e20ds_v7",
+        "arm_sku_name": "Standard_E20ds_v7",
+        "hourly_rate": "3.036",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "3.036",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=11000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "ee84c473-ec4d-5832-9a78-95c1a355a361"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e20s_v7",
+        "arm_sku_name": "Standard_E20s_v7",
+        "hourly_rate": "2.687",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "2.687",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=3000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "4b1b68dd-0503-568d-a5df-5cea037c96ba"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e248ds_v7",
+        "arm_sku_name": "Standard_E248ds_v7",
+        "hourly_rate": "37.641",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "37.641",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=5000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "6e1d3a39-8c3f-5642-87d7-f73b686555c8"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e248s_v7",
+        "arm_sku_name": "Standard_E248s_v7",
+        "hourly_rate": "33.319",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "33.319",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=5000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "761fceb6-a0f3-5efc-bf3e-8bc9e6b22112"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e2ds_v7",
+        "arm_sku_name": "Standard_E2ds_v7",
+        "hourly_rate": "0.304",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.304",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=9000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "b80a2e1d-fc82-5a50-b268-29a94d348b82"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e2s_v7",
+        "arm_sku_name": "Standard_E2s_v7",
+        "hourly_rate": "0.269",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.269",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=6000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "80fb8ae5-a977-5d5f-92bb-985454229990"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e32ds_v7",
+        "arm_sku_name": "Standard_E32ds_v7",
+        "hourly_rate": "4.857",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "4.857",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "083a3ce9-c7e7-5839-b234-0ffac2a8b1d1"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e32s_v7",
+        "arm_sku_name": "Standard_E32s_v7",
+        "hourly_rate": "4.299",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "4.299",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "0b3c631a-3a7e-5326-a3e9-dc73a8777348"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e372ids_v7",
+        "arm_sku_name": "Standard_E372ids_v7",
+        "hourly_rate": "60.397",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "60.397",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=3000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "44ffa18a-4bbd-5722-b974-223285796c49"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e372is_v7",
+        "arm_sku_name": "Standard_E372is_v7",
+        "hourly_rate": "53.265",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "53.265",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=10000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "d511d6d9-fb9d-55bb-a37c-0d2d9924c641"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e48ds_v7",
+        "arm_sku_name": "Standard_E48ds_v7",
+        "hourly_rate": "7.285",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "7.285",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "0831e419-dcfc-5258-a310-a97461d16056"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e48s_v7",
+        "arm_sku_name": "Standard_E48s_v7",
+        "hourly_rate": "6.449",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "6.449",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=2000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "31855d38-2671-58cd-be91-9e0d320da2d0"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e4ds_v7",
+        "arm_sku_name": "Standard_E4ds_v7",
+        "hourly_rate": "0.607",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.607",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=7000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "99d56108-3226-532d-8667-9865efbc7e1c"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e4s_v7",
+        "arm_sku_name": "Standard_E4s_v7",
+        "hourly_rate": "0.537",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.537",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=10000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "cbdb8ea9-7327-5e41-8cc4-ca63fe5c9b43"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e64ds_v7",
+        "arm_sku_name": "Standard_E64ds_v7",
+        "hourly_rate": "9.714",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "9.714",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=5000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "75cb3bec-effa-5135-817c-42319dea683d"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e64s_v7",
+        "arm_sku_name": "Standard_E64s_v7",
+        "hourly_rate": "8.598",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "8.598",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=11000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "f057707d-da60-54a4-af5b-ce39aa2f6211"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e8ds_v7",
+        "arm_sku_name": "Standard_E8ds_v7",
+        "hourly_rate": "1.214",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "1.214",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=3000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "3ea6b8e8-c797-5a2b-9820-302c58f1483c"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e8s_v7",
+        "arm_sku_name": "Standard_E8s_v7",
+        "hourly_rate": "1.075",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "1.075",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=10000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "d4152475-f367-55ea-b832-4502c0e8a630"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e96ds_v7",
+        "arm_sku_name": "Standard_E96ds_v7",
+        "hourly_rate": "14.571",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "14.571",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=5000",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "64ec63f3-26c8-565c-b830-40688da7628f"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|windows|payg|standard_e96s_v7",
+        "arm_sku_name": "Standard_E96s_v7",
+        "hourly_rate": "12.898",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "12.898",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=10000",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "cb8430a6-fff4-5a4e-ad44-b8bf7621f423"
+          ]
+        }
+      }
+    ],
+    "managed_disk_rates": [
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p10|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P10",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "21.68",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "21.68",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "4212a427-f430-5352-b903-3f9c70d4bc46"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p15|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P15",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "41.811428",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "41.811428",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "b342482d-fa1e-56d4-ba54-9c1380e2b7d7"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p1|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P1",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "0.78",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "0.78",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "0cc9bdc6-1b4d-501d-b50e-c9127ddb01b5"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p20|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P20",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "80.54",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "80.54",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "249b036a-fba1-5654-8eaa-7fd4d9970dfb"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p2|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P2",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "1.56",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "1.56",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "2b70aa61-5bca-58dc-8cde-f1344d2942d6"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p30|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P30",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "148.68",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "148.68",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "41182d7d-dc20-5505-bf1d-2dfade7ac176"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p3|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P3",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "3.12",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "3.12",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "9d35cd64-9dfe-561c-923f-da1d29140325"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p40|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P40",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "284.9371",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "284.9371",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "23d53c16-c6a1-5dd6-83e1-b4373914afe8"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p4|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P4",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "5.8072",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "5.8072",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "739a9a9c-bcb1-54fe-b44f-e8773d6f1e41"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p50|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P50",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "545.0971",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "545.0971",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "f51b46c4-7eb9-5458-90b0-e235e5bf9cc5"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p60|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P60",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "1040.64",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "1040.64",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "630b7d1a-04c1-5b54-bdc0-b34efd75fc6e"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p6|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P6",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "11.2272",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "11.2272",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "a65c7333-db6c-5d6e-bbc8-466836c97782"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p70|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P70",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "1982.17",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "1982.17",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "56e6c10b-976a-5500-b8a3-4ab983d28887"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_lrs|p80|capacity_tier",
+        "offer_key": "premium_ssd_lrs",
+        "tier_key": "P80",
+        "dimension": "capacity_tier",
+        "normalized_monthly_rate": "3964.34",
+        "unit_of_measure": "1/Month",
+        "raw_price_lexeme": "3964.34",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2021-06-08T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "547d427d-66a7-5a6c-bb7e-7f43ff38a82d"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_v2_lrs|additional_iops",
+        "offer_key": "premium_ssd_v2_lrs",
+        "tier_key": null,
+        "dimension": "additional_iops",
+        "normalized_monthly_rate": "0.005110",
+        "unit_of_measure": "1/Hour",
+        "raw_price_lexeme": "7e-6",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2023-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "68757f9c-22d1-588f-bfdc-ef5fb918f37a"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_v2_lrs|additional_throughput",
+        "offer_key": "premium_ssd_v2_lrs",
+        "tier_key": null,
+        "dimension": "additional_throughput",
+        "normalized_monthly_rate": "0.040150",
+        "unit_of_measure": "1/Hour",
+        "raw_price_lexeme": "0.000055",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2023-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "52f9d19c-856c-5288-a895-370833e3dc8d"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|premium_ssd_v2_lrs|capacity_gb",
+        "offer_key": "premium_ssd_v2_lrs",
+        "tier_key": null,
+        "dimension": "capacity_gb",
+        "normalized_monthly_rate": "0.08030",
+        "unit_of_measure": "1 GiB/Hour",
+        "raw_price_lexeme": "0.00011",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Storage%27+and+armRegionName+eq+%27swedencentral%27+and+%28productName+eq+%27Premium+SSD+Managed+Disks%27+or+productName+eq+%27Azure+Premium+SSD+v2%27%29",
+          "effective_at": "2023-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "82ded06e-ea43-54b2-bea5-47178cfcba6b"
           ]
         }
       }

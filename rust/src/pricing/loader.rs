@@ -6,7 +6,10 @@ use std::{
 use serde::{Deserialize, de::IgnoredAny};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::calculation::target_selector::CapabilityCatalog;
+use crate::calculation::{
+    target_selector::CapabilityCatalog,
+    vm_target_selector::{ManagedDiskCatalog, VmCapabilityCatalog},
+};
 use crate::pricing::{
     aws_ebs::{
         EbsMeterMapPayload, EbsNormalization, EbsNormalizationContext, EbsNormalizationError,
@@ -24,11 +27,17 @@ use crate::pricing::{
         AzureMiConfiguration, AzureRetailPagePayload, AzureSqlMiNormalization,
         AzureSqlMiNormalizationContext, AzureSqlMiNormalizationError, normalize_azure_sql_mi,
     },
-    http::{PricingHttpClient, PricingSource},
+    azure_vm::{
+        AzureVmPricingContext, AzureVmPricingNormalization, AzureVmPricingNormalizationError,
+        AzureVmRetailPagePayload, normalize_azure_vm_pricing,
+    },
+    http::{HttpPayload, PricingHttpClient, PricingSource},
     live::{
         AZURE_RETAIL_MAX_PAGES, AwsRegionScope, PARSER_SCHEMA_VERSION, aws_region_index_url,
-        aws_region_offer_url, aws_region_scope, azure_calculator_url, azure_region_scope,
-        azure_retail_continuation_url, azure_retail_url, ebs_meter_map_url, ec2_leaf_url,
+        aws_region_offer_url, aws_region_scope, azure_calculator_url,
+        azure_managed_disk_retail_continuation_url, azure_managed_disk_retail_url,
+        azure_region_scope, azure_retail_continuation_url, azure_retail_url,
+        azure_vm_retail_continuation_url, azure_vm_retail_url, ebs_meter_map_url, ec2_leaf_url,
         ec2_metadata_url, ec2_selector_url,
     },
     provider::{ProviderError, ResolutionStatus},
@@ -40,6 +49,9 @@ use crate::pricing::{
 
 const AZURE_RETAIL_PAGE_SIZE: usize = 1_000;
 const EC2_SOFTWARE_BRANCHES: [&str; 3] = ["NA", "SQL Std", "SQL Ent"];
+
+type AzureRetailContinuation =
+    fn(crate::pricing::live::AzureRegionScope, &str, &str) -> Result<reqwest::Url, ProviderError>;
 
 #[derive(Deserialize)]
 struct Ec2Metadata {
@@ -361,22 +373,10 @@ impl LivePricingLoader {
 
         let calculator_url = azure_calculator_url()?;
         let retail_url = azure_retail_url(scope, "USD")?;
-        let (calculator, first_retail_page) = tokio::try_join!(
+        let (calculator, retail_pages) = tokio::try_join!(
             self.source.fetch(&calculator_url),
-            self.source.fetch(&retail_url),
+            self.load_azure_retail_pages(retail_url, scope, azure_retail_continuation_url,),
         )?;
-
-        let mut next_url = project_azure_retail_page(&first_retail_page.body, scope, "USD")?;
-        let mut seen_urls = BTreeSet::from([retail_url.to_string()]);
-        let mut retail_pages = vec![first_retail_page];
-        while let Some(url) = next_url {
-            if retail_pages.len() >= AZURE_RETAIL_MAX_PAGES || !seen_urls.insert(url.to_string()) {
-                return Err(ProviderError::SchemaChanged);
-            }
-            let page = self.source.fetch(&url).await?;
-            next_url = project_azure_retail_page(&page.body, scope, "USD")?;
-            retail_pages.push(page);
-        }
 
         let retail_payloads = retail_pages
             .iter()
@@ -405,22 +405,109 @@ impl LivePricingLoader {
         Ok(normalized)
     }
 
+    pub async fn load_azure_vm(
+        &self,
+        target_region: &str,
+        vm_capabilities: &VmCapabilityCatalog,
+        disk_capabilities: &ManagedDiskCatalog,
+    ) -> Result<AzureVmPricingNormalization, ProviderError> {
+        let scope = azure_region_scope(target_region)?;
+        let vm_url = azure_vm_retail_url(scope, "USD")?;
+        let disk_url = azure_managed_disk_retail_url(scope, "USD")?;
+        let (vm_pages, disk_pages) = tokio::try_join!(
+            self.load_azure_retail_pages(vm_url, scope, azure_vm_retail_continuation_url),
+            self.load_azure_retail_pages(
+                disk_url,
+                scope,
+                azure_managed_disk_retail_continuation_url,
+            ),
+        )?;
+        let retail_payloads = vm_pages
+            .iter()
+            .chain(disk_pages.iter())
+            .map(|page| AzureVmRetailPagePayload {
+                source_url: &page.source_url,
+                body: &page.body,
+            })
+            .collect::<Vec<_>>();
+        normalize_azure_vm_pricing(
+            AzureVmPricingContext {
+                target_region: scope.arm_name,
+                currency: "USD",
+            },
+            vm_capabilities,
+            disk_capabilities,
+            &retail_payloads,
+        )
+        .map_err(map_azure_vm_error)
+    }
+
+    async fn load_azure_retail_pages(
+        &self,
+        initial_url: reqwest::Url,
+        scope: crate::pricing::live::AzureRegionScope,
+        continuation: AzureRetailContinuation,
+    ) -> Result<Vec<HttpPayload>, ProviderError> {
+        let first_page = self.source.fetch(&initial_url).await?;
+        let mut next_url = project_azure_retail_page(&first_page.body, scope, "USD", continuation)?;
+        let mut seen_urls = BTreeSet::from([initial_url.to_string()]);
+        let mut pages = vec![first_page];
+        while let Some(url) = next_url {
+            if pages.len() >= AZURE_RETAIL_MAX_PAGES || !seen_urls.insert(url.to_string()) {
+                return Err(ProviderError::SchemaChanged);
+            }
+            let page = self.source.fetch(&url).await?;
+            next_url = project_azure_retail_page(&page.body, scope, "USD", continuation)?;
+            pages.push(page);
+        }
+        Ok(pages)
+    }
+
     pub async fn load_azure_snapshot(
         &self,
         target_region: &str,
         capabilities: &CapabilityCatalog,
+        vm_capabilities: &VmCapabilityCatalog,
+        disk_capabilities: &ManagedDiskCatalog,
     ) -> Result<AzurePriceSnapshot, ProviderError> {
-        let normalized = self.load_azure_sql_mi(target_region, capabilities).await?;
-        let (_, source_published_at) =
-            snapshot_sources(normalized.records.iter().map(|record| &record.provenance));
-        AzurePriceSnapshot::create(
-            live_snapshot_metadata(
-                normalized.warnings,
-                normalized.source_urls,
-                source_published_at,
-            )?,
+        let (normalized, vm_normalized) = tokio::try_join!(
+            self.load_azure_sql_mi(target_region, capabilities),
+            self.load_azure_vm(target_region, vm_capabilities, disk_capabilities),
+        )?;
+        let (_, source_published_at) = snapshot_sources(
+            normalized
+                .records
+                .iter()
+                .map(|record| &record.provenance)
+                .chain(
+                    vm_normalized
+                        .vm_records
+                        .iter()
+                        .map(|record| &record.provenance),
+                )
+                .chain(
+                    vm_normalized
+                        .managed_disk_records
+                        .iter()
+                        .map(|record| &record.provenance),
+                ),
+        );
+        let source_urls = normalized
+            .source_urls
+            .into_iter()
+            .chain(vm_normalized.source_urls)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut warnings = normalized.warnings;
+        warnings.extend(vm_normalized.warnings);
+        warnings.sort();
+        AzurePriceSnapshot::create_with_vm_rates(
+            live_snapshot_metadata(warnings, source_urls, source_published_at)?,
             target_region,
             normalized.records,
+            vm_normalized.vm_records,
+            vm_normalized.managed_disk_records,
         )
         .map_err(map_snapshot_error)
     }
@@ -493,6 +580,7 @@ fn project_azure_retail_page(
     body: &[u8],
     scope: crate::pricing::live::AzureRegionScope,
     currency: &str,
+    continuation: AzureRetailContinuation,
 ) -> Result<Option<reqwest::Url>, ProviderError> {
     let page: AzureRetailPageEnvelope =
         serde_json::from_slice(body).map_err(|_| ProviderError::SchemaChanged)?;
@@ -505,7 +593,7 @@ fn project_azure_retail_page(
     match page.next_page_link {
         serde_json::Value::Null => Ok(None),
         serde_json::Value::String(next_page_link) if page.count > 0 => {
-            azure_retail_continuation_url(scope, currency, &next_page_link)
+            continuation(scope, currency, &next_page_link)
                 .map(Some)
                 .map_err(|_| ProviderError::SchemaChanged)
         }
@@ -687,6 +775,20 @@ fn map_azure_sql_mi_error(error: AzureSqlMiNormalizationError) -> ProviderError 
         | AzureSqlMiNormalizationError::MissingOffer
         | AzureSqlMiNormalizationError::InvalidValue
         | AzureSqlMiNormalizationError::ConflictingRetailRate => ProviderError::SchemaChanged,
+    }
+}
+
+fn map_azure_vm_error(error: AzureVmPricingNormalizationError) -> ProviderError {
+    match error {
+        AzureVmPricingNormalizationError::InvalidScope => ProviderError::Unsupported,
+        AzureVmPricingNormalizationError::MissingManagedDiskRate
+        | AzureVmPricingNormalizationError::MissingVmRates => ProviderError::NotFound,
+        AzureVmPricingNormalizationError::MalformedJson
+        | AzureVmPricingNormalizationError::InvalidValue
+        | AzureVmPricingNormalizationError::ConflictingVmRate
+        | AzureVmPricingNormalizationError::ConflictingManagedDiskRate => {
+            ProviderError::SchemaChanged
+        }
     }
 }
 
@@ -914,6 +1016,7 @@ mod tests {
             next_url,
             azure_retail_page(vec![azure_memory_item()], None),
         );
+        insert_azure_vm_price_payloads(&mut payloads, scope);
         let loader = LivePricingLoader::with_source(Arc::new(RecordedSource { payloads }));
 
         let normalized = loader
@@ -937,16 +1040,110 @@ mod tests {
         );
 
         let snapshot = loader
-            .load_azure_snapshot("swedencentral", &azure_capabilities())
+            .load_azure_snapshot(
+                "swedencentral",
+                &azure_capabilities(),
+                &azure_vm_capabilities(),
+                &azure_managed_disk_capabilities(),
+            )
             .await
-            .expect("create Azure SQL MI snapshot");
+            .expect("create coherent Azure snapshot");
         assert_eq!(snapshot.metadata.status, ResolutionStatus::Fresh);
         assert_eq!(
             snapshot.metadata.parser_schema_version,
             PARSER_SCHEMA_VERSION
         );
-        assert_eq!(snapshot.metadata.source_urls.len(), 3);
+        assert_eq!(snapshot.metadata.source_urls.len(), 5);
         assert_eq!(snapshot.mi_rates.len(), 8);
+        assert_eq!(snapshot.vm_rates.len(), 1);
+        assert_eq!(snapshot.managed_disk_rates.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn loads_azure_vm_and_managed_disk_prices_without_network() {
+        let scope = azure_region_scope("swedencentral").expect("Azure scope");
+        let vm_url = azure_vm_retail_url(scope, "USD").expect("VM Retail Prices URL");
+        let disk_url = azure_managed_disk_retail_url(scope, "USD").expect("disk Retail Prices URL");
+        let mut payloads = BTreeMap::new();
+        insert_payload(
+            &mut payloads,
+            vm_url,
+            azure_retail_page(vec![azure_vm_price_item()], None),
+        );
+        insert_payload(
+            &mut payloads,
+            disk_url,
+            azure_retail_page(
+                vec![
+                    azure_disk_price_item(
+                        "Premium SSD Managed Disks",
+                        "P30 LRS",
+                        "P30 LRS Disk",
+                        "1/Month",
+                        "0",
+                        "148.68",
+                    ),
+                    azure_disk_price_item(
+                        "Azure Premium SSD v2",
+                        "Premium LRS",
+                        "Premium LRS Provisioned Capacity",
+                        "1 GiB/Hour",
+                        "0",
+                        "0.000110",
+                    ),
+                    azure_disk_price_item(
+                        "Azure Premium SSD v2",
+                        "Premium LRS",
+                        "Premium LRS Provisioned IOPS",
+                        "1/Hour",
+                        "0",
+                        "0",
+                    ),
+                    azure_disk_price_item(
+                        "Azure Premium SSD v2",
+                        "Premium LRS",
+                        "Premium LRS Provisioned IOPS",
+                        "1/Hour",
+                        "3000",
+                        "0.000007",
+                    ),
+                    azure_disk_price_item(
+                        "Azure Premium SSD v2",
+                        "Premium LRS",
+                        "Premium LRS Provisioned Throughput (MBps)",
+                        "1/Hour",
+                        "0",
+                        "0",
+                    ),
+                    azure_disk_price_item(
+                        "Azure Premium SSD v2",
+                        "Premium LRS",
+                        "Premium LRS Provisioned Throughput (MBps)",
+                        "1/Hour",
+                        "125",
+                        "0.000055",
+                    ),
+                ],
+                None,
+            ),
+        );
+        let loader = LivePricingLoader::with_source(Arc::new(RecordedSource { payloads }));
+
+        let normalized = loader
+            .load_azure_vm(
+                "swedencentral",
+                &azure_vm_capabilities(),
+                &azure_managed_disk_capabilities(),
+            )
+            .await
+            .expect("load Azure VM and managed-disk prices");
+
+        assert_eq!(normalized.vm_records.len(), 1);
+        assert_eq!(normalized.vm_records[0].arm_sku_name, "Standard_D2s_v7");
+        assert_eq!(normalized.vm_records[0].hourly_rate.to_string(), "0.227");
+        assert_eq!(normalized.managed_disk_records.len(), 4);
+        assert_eq!(normalized.source_urls.len(), 2);
+        assert!(normalized.warnings.is_empty());
     }
 
     #[tokio::test]
@@ -1008,7 +1205,12 @@ mod tests {
         }))
         .expect("serialize malformed count page");
         assert_eq!(
-            project_azure_retail_page(&malformed_count, scope, "USD"),
+            project_azure_retail_page(
+                &malformed_count,
+                scope,
+                "USD",
+                azure_retail_continuation_url,
+            ),
             Err(ProviderError::SchemaChanged)
         );
 
@@ -1019,7 +1221,7 @@ mod tests {
             ),
         );
         assert_eq!(
-            project_azure_retail_page(&scope_drift, scope, "USD"),
+            project_azure_retail_page(&scope_drift, scope, "USD", azure_retail_continuation_url,),
             Err(ProviderError::SchemaChanged)
         );
     }
@@ -1060,6 +1262,74 @@ mod tests {
                 effective_at: None,
                 body,
             },
+        );
+    }
+
+    fn insert_azure_vm_price_payloads(
+        payloads: &mut BTreeMap<String, HttpPayload>,
+        scope: crate::pricing::live::AzureRegionScope,
+    ) {
+        insert_payload(
+            payloads,
+            azure_vm_retail_url(scope, "USD").expect("VM Retail Prices URL"),
+            azure_retail_page(vec![azure_vm_price_item()], None),
+        );
+        insert_payload(
+            payloads,
+            azure_managed_disk_retail_url(scope, "USD").expect("managed-disk Retail Prices URL"),
+            azure_retail_page(
+                vec![
+                    azure_disk_price_item(
+                        "Premium SSD Managed Disks",
+                        "P30 LRS",
+                        "P30 LRS Disk",
+                        "1/Month",
+                        "0",
+                        "148.68",
+                    ),
+                    azure_disk_price_item(
+                        "Azure Premium SSD v2",
+                        "Premium LRS",
+                        "Premium LRS Provisioned Capacity",
+                        "1 GiB/Hour",
+                        "0",
+                        "0.000110",
+                    ),
+                    azure_disk_price_item(
+                        "Azure Premium SSD v2",
+                        "Premium LRS",
+                        "Premium LRS Provisioned IOPS",
+                        "1/Hour",
+                        "0",
+                        "0",
+                    ),
+                    azure_disk_price_item(
+                        "Azure Premium SSD v2",
+                        "Premium LRS",
+                        "Premium LRS Provisioned IOPS",
+                        "1/Hour",
+                        "3000",
+                        "0.000007",
+                    ),
+                    azure_disk_price_item(
+                        "Azure Premium SSD v2",
+                        "Premium LRS",
+                        "Premium LRS Provisioned Throughput (MBps)",
+                        "1/Hour",
+                        "0",
+                        "0",
+                    ),
+                    azure_disk_price_item(
+                        "Azure Premium SSD v2",
+                        "Premium LRS",
+                        "Premium LRS Provisioned Throughput (MBps)",
+                        "1/Hour",
+                        "125",
+                        "0.000055",
+                    ),
+                ],
+                None,
+            ),
         );
     }
 
@@ -1300,6 +1570,129 @@ mod tests {
             }]
         }))
         .expect("deserialize Azure capability fixture")
+    }
+
+    fn azure_vm_capabilities() -> VmCapabilityCatalog {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": "1",
+            "candidates": [{
+                "arm_sku_name": "Standard_D2s_v7",
+                "display_family": "Dsv7",
+                "lineage": "general_purpose",
+                "generation": "v7",
+                "generation_rank": 7,
+                "lifecycle": "current",
+                "azure_region": "swedencentral",
+                "cpu_architecture": "x64",
+                "windows_eligible": true,
+                "vcpus": 2,
+                "memory_gb": "8",
+                "max_data_disk_count": 4,
+                "premium_io": true,
+                "uncached_disk_iops": 10000,
+                "uncached_disk_throughput_mbps": 200,
+                "local_temp_disk_gb": null,
+                "source_url": "https://learn.microsoft.com/azure/virtual-machines/",
+                "documentation_url": "https://learn.microsoft.com/azure/virtual-machines/",
+                "reviewed_date": "2026-08-24"
+            }]
+        }))
+        .expect("deserialize Azure VM capability fixture")
+    }
+
+    fn azure_managed_disk_capabilities() -> ManagedDiskCatalog {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": "1",
+            "offers": [
+                {
+                    "offer_key": "premium_ssd_lrs",
+                    "display_name": "Premium SSD LRS",
+                    "redundancy": "LRS",
+                    "allowed_roles": ["os", "data"],
+                    "performance_is_provisioned_independently": false,
+                    "azure_regions": ["swedencentral"],
+                    "included_iops": null,
+                    "included_throughput_mbps": null,
+                    "maximum_iops": 20000,
+                    "maximum_throughput_mbps": 900,
+                    "capacity_increment_gb": null,
+                    "minimum_capacity_gb": null,
+                    "maximum_capacity_gb": "32768",
+                    "tiers": [{
+                        "tier_key": "P30",
+                        "capacity_gb": "1024",
+                        "provisioned_iops": 5000,
+                        "provisioned_throughput_mbps": "200"
+                    }],
+                    "source_url": "https://learn.microsoft.com/azure/virtual-machines/disks-types",
+                    "reviewed_date": "2026-08-24"
+                },
+                {
+                    "offer_key": "premium_ssd_v2_lrs",
+                    "display_name": "Premium SSD v2 LRS",
+                    "redundancy": "LRS",
+                    "allowed_roles": ["data"],
+                    "performance_is_provisioned_independently": true,
+                    "azure_regions": ["swedencentral"],
+                    "included_iops": 3000,
+                    "included_throughput_mbps": "125",
+                    "maximum_iops": 80000,
+                    "maximum_throughput_mbps": 1200,
+                    "capacity_increment_gb": "1",
+                    "minimum_capacity_gb": "1",
+                    "maximum_capacity_gb": "65536",
+                    "tiers": [],
+                    "source_url": "https://learn.microsoft.com/azure/virtual-machines/disks-types",
+                    "reviewed_date": "2026-08-24"
+                }
+            ]
+        }))
+        .expect("deserialize managed-disk capability fixture")
+    }
+
+    fn azure_vm_price_item() -> serde_json::Value {
+        serde_json::json!({
+            "serviceName": "Virtual Machines",
+            "armRegionName": "swedencentral",
+            "currencyCode": "USD",
+            "armSkuName": "Standard_D2s_v7",
+            "productName": "Virtual Machines Dsv7-series Windows",
+            "skuName": "D2s v7",
+            "meterName": "D2s v7",
+            "unitOfMeasure": "1 Hour",
+            "type": "Consumption",
+            "retailPrice": "0.227",
+            "tierMinimumUnits": "0",
+            "effectiveStartDate": "2026-04-01T00:00:00Z",
+            "meterId": "vm-meter",
+            "isPrimaryMeterRegion": true
+        })
+    }
+
+    fn azure_disk_price_item(
+        product: &str,
+        sku: &str,
+        meter: &str,
+        unit: &str,
+        tier_minimum: &str,
+        price: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "serviceName": "Storage",
+            "armRegionName": "swedencentral",
+            "currencyCode": "USD",
+            "armSkuName": "",
+            "productName": product,
+            "skuName": sku,
+            "meterName": meter,
+            "unitOfMeasure": unit,
+            "type": "Consumption",
+            "retailPrice": price,
+            "tierMinimumUnits": tier_minimum,
+            "effectiveStartDate": "2026-04-01T00:00:00Z",
+            "meterId": format!("disk-{meter}-{tier_minimum}"),
+            "isPrimaryMeterRegion": true
+        })
     }
 
     fn azure_calculator_payload() -> Vec<u8> {

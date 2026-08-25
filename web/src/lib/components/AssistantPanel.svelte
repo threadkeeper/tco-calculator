@@ -402,6 +402,8 @@
     switch (projectType) {
       case 'ec2':
         return 'AWS EC2';
+      case 'ec2_vm':
+        return 'AWS EC2 Windows VM';
       case 'rds':
         return 'AWS RDS';
       case 'on_prem':

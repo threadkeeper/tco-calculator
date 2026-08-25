@@ -42,8 +42,14 @@
     )
   );
   const warnings = $derived(relevantCalculationWarnings(revision?.warnings));
+  const isVmProject = $derived(
+    resources.length > 0 && resources.every((resource) => resource.source_type === 'ec2_vm')
+  );
   const hasCommittedPlans = $derived(
-    resources.some((resource) => hasMiCommitment(resource.mi_purchase_option))
+    resources.some(
+      (resource) =>
+        resource.source_type !== 'ec2_vm' && hasMiCommitment(resource.mi_purchase_option)
+    )
   );
 
   function sourceResource(result: JsonRecord): ResourceDraft | undefined {
@@ -89,6 +95,7 @@
     resource: ResourceDraft,
     discounts: PurchaseOptionDiscounts
   ): string {
+    if (resource.source_type === 'ec2_vm') return '';
     const option = miPurchaseOptionParts(resource.mi_purchase_option);
     const labels = [
       `${formatAppliedDiscount(commitmentDiscount(option.commitment, discounts))} compute discount`
@@ -101,6 +108,20 @@
 
   function label(value: string | null): string {
     return value ? value.replaceAll('_', ' ') : 'unavailable';
+  }
+
+  function recommendationLabel(value: string | null): string {
+    if (value === 'recommended') return 'Recommended';
+    if (value === 'capacity_fit_review_required') return 'Review required';
+    if (value === 'incomplete') return 'Input incomplete';
+    if (value === 'no_eligible_target') return 'No eligible target';
+    return 'Status unavailable';
+  }
+
+  function targetHeading(value: string | null): string {
+    if (value === 'capacity_fit_review_required') return 'Capacity-fit target';
+    if (value === 'incomplete') return 'Target pending inputs';
+    return 'Recommended target';
   }
 
   function excludedPriceMessage(): string {
@@ -141,12 +162,14 @@
       {/if}
     </div>
     <div class="total-block azure">
-      <span>Azure SQL MI</span>
+      <span>{isVmProject ? 'Azure VM' : 'Azure SQL MI'}</span>
       <strong class:unavailable={targetOutcome !== 'available'}
         >{targetTotal(azurePortfolioTotal)}</strong
       >
       {#if targetOutcome === 'no_mapping'}
-        <small class="metric-error">No workload fits an approved Azure SQL MI target.</small>
+        <small class="metric-error"
+          >No workload fits an approved {isVmProject ? 'Azure VM' : 'Azure SQL MI'} target.</small
+        >
       {:else if priceUnavailableResourceCount > 0}
         <small class="metric-error">{excludedPriceMessage()}</small>
       {:else}
@@ -203,10 +226,16 @@
       {@const discounts = purchaseOptionDiscounts(result)}
       {@const azureCosts = readRecord(result, 'azure_costs')}
       {@const savings = readRecord(result, 'savings')}
-      {@const targetSelection = readRecord(result, 'target_selection')}
+      {@const targetSelection =
+        readRecord(result, 'vm_target_selection') ?? readRecord(result, 'target_selection')}
       {@const selected = readRecord(targetSelection, 'selected')}
+      {@const selectedDisks = readRecords(selected, 'disks')}
       {@const unresolved = readRecords(result, 'unresolved_components')}
       {@const reasons = readRecords(targetSelection, 'outcome_reasons')}
+      {@const recommendationStatus =
+        resource?.source_type === 'ec2_vm'
+          ? readString(targetSelection, 'recommendation_status')
+          : null}
       {@const steps = readRecords(result, 'explanation_steps')}
       {@const awsUnavailable = readString(result, 'aws_pricing_status') === 'unavailable'}
       {@const azureUnavailable = readString(result, 'azure_pricing_status') === 'unavailable'}
@@ -231,6 +260,19 @@
                 />{:else}<CircleHelp size={14} />{/if}
               {label(readString(result, 'mapping_status'))}
             </span>
+            {#if recommendationStatus}
+              <span
+                class="recommendation-status"
+                class:ok={recommendationStatus === 'recommended'}
+                class:review={recommendationStatus === 'capacity_fit_review_required' ||
+                  recommendationStatus === 'incomplete'}
+              >
+                {#if recommendationStatus === 'recommended'}<CheckCircle2
+                    size={14}
+                  />{:else}<AlertTriangle size={14} />{/if}
+                {recommendationLabel(recommendationStatus)}
+              </span>
+            {/if}
             <span class="price-status" class:unavailable={awsUnavailable}
               >AWS {label(readString(result, 'aws_pricing_status'))}</span
             >
@@ -252,11 +294,11 @@
             <span>Azure annual</span><strong class:unavailable={azureUnavailable}
               >{noMapping ? 'NO MAPPING' : formatMoney(azureAnnual)}</strong
             >
-            {#if resource}<small class="pricing-plan"
+            {#if resource && resource.source_type !== 'ec2_vm'}<small class="pricing-plan"
                 >{miPurchaseOptionLabel(resource.mi_purchase_option)}</small
               >{/if}
-            {#if resource && discounts}<small class="applied-discount"
-                >{appliedDiscountLabel(resource, discounts)}</small
+            {#if resource && resource.source_type !== 'ec2_vm' && discounts}<small
+                class="applied-discount">{appliedDiscountLabel(resource, discounts)}</small
               >{/if}
             {#if azureUnavailable}<small class="metric-error">Azure price is unavailable.</small
               >{/if}
@@ -274,29 +316,45 @@
         {#if selected}
           <div class="target-strip">
             <div>
-              <span>Recommended target</span><strong
-                >{label(readString(selected, 'service_tier'))}</strong
+              <span>{targetHeading(recommendationStatus)}</span><strong
+                >{readString(selected, 'arm_sku_name') ??
+                  label(readString(selected, 'service_tier'))}</strong
               >
             </div>
-            <div><span>vCores</span><strong>{readNumber(selected, 'vcores')}</strong></div>
+            <div>
+              <span>{resource?.source_type === 'ec2_vm' ? 'vCPU' : 'vCores'}</span><strong
+                >{readNumber(selected, 'vcpus') ?? readNumber(selected, 'vcores')}</strong
+              >
+            </div>
             <div>
               <span>Selected memory</span><strong
-                >{readString(selected, 'selected_memory_gb')} GiB</strong
+                >{readString(selected, 'memory_gb') ?? readString(selected, 'selected_memory_gb')} GiB</strong
               >
             </div>
-            <div>
-              <span>Additional memory</span><strong
-                >{readString(selected, 'additional_memory_gb')} GiB</strong
-              >
-            </div>
-            <div>
-              <span>Hardware</span><strong>{readString(selected, 'hardware_family')}</strong>
-            </div>
+            {#if resource?.source_type === 'ec2_vm'}
+              <div><span>Managed disks</span><strong>{selectedDisks.length}</strong></div>
+              <div>
+                <span>Family</span><strong>{readString(selected, 'display_family')}</strong>
+              </div>
+            {:else}
+              <div>
+                <span>Additional memory</span><strong
+                  >{readString(selected, 'additional_memory_gb')} GiB</strong
+                >
+              </div>
+              <div>
+                <span>Hardware</span><strong>{readString(selected, 'hardware_family')}</strong>
+              </div>
+            {/if}
           </div>
         {:else if noMapping}
           <div class="target-strip">
-            <div><span>Recommended target</span><strong>NO MAPPING</strong></div>
-            <div><span>vCores</span><strong>NO MAPPING</strong></div>
+            <div><span>{targetHeading(recommendationStatus)}</span><strong>NO MAPPING</strong></div>
+            <div>
+              <span>{resource?.source_type === 'ec2_vm' ? 'vCPU' : 'vCores'}</span><strong
+                >NO MAPPING</strong
+              >
+            </div>
             <div><span>Selected memory</span><strong>NO MAPPING</strong></div>
             <div><span>Additional memory</span><strong>NO MAPPING</strong></div>
             <div><span>Hardware</span><strong>NO MAPPING</strong></div>
@@ -304,7 +362,12 @@
         {/if}
 
         {#if unresolved.length > 0 || reasons.length > 0}
-          <div class="issues" role="alert">
+          <div
+            class="issues"
+            class:review={recommendationStatus === 'capacity_fit_review_required' ||
+              recommendationStatus === 'incomplete'}
+            role="alert"
+          >
             {#each unresolved as item, index (index)}<p>
                 <AlertTriangle size={15} />
                 {readString(item, 'message')}
@@ -504,6 +567,7 @@
     gap: 6px;
   }
   .status,
+  .recommendation-status,
   .price-status {
     display: inline-flex;
     align-items: center;
@@ -521,6 +585,16 @@
     color: var(--success);
     background: var(--success-surface);
     border-color: var(--success-border);
+  }
+  .recommendation-status.ok {
+    color: var(--success);
+    background: var(--success-surface);
+    border-color: var(--success-border);
+  }
+  .recommendation-status.review {
+    color: var(--warning-text);
+    background: var(--warning-surface);
+    border-color: var(--warning-border);
   }
   .price-status {
     color: var(--ink-soft);
@@ -597,6 +671,11 @@
     gap: 7px;
     margin: 3px 0;
     font-size: 0.82rem;
+  }
+  .issues.review {
+    color: var(--warning-text);
+    background: var(--warning-surface);
+    border-bottom-color: var(--warning-border);
   }
   details {
     padding: 10px 15px 13px;

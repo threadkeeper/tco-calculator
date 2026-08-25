@@ -25,9 +25,9 @@ use crate::{
         decimal::DecimalValue,
         project::{EditableProject, ProjectSettings, SqlPaygSettings, ValidationIssue},
         resource::{
-            EbsVolume, EbsVolumeType, Ec2Resource, Ec2VmResource, LicenseBasis, OnPremResource,
-            ProjectType, PurchaseOption, RdsDeployment, RdsResource, Resource, SharedResource,
-            SqlEdition, SqlWorkload, VmDiskRole, VmVolume,
+            EbsVolume, EbsVolumeType, Ec2Resource, Ec2VmRequirements, Ec2VmResource, LicenseBasis,
+            OnPremResource, ProjectType, PurchaseOption, RdsDeployment, RdsResource, Resource,
+            SharedResource, SqlEdition, SqlWorkload, VmDiskRole, VmVolume,
         },
     },
     persistence::repository::RepositoryError,
@@ -1611,6 +1611,7 @@ fn new_resource(
             Resource::Ec2Vm(Ec2VmResource {
                 shared,
                 instance_type: ec2_instance_type.to_owned(),
+                requirements: Ec2VmRequirements::defaults_for(ec2_instance_type),
                 volumes,
             })
         }
@@ -1940,10 +1941,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        calculation::target_selector::CapabilityCatalog,
+        calculation::{
+            target_selector::CapabilityCatalog,
+            vm_target_selector::{ManagedDiskCatalog, VmCapabilityCatalog},
+        },
         config::{AppEnvironment, Config},
         pricing::{
-            coordinator::PricingCoordinator,
+            coordinator::{AzurePricingCatalogs, PricingCoordinator},
             local_fixture,
             repository::{
                 DurableSnapshotRepository, InMemorySnapshotRepository, SnapshotRepositoryError,
@@ -2373,10 +2377,24 @@ mod tests {
             })),
             None,
             None,
-            Arc::new(CapabilityCatalog {
-                schema_version: "test".to_owned(),
-                candidates: Vec::new(),
-            }),
+            AzurePricingCatalogs::new(
+                Arc::new(CapabilityCatalog {
+                    schema_version: "test".to_owned(),
+                    candidates: Vec::new(),
+                }),
+                Arc::new(
+                    serde_json::from_str::<VmCapabilityCatalog>(include_str!(
+                        "../../../app/catalogs/azure-vm-capabilities.json"
+                    ))
+                    .expect("embedded Azure VM capability catalog"),
+                ),
+                Arc::new(
+                    serde_json::from_str::<ManagedDiskCatalog>(include_str!(
+                        "../../../app/catalogs/azure-managed-disk-capabilities.json"
+                    ))
+                    .expect("embedded managed-disk capability catalog"),
+                ),
+            ),
         );
         assert!(
             state

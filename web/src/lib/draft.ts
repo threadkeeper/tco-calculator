@@ -1,4 +1,4 @@
-export type ProjectType = 'ec2' | 'rds' | 'on_prem' | 'sql_payg';
+export type ProjectType = 'ec2' | 'ec2_vm' | 'rds' | 'on_prem' | 'sql_payg';
 export type SqlEdition = 'standard' | 'enterprise';
 export type LicenseBasis = 'license_included' | 'byol';
 export type PurchaseOption =
@@ -64,11 +64,14 @@ type SharedResourceDraft = {
   workload_name: string;
   server_name: string | null;
   quantity: number;
+  source_ram_gb_per_instance: string;
+  annual_hours_per_instance: string;
+};
+
+type SharedSqlResourceDraft = SharedResourceDraft & {
   sql_edition: SqlEdition;
   license_basis: LicenseBasis;
   sql_data_gb_per_instance: string;
-  source_ram_gb_per_instance: string;
-  annual_hours_per_instance: string;
   mi_purchase_option: PurchaseOption;
 };
 
@@ -82,13 +85,41 @@ export type EbsVolumeDraft = {
   throughput_mibps: string | null;
 };
 
-export type Ec2ResourceDraft = SharedResourceDraft & {
+export type Ec2ResourceDraft = SharedSqlResourceDraft & {
   source_type: 'ec2';
   instance_type: string;
   volumes: EbsVolumeDraft[];
 };
 
-export type RdsResourceDraft = SharedResourceDraft & {
+export type VmVolumeDraft = Omit<EbsVolumeDraft, 'volume_type' | 'provisioned_iops'> & {
+  role: 'os' | 'data' | 'unknown';
+  volume_type: 'gp3' | 'io2';
+  provisioned_iops: number;
+};
+
+export type VmBurstPolicy =
+  'confirmed_burst_compatible' | 'requires_sustained_cpu' | 'unknown' | 'not_applicable';
+export type VmInstanceStoreUse = 'unknown' | 'not_used' | 'used';
+export type VmHighFrequencyRequirement =
+  'required' | 'unknown' | 'capacity_fit_accepted' | 'not_applicable';
+
+export type Ec2VmRequirementsDraft = {
+  burst_policy: VmBurstPolicy;
+  instance_store_use: VmInstanceStoreUse;
+  required_local_temp_disk_gb: string | null;
+  ephemeral_data_loss_acceptable: boolean | null;
+  high_frequency_requirement: VmHighFrequencyRequirement;
+  requested_target_arm_sku: string | null;
+};
+
+export type Ec2VmResourceDraft = SharedResourceDraft & {
+  source_type: 'ec2_vm';
+  instance_type: string;
+  requirements: Ec2VmRequirementsDraft;
+  volumes: VmVolumeDraft[];
+};
+
+export type RdsResourceDraft = SharedSqlResourceDraft & {
   source_type: 'rds';
   instance_type: string;
   deployment: 'single_az' | 'multi_az';
@@ -97,7 +128,7 @@ export type RdsResourceDraft = SharedResourceDraft & {
   source_max_iops: number;
 };
 
-export type OnPremResourceDraft = SharedResourceDraft & {
+export type OnPremResourceDraft = SharedSqlResourceDraft & {
   source_type: 'on_prem';
   source_vcpu: number;
   licensable_cores: number;
@@ -107,7 +138,8 @@ export type OnPremResourceDraft = SharedResourceDraft & {
   average_power_kw_override: string | null;
 };
 
-export type ResourceDraft = Ec2ResourceDraft | RdsResourceDraft | OnPremResourceDraft;
+export type ResourceDraft =
+  Ec2ResourceDraft | Ec2VmResourceDraft | RdsResourceDraft | OnPremResourceDraft;
 
 export type ProjectDraft = {
   name: string;
@@ -181,20 +213,45 @@ export function createResource(
 ): ResourceDraft {
   const shared: SharedResourceDraft = {
     id: crypto.randomUUID(),
-    workload_name: 'SQL workload',
+    workload_name: projectType === 'ec2_vm' ? 'Windows VM' : 'SQL workload',
     server_name: null,
     quantity: 1,
+    source_ram_gb_per_instance: projectType === 'rds' ? '128' : '256',
+    annual_hours_per_instance: defaults.default_annual_hours
+  };
+
+  if (projectType === 'ec2_vm') {
+    return {
+      ...shared,
+      source_type: 'ec2_vm',
+      instance_type: 'r6id.8xlarge',
+      requirements: createVmRequirements('r6id.8xlarge'),
+      volumes: [
+        {
+          id: crypto.randomUUID(),
+          label: 'OS',
+          aws_volume_id: null,
+          volume_type: 'gp3',
+          role: 'os',
+          capacity_gb: '1024',
+          provisioned_iops: 3000,
+          throughput_mibps: '125'
+        }
+      ]
+    };
+  }
+
+  const sqlShared: SharedSqlResourceDraft = {
+    ...shared,
     sql_edition: 'enterprise',
     license_basis: 'byol',
     sql_data_gb_per_instance: '1024',
-    source_ram_gb_per_instance: projectType === 'rds' ? '128' : '256',
-    annual_hours_per_instance: defaults.default_annual_hours,
     mi_purchase_option: defaults.default_mi_purchase_option
   };
 
   if (projectType === 'ec2') {
     return {
-      ...shared,
+      ...sqlShared,
       source_type: 'ec2',
       instance_type: 'r6id.8xlarge',
       volumes: [
@@ -212,7 +269,7 @@ export function createResource(
   }
   if (projectType === 'rds') {
     return {
-      ...shared,
+      ...sqlShared,
       source_type: 'rds',
       instance_type: 'db.m6i.8xlarge',
       deployment: 'single_az',
@@ -222,7 +279,7 @@ export function createResource(
     };
   }
   return {
-    ...shared,
+    ...sqlShared,
     source_type: 'on_prem',
     source_vcpu: 32,
     licensable_cores: 32,
@@ -230,6 +287,19 @@ export function createResource(
     hardware_capex_usd: '0',
     depreciation_years: '5',
     average_power_kw_override: null
+  };
+}
+
+export function createVmRequirements(instanceType: string): Ec2VmRequirementsDraft {
+  return {
+    burst_policy: instanceType.startsWith('t3.') ? 'confirmed_burst_compatible' : 'not_applicable',
+    instance_store_use: 'not_used',
+    required_local_temp_disk_gb: null,
+    ephemeral_data_loss_acceptable: null,
+    high_frequency_requirement: instanceType.startsWith('z1d.')
+      ? 'capacity_fit_accepted'
+      : 'not_applicable',
+    requested_target_arm_sku: null
   };
 }
 
@@ -309,12 +379,6 @@ export function projectRequestPayload(project: ProjectDraft): ProjectDraft {
       workload_name: resource.workload_name,
       server_name: optionalText(resource.server_name),
       quantity: requiredInteger(resource.quantity, `Workload ${index + 1} quantity`),
-      sql_edition: resource.sql_edition,
-      license_basis: resource.license_basis,
-      sql_data_gb_per_instance: requiredDecimal(
-        resource.sql_data_gb_per_instance,
-        `Workload ${index + 1} SQL data`
-      ),
       source_ram_gb_per_instance: requiredDecimal(
         resource.source_ram_gb_per_instance,
         `Workload ${index + 1} source RAM`
@@ -322,13 +386,50 @@ export function projectRequestPayload(project: ProjectDraft): ProjectDraft {
       annual_hours_per_instance: requiredDecimal(
         resource.annual_hours_per_instance,
         `Workload ${index + 1} annual hours`
+      )
+    };
+
+    if (resource.source_type === 'ec2_vm') {
+      return {
+        ...shared,
+        source_type: 'ec2_vm',
+        instance_type: resource.instance_type,
+        requirements: {
+          ...resource.requirements,
+          required_local_temp_disk_gb: optionalDecimal(
+            resource.requirements.required_local_temp_disk_gb
+          ),
+          requested_target_arm_sku: optionalText(resource.requirements.requested_target_arm_sku)
+        },
+        volumes: resource.volumes.map((volume, volumeIndex) => ({
+          ...volume,
+          capacity_gb: requiredDecimal(
+            volume.capacity_gb,
+            `Workload ${index + 1} volume ${volumeIndex + 1} capacity`
+          ),
+          provisioned_iops: requiredInteger(
+            volume.provisioned_iops,
+            `Workload ${index + 1} volume ${volumeIndex + 1} provisioned IOPS`
+          ),
+          throughput_mibps: optionalDecimal(volume.throughput_mibps)
+        }))
+      };
+    }
+
+    const sqlShared = {
+      ...shared,
+      sql_edition: resource.sql_edition,
+      license_basis: resource.license_basis,
+      sql_data_gb_per_instance: requiredDecimal(
+        resource.sql_data_gb_per_instance,
+        `Workload ${index + 1} SQL data`
       ),
       mi_purchase_option: resource.mi_purchase_option
     };
 
     if (resource.source_type === 'ec2') {
       return {
-        ...shared,
+        ...sqlShared,
         source_type: 'ec2',
         instance_type: resource.instance_type,
         volumes: resource.volumes.map((volume, volumeIndex) => ({
@@ -344,7 +445,7 @@ export function projectRequestPayload(project: ProjectDraft): ProjectDraft {
     }
     if (resource.source_type === 'rds') {
       return {
-        ...shared,
+        ...sqlShared,
         source_type: 'rds',
         instance_type: resource.instance_type,
         deployment: resource.deployment,
@@ -357,7 +458,7 @@ export function projectRequestPayload(project: ProjectDraft): ProjectDraft {
       };
     }
     return {
-      ...shared,
+      ...sqlShared,
       source_type: 'on_prem',
       source_vcpu: requiredInteger(resource.source_vcpu, `Workload ${index + 1} source vCPU`),
       licensable_cores: requiredInteger(
@@ -430,6 +531,7 @@ export function editableProject(value: unknown): ProjectDraft | null {
   const projectType = value.settings.project_type;
   if (
     projectType !== 'ec2' &&
+    projectType !== 'ec2_vm' &&
     projectType !== 'rds' &&
     projectType !== 'on_prem' &&
     projectType !== 'sql_payg'
@@ -439,6 +541,12 @@ export function editableProject(value: unknown): ProjectDraft | null {
   const resources = structuredClone(value.resources) as ResourceDraft[];
   for (const resource of resources) {
     resource.server_name = typeof resource.server_name === 'string' ? resource.server_name : null;
+    if (resource.source_type === 'ec2_vm') {
+      resource.requirements = editableVmRequirements(
+        Reflect.get(resource, 'requirements'),
+        resource.instance_type
+      );
+    }
   }
 
   return {
@@ -450,6 +558,39 @@ export function editableProject(value: unknown): ProjectDraft | null {
       typeof value.aws_price_snapshot_id === 'string' ? value.aws_price_snapshot_id : null,
     azure_price_snapshot_id:
       typeof value.azure_price_snapshot_id === 'string' ? value.azure_price_snapshot_id : null
+  };
+}
+
+function editableVmRequirements(value: unknown, instanceType: string): Ec2VmRequirementsDraft {
+  const defaults = createVmRequirements(instanceType);
+  if (!isRecord(value)) return defaults;
+  return {
+    burst_policy:
+      value.burst_policy === 'confirmed_burst_compatible' ||
+      value.burst_policy === 'requires_sustained_cpu' ||
+      value.burst_policy === 'unknown' ||
+      value.burst_policy === 'not_applicable'
+        ? value.burst_policy
+        : defaults.burst_policy,
+    instance_store_use:
+      value.instance_store_use === 'unknown' ||
+      value.instance_store_use === 'not_used' ||
+      value.instance_store_use === 'used'
+        ? value.instance_store_use
+        : defaults.instance_store_use,
+    required_local_temp_disk_gb: optionalDecimal(value.required_local_temp_disk_gb),
+    ephemeral_data_loss_acceptable:
+      typeof value.ephemeral_data_loss_acceptable === 'boolean'
+        ? value.ephemeral_data_loss_acceptable
+        : null,
+    high_frequency_requirement:
+      value.high_frequency_requirement === 'required' ||
+      value.high_frequency_requirement === 'unknown' ||
+      value.high_frequency_requirement === 'capacity_fit_accepted' ||
+      value.high_frequency_requirement === 'not_applicable'
+        ? value.high_frequency_requirement
+        : defaults.high_frequency_requirement,
+    requested_target_arm_sku: optionalText(value.requested_target_arm_sku)
   };
 }
 

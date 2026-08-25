@@ -167,6 +167,52 @@ describe('project drafts', () => {
     expect(editableProject(original)?.resources[0].server_name).toBeNull();
   });
 
+  it('hydrates legacy EC2 VM resources with source-aware semantic defaults', () => {
+    const original = createProjectDraft('ec2_vm', 'Legacy VM', null);
+    const resource = createResource('ec2_vm', original.settings);
+    Reflect.deleteProperty(resource, 'requirements');
+    original.resources.push(resource);
+
+    const editable = editableProject(original)?.resources[0];
+
+    expect(editable).toMatchObject({
+      source_type: 'ec2_vm',
+      requirements: {
+        burst_policy: 'not_applicable',
+        instance_store_use: 'not_used',
+        required_local_temp_disk_gb: null,
+        ephemeral_data_loss_acceptable: null,
+        high_frequency_requirement: 'not_applicable',
+        requested_target_arm_sku: null
+      }
+    });
+  });
+
+  it('normalizes EC2 VM semantic requirements and volume values for the API', () => {
+    const project = createProjectDraft('ec2_vm', 'VM contract', null);
+    const resource = createResource('ec2_vm', project.settings);
+    if (resource.source_type !== 'ec2_vm') throw new Error('Expected an EC2 VM resource.');
+    resource.requirements.instance_store_use = 'used';
+    Reflect.set(resource.requirements, 'required_local_temp_disk_gb', 600);
+    resource.requirements.ephemeral_data_loss_acceptable = true;
+    resource.requirements.requested_target_arm_sku = '  Standard_D8ds_v7  ';
+    Reflect.set(resource.volumes[0], 'capacity_gb', 1024);
+    project.resources.push(resource);
+
+    const payload = projectRequestPayload(project).resources[0];
+
+    expect(payload).toMatchObject({
+      source_type: 'ec2_vm',
+      requirements: {
+        instance_store_use: 'used',
+        required_local_temp_disk_gb: '600',
+        ephemeral_data_loss_acceptable: true,
+        requested_target_arm_sku: 'Standard_D8ds_v7'
+      },
+      volumes: [{ capacity_gb: '1024' }]
+    });
+  });
+
   it('preserves independent EC2 SQL data and EBS capacity in the API payload', () => {
     const project = createProjectDraft('ec2', 'Independent storage inputs', null);
     const resource = createResource('ec2', project.settings);
@@ -183,8 +229,8 @@ describe('project drafts', () => {
 
     const payloadResource = projectRequestPayload(project).resources[0];
 
-    expect(payloadResource.sql_data_gb_per_instance).toBe('1');
     if (payloadResource.source_type !== 'ec2') throw new Error('Expected an EC2 payload.');
+    expect(payloadResource.sql_data_gb_per_instance).toBe('1');
     expect(payloadResource.volumes[0].capacity_gb).toBe('600');
   });
 
@@ -280,6 +326,23 @@ describe('project drafts', () => {
 });
 
 describe('resource drafts', () => {
+  it('creates an EC2 VM with explicit semantic and OS-volume defaults', () => {
+    const project = createProjectDraft('ec2_vm', 'VM defaults', null);
+    const resource = createResource('ec2_vm', project.settings);
+
+    expect(resource).toMatchObject({
+      source_type: 'ec2_vm',
+      instance_type: 'r6id.8xlarge',
+      requirements: {
+        burst_policy: 'not_applicable',
+        instance_store_use: 'not_used',
+        high_frequency_requirement: 'not_applicable',
+        requested_target_arm_sku: null
+      },
+      volumes: [{ role: 'os', volume_type: 'gp3', provisioned_iops: 3000 }]
+    });
+  });
+
   it.each([
     ['ec2', 'r6id.8xlarge', '256'],
     ['rds', 'db.m6i.8xlarge', '128'],

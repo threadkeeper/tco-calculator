@@ -10,6 +10,7 @@ use crate::{
     calculation::{
         engine::{CalculationEngine, CalculationError},
         target_selector::CapabilityCatalog,
+        vm_target_selector::{ManagedDiskCatalog, VmCapabilityCatalog},
     },
     config::{AppEnvironment, Config, FORMULA_VERSION},
     persistence::{
@@ -20,7 +21,7 @@ use crate::{
         repository::{InMemoryProjectRepository, ProjectRepository, RepositoryError},
     },
     pricing::{
-        coordinator::PricingCoordinator,
+        coordinator::{AzurePricingCatalogs, PricingCoordinator},
         http::PricingHttpClient,
         loader::LivePricingLoader,
         local_fixture::{self, LocalFixtureError},
@@ -37,7 +38,7 @@ use crate::{
 pub enum StateError {
     #[error("assistant model client could not be initialized")]
     Assistant,
-    #[error("embedded SQL MI capability catalog is invalid")]
+    #[error("an embedded Azure capability catalog is invalid")]
     CapabilityCatalog(#[from] serde_json::Error),
     #[error("calculation engine could not be initialized")]
     Calculation(#[from] CalculationError),
@@ -162,7 +163,18 @@ impl AppState {
         let capabilities = Arc::new(serde_json::from_str::<CapabilityCatalog>(include_str!(
             "../../app/catalogs/sql-mi-capabilities.json"
         ))?);
-        let calculations = CalculationEngine::new(Arc::clone(&capabilities), FORMULA_VERSION)?;
+        let vm_capabilities = Arc::new(serde_json::from_str::<VmCapabilityCatalog>(include_str!(
+            "../../app/catalogs/azure-vm-capabilities.json"
+        ))?);
+        let disk_capabilities = Arc::new(serde_json::from_str::<ManagedDiskCatalog>(
+            include_str!("../../app/catalogs/azure-managed-disk-capabilities.json"),
+        )?);
+        let calculations = CalculationEngine::with_vm_catalogs(
+            Arc::clone(&capabilities),
+            Arc::clone(&vm_capabilities),
+            Arc::clone(&disk_capabilities),
+            FORMULA_VERSION,
+        )?;
         let snapshots = InMemorySnapshotRepository::new();
         let live_pricing = if config.environment == AppEnvironment::Local {
             None
@@ -181,7 +193,11 @@ impl AppState {
             durable_snapshots,
             refresh_leases,
             live_pricing.clone(),
-            Arc::clone(&capabilities),
+            AzurePricingCatalogs::new(
+                Arc::clone(&capabilities),
+                vm_capabilities,
+                disk_capabilities,
+            ),
         );
         let guest_rate_limit =
             TokenBucket::new(config.guest_requests_per_minute, Duration::from_secs(60));

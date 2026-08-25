@@ -5,8 +5,13 @@ use thiserror::Error;
 use crate::domain::{
     decimal::DecimalValue,
     project::ProjectSettings,
-    resource::{EbsVolumeType, Ec2Resource, LicenseBasis, OnPremResource, RdsResource, SqlEdition},
+    resource::{
+        EbsVolumeType, Ec2Resource, Ec2VmResource, LicenseBasis, OnPremResource, RdsResource,
+        SqlEdition, VmVolume,
+    },
 };
+
+use super::vm_target_selector::SelectedManagedDisk;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct SourceCostBreakdown {
@@ -106,6 +111,13 @@ pub struct AzureRate {
     pub additional_memory_per_gb_hourly: DecimalValue,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct AzureManagedDiskRateSet {
+    pub capacity_monthly: DecimalValue,
+    pub additional_iops_monthly_per_unit: Option<DecimalValue>,
+    pub additional_throughput_monthly_per_mbps: Option<DecimalValue>,
+}
+
 const AZURE_MI_STORAGE_UNIT_GB: i64 = 32;
 
 pub fn azure_mi_configured_storage_gb(required_storage_gb: DecimalValue) -> DecimalValue {
@@ -132,6 +144,8 @@ pub enum CostError {
     MissingProvisionedIops,
     #[error("the EBS IOPS tier schedule is invalid or incomplete")]
     InvalidIopsTiers,
+    #[error("a required Azure managed-disk price dimension is unavailable")]
+    MissingAzureManagedDiskRate,
     #[error("on-premises License + SA settings are incomplete")]
     MissingOnPremLicenseSettings,
     #[error("on-premises electricity settings are incomplete")]
@@ -187,18 +201,84 @@ pub fn calculate_ec2_source(
     ))
 }
 
+pub fn calculate_ec2_vm_source(
+    resource: &Ec2VmResource,
+    rate: Ec2Rate,
+    ebs_rates: &[EbsRate],
+    settings: &ProjectSettings,
+) -> Result<SourceCostBreakdown, CostError> {
+    validate_rate(rate.compute_hourly)?;
+    let quantity = Decimal::from(resource.shared.quantity);
+    let hours = resource.shared.annual_hours_per_instance.0;
+    let compute_gross = quantity * hours * rate.compute_hourly.0;
+    let compute_net = apply_discount(compute_gross, settings.source_compute_discount);
+    let monthly_storage = resource
+        .volumes
+        .iter()
+        .try_fold(Decimal::ZERO, |total, volume| {
+            if volume.volume_type == EbsVolumeType::Ephemeral {
+                return Ok(total);
+            }
+            let rate = ebs_rates
+                .iter()
+                .find(|rate| rate.volume_type == volume.volume_type)
+                .ok_or(CostError::MissingEbsRate(volume.volume_type))?;
+            Ok(total + calculate_vm_volume_monthly(volume, rate)?)
+        })?;
+    let storage_gross = quantity * Decimal::from(12) * monthly_storage;
+    let storage_net = apply_discount(storage_gross, settings.source_storage_discount);
+
+    Ok(source_costs(
+        compute_gross,
+        compute_net,
+        Decimal::ZERO,
+        Decimal::ZERO,
+        storage_gross,
+        storage_net,
+        Decimal::ZERO,
+        Decimal::ZERO,
+    ))
+}
+
 pub fn calculate_ebs_volume_monthly(
     volume: &crate::domain::resource::EbsVolume,
     rate: &EbsRate,
 ) -> Result<Decimal, CostError> {
-    if volume.volume_type == EbsVolumeType::Ephemeral {
+    calculate_volume_monthly(
+        volume.volume_type,
+        volume.capacity_gb,
+        volume.provisioned_iops,
+        volume.throughput_mibps,
+        rate,
+    )
+}
+
+pub fn calculate_vm_volume_monthly(
+    volume: &VmVolume,
+    rate: &EbsRate,
+) -> Result<Decimal, CostError> {
+    calculate_volume_monthly(
+        volume.volume_type,
+        volume.capacity_gb,
+        volume.provisioned_iops,
+        volume.throughput_mibps,
+        rate,
+    )
+}
+
+fn calculate_volume_monthly(
+    volume_type: EbsVolumeType,
+    capacity_gb: DecimalValue,
+    provisioned_iops: Option<u64>,
+    throughput_mibps: Option<DecimalValue>,
+    rate: &EbsRate,
+) -> Result<Decimal, CostError> {
+    if volume_type == EbsVolumeType::Ephemeral {
         return Ok(Decimal::ZERO);
     }
     validate_rate(rate.capacity_monthly_per_gb)?;
-    let provisioned_iops = volume
-        .provisioned_iops
-        .ok_or(CostError::MissingProvisionedIops)?;
-    let capacity = volume.capacity_gb.0 * rate.capacity_monthly_per_gb.0;
+    let provisioned_iops = provisioned_iops.ok_or(CostError::MissingProvisionedIops)?;
+    let capacity = capacity_gb.0 * rate.capacity_monthly_per_gb.0;
     let billable_iops = provisioned_iops.saturating_sub(rate.included_iops);
     let iops = if rate.volume_type == EbsVolumeType::Io2 {
         tiered_iops_cost(billable_iops, &rate.iops_tiers)?
@@ -212,7 +292,7 @@ pub fn calculate_ebs_volume_monthly(
             None => return Err(CostError::MissingEbsRate(rate.volume_type)),
         }
     };
-    let throughput = volume.throughput_mibps.map_or(Decimal::ZERO, |throughput| {
+    let throughput = throughput_mibps.map_or(Decimal::ZERO, |throughput| {
         (throughput.0 - rate.included_throughput_mibps.0).max(Decimal::ZERO)
     });
     let throughput_cost = match rate.throughput_monthly_per_mibps {
@@ -226,6 +306,31 @@ pub fn calculate_ebs_volume_monthly(
     };
 
     Ok(capacity + iops + throughput_cost)
+}
+
+pub fn calculate_azure_managed_disk_monthly(
+    disk: &SelectedManagedDisk,
+    rate: AzureManagedDiskRateSet,
+) -> Result<DecimalValue, CostError> {
+    validate_rate(rate.capacity_monthly)?;
+    if disk.tier_key.is_some() {
+        return Ok(rate.capacity_monthly);
+    }
+
+    let iops_rate = rate
+        .additional_iops_monthly_per_unit
+        .ok_or(CostError::MissingAzureManagedDiskRate)?;
+    let throughput_rate = rate
+        .additional_throughput_monthly_per_mbps
+        .ok_or(CostError::MissingAzureManagedDiskRate)?;
+    validate_rate(iops_rate)?;
+    validate_rate(throughput_rate)?;
+
+    Ok(DecimalValue(
+        disk.capacity_gb.0 * rate.capacity_monthly.0
+            + Decimal::from(disk.billed_additional_iops) * iops_rate.0
+            + disk.billed_additional_throughput_mbps.0 * throughput_rate.0,
+    ))
 }
 
 pub fn source_max_iops(resource: &Ec2Resource) -> Result<u64, CostError> {
@@ -386,6 +491,34 @@ pub fn calculate_azure(
         storage_gross: DecimalValue(storage_gross),
         storage_net: DecimalValue(storage_net),
         total_before_parity: DecimalValue(total_before_parity),
+    })
+}
+
+pub fn calculate_azure_vm(
+    quantity: u32,
+    annual_hours: DecimalValue,
+    vm_hourly_rate: DecimalValue,
+    managed_disk_monthly_per_instance: DecimalValue,
+    settings: &ProjectSettings,
+) -> Result<AzureCostBreakdown, CostError> {
+    validate_rate(vm_hourly_rate)?;
+    validate_rate(managed_disk_monthly_per_instance)?;
+    let quantity = Decimal::from(quantity);
+    let compute_gross = quantity * annual_hours.0 * vm_hourly_rate.0;
+    let compute_net = apply_discount(compute_gross, settings.azure_compute_discount);
+    let storage_gross = quantity * Decimal::from(12) * managed_disk_monthly_per_instance.0;
+    let storage_net = apply_discount(storage_gross, settings.azure_storage_discount);
+
+    Ok(AzureCostBreakdown {
+        compute_gross: DecimalValue(compute_gross),
+        additional_ram_gb: DecimalValue::ZERO,
+        additional_ram_gross: DecimalValue::ZERO,
+        compute_plus_ram_net: DecimalValue(compute_net),
+        license_gross: DecimalValue::ZERO,
+        license_net: DecimalValue::ZERO,
+        storage_gross: DecimalValue(storage_gross),
+        storage_net: DecimalValue(storage_net),
+        total_before_parity: DecimalValue(compute_net + storage_net),
     })
 }
 

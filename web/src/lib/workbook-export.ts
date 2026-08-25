@@ -112,7 +112,7 @@ const XLSX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.spreadshee
 const UTF8_ENCODER = new TextEncoder();
 const CRC32_TABLE = createCrc32Table();
 
-const RESULT_GROUPS: ResultGroup[] = [
+const SQL_RESULT_GROUPS: ResultGroup[] = [
   {
     label: 'Workload',
     tone: 'workload',
@@ -194,9 +194,81 @@ const RESULT_GROUPS: ResultGroup[] = [
   }
 ];
 
-const RESULT_COLUMNS: ResultColumn[] = RESULT_GROUPS.flatMap((group) =>
-  group.columns.map((column) => ({ ...column, tone: group.tone }))
-);
+const VM_RESULT_GROUPS: ResultGroup[] = [
+  {
+    label: 'Workload',
+    tone: 'workload',
+    columns: [
+      textColumn('Name', (row) => row.workloadName),
+      textColumn('Server name', (row) => row.serverName),
+      textColumn('Source SKU', (row) => row.sourceSku),
+      decimalColumn('Qty', (row) => row.quantity),
+      textColumn('Burst policy', (row) => row.burstPolicy),
+      textColumn('Instance store', (row) => row.instanceStoreUse),
+      decimalColumn('Local temp GB', (row) => row.requiredLocalTempDiskGb),
+      textColumn('Ephemeral loss accepted', (row) => row.ephemeralDataLossAcceptable),
+      textColumn('High-frequency', (row) => row.highFrequencyRequirement),
+      textColumn('Target override', (row) => row.requestedTargetArmSku),
+      decimalColumn('Persistent EBS GB', (row) => row.persistentEbsGbPerInstance),
+      decimalColumn('Source RAM GB', (row) => row.sourceRamGbPerInstance),
+      decimalColumn('Annual hours', (row) => row.annualHoursPerInstance)
+    ]
+  },
+  {
+    label: 'Derived Azure VM',
+    tone: 'target',
+    columns: [
+      decimalColumn('Managed disk GB', (row) => row.azureStorageGbPerInstance),
+      decimalColumn('VM RAM GB', (row) => row.selectedMemoryGb),
+      textColumn('VM SKU', (row) => row.serviceTier),
+      textColumn('Family', (row) => row.hardwareFamily),
+      textColumn('Managed disks', (row) => row.storageArchitecture),
+      decimalColumn('vCPU', (row) => row.vcores),
+      textColumn('Recommendation', (row) => row.recommendationStatus)
+    ]
+  },
+  {
+    label: 'Source cost',
+    tone: 'source',
+    columns: [
+      moneyColumn('Compute gross', (row) => row.sourceComputeGross),
+      moneyColumn('Compute net', (row) => row.sourceComputeNet),
+      moneyColumn('Storage gross', (row) => row.sourceStorageGross),
+      moneyColumn('Storage net', (row) => row.sourceStorageNet),
+      moneyColumn('Net total', (row) => row.sourceTotal)
+    ]
+  },
+  {
+    label: 'Azure VM cost',
+    tone: 'azure',
+    columns: [
+      moneyColumn('Compute gross', (row) => row.azureComputeGross),
+      moneyColumn('Compute net', (row) => row.azureComputePlusRamNet),
+      moneyColumn('Storage gross', (row) => row.azureStorageGross),
+      moneyColumn('Storage net', (row) => row.azureStorageNet),
+      moneyColumn('VM net before parity', (row) => row.azureTotalBeforeParity)
+    ]
+  },
+  {
+    label: 'Savings before parity',
+    tone: 'savings',
+    columns: [
+      moneyColumn('Compute', (row) => row.computeSavings),
+      moneyColumn('Storage', (row) => row.storageSavings),
+      moneyColumn('Total', (row) => row.totalSavings)
+    ]
+  },
+  {
+    label: 'Parity',
+    tone: 'parity',
+    columns: [
+      decimalColumn('Required adjustment', (row) => row.requiredAdjustment),
+      decimalColumn('Selected adjustment', (row) => row.selectedAdjustment),
+      moneyColumn('Azure after parity', (row) => row.azureAfterSelectedParity),
+      moneyColumn('Difference (Azure - source)', (row) => row.difference)
+    ]
+  }
+];
 
 export function createProjectExportXlsx(
   project: ProjectDraft,
@@ -267,35 +339,46 @@ function worksheetXml(
   calculation: JsonRecord | null,
   rows: CalculationResultRow[]
 ): string {
-  const lastColumn = columnName(RESULT_COLUMNS.length);
+  const resultGroups =
+    project.settings.project_type === 'ec2_vm' ? VM_RESULT_GROUPS : SQL_RESULT_GROUPS;
+  const resultColumns: ResultColumn[] = resultGroups.flatMap((group) =>
+    group.columns.map((column) => ({ ...column, tone: group.tone }))
+  );
+  const lastColumn = columnName(resultColumns.length);
   const lastRow = Math.max(7, rows.length + 7);
-  const columns = RESULT_COLUMNS.map(
-    (_, index) =>
-      `<col min="${index + 1}" max="${index + 1}" width="${resultColumnWidth(index)}" customWidth="1"/>`
-  ).join('');
-  const metadataRows = resultMetadataRows(project, calculation);
-  const groupSpans = resultGroupSpans();
+  const columns = resultColumns
+    .map(
+      (_, index) =>
+        `<col min="${index + 1}" max="${index + 1}" width="${resultColumnWidth(index)}" customWidth="1"/>`
+    )
+    .join('');
+  const metadataRows = resultMetadataRows(project, calculation, resultColumns.length);
+  const groupSpans = resultGroupSpans(resultGroups);
   const metadata = metadataRows
     .map(({ row, height, spans }) => sheetRowXml(row, height, spans))
     .join('');
   const groups = sheetRowXml(6, 24, groupSpans);
-  const header = RESULT_COLUMNS.map((column, index) =>
-    inlineStringCellXml(
-      `${columnName(index + 1)}7`,
-      column.header.toUpperCase(),
-      index === 0 ? STYLE.columnWorkloadFirst : COLUMN_STYLE_IDS[column.tone]
+  const header = resultColumns
+    .map((column, index) =>
+      inlineStringCellXml(
+        `${columnName(index + 1)}7`,
+        column.header.toUpperCase(),
+        index === 0 ? STYLE.columnWorkloadFirst : COLUMN_STYLE_IDS[column.tone]
+      )
     )
-  ).join('');
+    .join('');
   const body = rows
     .map((row, rowIndex) => {
-      const cells = RESULT_COLUMNS.map((column, columnIndex) => {
-        const value = column.value(row);
-        const reference = `${columnName(columnIndex + 1)}${rowIndex + 8}`;
-        const styleId = resultBodyStyleId(column, columnIndex, value);
-        return column.kind === 'money'
-          ? moneyCellXml(reference, value, styleId)
-          : inlineStringCellXml(reference, value, styleId);
-      }).join('');
+      const cells = resultColumns
+        .map((column, columnIndex) => {
+          const value = column.value(row);
+          const reference = `${columnName(columnIndex + 1)}${rowIndex + 8}`;
+          const styleId = resultBodyStyleId(column, columnIndex, value);
+          return column.kind === 'money'
+            ? moneyCellXml(reference, value, styleId)
+            : inlineStringCellXml(reference, value, styleId);
+        })
+        .join('');
       return `<row r="${rowIndex + 8}" ht="26" customHeight="1">${cells}</row>`;
     })
     .join('');
@@ -321,18 +404,19 @@ function worksheetXml(
 
 function resultMetadataRows(
   project: ProjectDraft,
-  calculation: JsonRecord | null
+  calculation: JsonRecord | null,
+  lastColumn: number
 ): Array<{ row: number; height: number; spans: SheetSpan[] }> {
   return [
     {
       row: 1,
       height: 18,
-      spans: [{ start: 1, end: 43, value: 'RESOURCE LINE ITEMS', styleId: STYLE.eyebrow }]
+      spans: [{ start: 1, end: lastColumn, value: 'RESOURCE LINE ITEMS', styleId: STYLE.eyebrow }]
     },
     {
       row: 2,
       height: 26,
-      spans: [{ start: 1, end: 43, value: 'Workbook-level detail', styleId: STYLE.title }]
+      spans: [{ start: 1, end: lastColumn, value: 'Workbook-level detail', styleId: STYLE.title }]
     },
     {
       row: 3,
@@ -341,7 +425,7 @@ function resultMetadataRows(
         { start: 1, end: 2, value: 'PROJECT', styleId: STYLE.metadataLabel },
         { start: 3, end: 11, value: project.name, styleId: STYLE.metadataValue },
         { start: 12, end: 13, value: 'DESCRIPTION', styleId: STYLE.metadataLabel },
-        { start: 14, end: 43, value: project.description, styleId: STYLE.metadataValue }
+        { start: 14, end: lastColumn, value: project.description, styleId: STYLE.metadataValue }
       ]
     },
     {
@@ -379,7 +463,7 @@ function resultMetadataRows(
         { start: 25, end: 27, value: 'FORMULA', styleId: STYLE.metadataLabel },
         {
           start: 28,
-          end: 43,
+          end: lastColumn,
           value: readString(calculation, 'formula_version'),
           styleId: STYLE.metadataValue
         }
@@ -399,7 +483,7 @@ function resultMetadataRows(
         { start: 22, end: 25, value: 'AZURE SNAPSHOT', styleId: STYLE.metadataLabel },
         {
           start: 26,
-          end: 43,
+          end: lastColumn,
           value: readString(calculation, 'azure_snapshot_id'),
           styleId: STYLE.metadataValue
         }
@@ -408,9 +492,9 @@ function resultMetadataRows(
   ];
 }
 
-function resultGroupSpans(): SheetSpan[] {
+function resultGroupSpans(resultGroups: ResultGroup[]): SheetSpan[] {
   let start = 1;
-  return RESULT_GROUPS.map((group) => {
+  return resultGroups.map((group) => {
     const span = {
       start,
       end: start + group.columns.length - 1,

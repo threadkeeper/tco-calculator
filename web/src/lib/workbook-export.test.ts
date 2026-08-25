@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createProjectDraft } from './draft';
+import { createProjectDraft, createResource } from './draft';
 import {
   createProjectExportXlsx,
   downloadProjectExport,
@@ -228,6 +228,68 @@ describe('project result export', () => {
   it('creates a stable safe filename', () => {
     expect(projectExportFileName(' Finance / SQL ')).toBe('finance-sql-results.xlsx');
     expect(projectExportFileName('日本語')).toBe('tco-project-results.xlsx');
+  });
+
+  it('exports VM requirements and Azure VM targets without SQL MI columns', () => {
+    const project = createProjectDraft('ec2_vm', 'Windows estate', null);
+    project.resources = [createResource('ec2_vm', project.settings)];
+    const resource = project.resources[0];
+    if (!resource || resource.source_type !== 'ec2_vm') {
+      throw new Error('expected an EC2 VM resource');
+    }
+    resource.instance_type = 't3.large';
+    resource.requirements.burst_policy = 'unknown';
+    resource.requirements.instance_store_use = 'not_used';
+    resource.requirements.high_frequency_requirement = 'not_applicable';
+    resource.requirements.requested_target_arm_sku = 'Standard_D4s_v7';
+    resource.volumes[0].role = 'os';
+    resource.volumes[0].capacity_gb = '1024';
+    const calculation = {
+      formula_version: '1.0.0',
+      aws_snapshot_id: 'aws-vm-snapshot',
+      azure_snapshot_id: 'azure-vm-snapshot',
+      resource_results: [
+        {
+          resource_id: resource.id,
+          mapping_status: 'mapped',
+          storage_inputs: {
+            persistent_ebs_gb_per_instance: '1024',
+            azure_storage_gb_per_instance: '1024'
+          },
+          vm_target_selection: {
+            recommendation_status: 'capacity_fit_review_required',
+            selected: {
+              arm_sku_name: 'Standard_D4s_v7',
+              display_family: 'Dsv7',
+              memory_gb: '16',
+              vcpus: 4,
+              disks: [{ tier_key: 'P30' }]
+            }
+          }
+        }
+      ]
+    };
+
+    const entries = readStoredZipEntries(createProjectExportXlsx(project, calculation));
+    const worksheet = entries.get('xl/worksheets/sheet1.xml') ?? '';
+    const inputsWorksheet = entries.get('xl/worksheets/sheet2.xml') ?? '';
+
+    expect(worksheet).toContain('DERIVED AZURE VM');
+    expect(worksheet).toContain('AZURE VM COST');
+    expect(worksheet).toContain('BURST POLICY');
+    expect(worksheet).toContain('INSTANCE STORE');
+    expect(worksheet).toContain('EPHEMERAL LOSS ACCEPTED');
+    expect(worksheet).toContain('TARGET OVERRIDE');
+    expect(worksheet).toContain('MANAGED DISKS');
+    expect(worksheet).toContain('RECOMMENDATION');
+    expect(worksheet).toContain('Standard_D4s_v7');
+    expect(worksheet).toContain('capacity_fit_review_required');
+    expect(worksheet).not.toContain('DERIVED MI SKU');
+    expect(worksheet).not.toContain('AZURE SQL MI COST');
+    expect(worksheet).not.toContain('SQL EDITION');
+    expect(worksheet).not.toContain('MI PURCHASE');
+    expect(inputsWorksheet).toContain('resources[1].requirements.burst_policy');
+    expect(inputsWorksheet).toContain('resources[1].volumes[1].role');
   });
 
   it('clicks an attached download link before releasing its Blob URL', () => {

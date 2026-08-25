@@ -909,7 +909,7 @@ components:
       properties:
         project_type:
           type: string
-          enum: [ec2, rds, on_prem, sql_payg, unknown]
+          enum: [ec2, ec2_vm, rds, on_prem, sql_payg, unknown]
         confidence:
           type: string
           enum: [high, medium, low]
@@ -1271,6 +1271,7 @@ components:
         - aws_pricing_status
         - azure_pricing_status
         - target_selection
+        - vm_target_selection
         - source_costs
         - azure_costs
         - purchase_option_discounts
@@ -1293,6 +1294,10 @@ components:
         target_selection:
           oneOf:
             - $ref: '#/components/schemas/TargetSelection'
+            - type: 'null'
+        vm_target_selection:
+          oneOf:
+            - $ref: '#/components/schemas/VmTargetSelection'
             - type: 'null'
         source_costs:
           oneOf:
@@ -1479,6 +1484,180 @@ components:
           oneOf:
             - $ref: '#/components/schemas/StorageEscalation'
             - type: 'null'
+    VmTargetSelection:
+      type: object
+      required: [mapping_status, recommendation_status, requested_lineage, selected, candidates, outcome_reasons]
+      properties:
+        mapping_status:
+          type: string
+          enum: [mapped, no_mapping]
+        recommendation_status:
+          $ref: '#/components/schemas/VmRecommendationStatus'
+        requested_lineage:
+          $ref: '#/components/schemas/VmLineage'
+        selected:
+          oneOf:
+            - $ref: '#/components/schemas/SelectedVmTarget'
+            - type: 'null'
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/VmCandidateEvaluation'
+        outcome_reasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/VmSelectionReason'
+    VmLineage:
+      type: string
+      enum: [burstable, general_purpose, memory_optimized]
+    VmRecommendationStatus:
+      type: string
+      enum: [recommended, capacity_fit_review_required, incomplete, no_eligible_target]
+    VmLifecycle:
+      type: string
+      enum: [current, previous]
+    SelectedVmTarget:
+      type: object
+      required:
+        - arm_sku_name
+        - display_family
+        - lineage
+        - generation
+        - generation_rank
+        - lifecycle
+        - azure_region
+        - vcpus
+        - memory_gb
+        - max_data_disk_count
+        - uncached_disk_iops
+        - uncached_disk_throughput_mbps
+        - local_temp_disk_gb
+        - disks
+      properties:
+        arm_sku_name:
+          type: string
+        display_family:
+          type: string
+        lineage:
+          $ref: '#/components/schemas/VmLineage'
+        generation:
+          type: string
+        generation_rank:
+          type: integer
+          minimum: 0
+        lifecycle:
+          $ref: '#/components/schemas/VmLifecycle'
+        azure_region:
+          type: string
+        vcpus:
+          type: integer
+          minimum: 1
+        memory_gb:
+          $ref: '#/components/schemas/Decimal'
+        max_data_disk_count:
+          type: integer
+          minimum: 0
+        uncached_disk_iops:
+          type: integer
+          minimum: 0
+        uncached_disk_throughput_mbps:
+          type: integer
+          minimum: 0
+        local_temp_disk_gb:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+        disks:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/SelectedManagedDisk'
+    SelectedManagedDisk:
+      type: object
+      required:
+        - volume_id
+        - label
+        - role
+        - offer_key
+        - display_name
+        - tier_key
+        - capacity_gb
+        - provisioned_iops
+        - provisioned_throughput_mbps
+        - billed_additional_iops
+        - billed_additional_throughput_mbps
+      properties:
+        volume_id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        role:
+          $ref: '#/components/schemas/VmDiskRole'
+        offer_key:
+          type: string
+        display_name:
+          type: string
+        tier_key:
+          type: [string, 'null']
+        capacity_gb:
+          $ref: '#/components/schemas/Decimal'
+        provisioned_iops:
+          type: integer
+          minimum: 0
+        provisioned_throughput_mbps:
+          $ref: '#/components/schemas/Decimal'
+        billed_additional_iops:
+          type: integer
+          minimum: 0
+        billed_additional_throughput_mbps:
+          $ref: '#/components/schemas/Decimal'
+    VmCandidateEvaluation:
+      type: object
+      required: [arm_sku_name, vcpus, memory_gb, eligible, rejection_reasons]
+      properties:
+        arm_sku_name:
+          type: string
+        vcpus:
+          type: integer
+          minimum: 1
+        memory_gb:
+          $ref: '#/components/schemas/Decimal'
+        eligible:
+          type: boolean
+        rejection_reasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/VmSelectionReason'
+    VmSelectionReason:
+      type: object
+      required: [code, detail]
+      properties:
+        code:
+          type: string
+          enum:
+            - region_unavailable
+            - lineage_mismatch
+            - lifecycle_ineligible
+            - windows_unsupported
+            - architecture_unsupported
+            - premium_io_unsupported
+            - insufficient_vcpu
+            - insufficient_memory
+            - insufficient_local_temp_disk
+            - data_disk_count_exceeded
+            - no_eligible_disk_offer
+            - aggregate_disk_iops_exceeded
+            - aggregate_disk_throughput_exceeded
+            - target_override_ineligible
+            - burst_policy_review_required
+            - instance_store_review_required
+            - ephemeral_data_loss_incompatible
+            - high_frequency_review_required
+            - volume_role_unconfirmed
+            - price_unavailable
+        detail:
+          type: string
     ServiceTier:
       type: string
       enum: [next_generation_general_purpose, business_critical]
@@ -1823,7 +2002,7 @@ components:
       properties:
         project_type:
           type: string
-          enum: [ec2, rds, on_prem, sql_payg]
+          enum: [ec2, ec2_vm, rds, on_prem, sql_payg]
         aws_region:
           type: [string, 'null']
         azure_region:
@@ -1891,12 +2070,14 @@ components:
     Resource:
       oneOf:
         - $ref: '#/components/schemas/Ec2Resource'
+        - $ref: '#/components/schemas/Ec2VmResource'
         - $ref: '#/components/schemas/RdsResource'
         - $ref: '#/components/schemas/OnPremResource'
       discriminator:
         propertyName: source_type
         mapping:
           ec2: '#/components/schemas/Ec2Resource'
+          ec2_vm: '#/components/schemas/Ec2VmResource'
           rds: '#/components/schemas/RdsResource'
           on_prem: '#/components/schemas/OnPremResource'
     SharedResourceProperties:
@@ -1958,6 +2139,119 @@ components:
               maxItems: 50
               items:
                 $ref: '#/components/schemas/EbsVolume'
+    SharedVmResourceProperties:
+      type: object
+      required:
+        - id
+        - workload_name
+        - server_name
+        - quantity
+        - source_ram_gb_per_instance
+        - annual_hours_per_instance
+      properties:
+        id:
+          type: string
+          format: uuid
+        workload_name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        server_name:
+          type: [string, 'null']
+          maxLength: 160
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        source_ram_gb_per_instance:
+          $ref: '#/components/schemas/Decimal'
+        annual_hours_per_instance:
+          $ref: '#/components/schemas/Decimal'
+    Ec2VmResource:
+      allOf:
+        - $ref: '#/components/schemas/SharedVmResourceProperties'
+        - type: object
+          required: [source_type, instance_type, requirements, volumes]
+          properties:
+            source_type:
+              type: string
+              const: ec2_vm
+            instance_type:
+              type: string
+            requirements:
+              $ref: '#/components/schemas/Ec2VmRequirements'
+            volumes:
+              type: array
+              minItems: 1
+              maxItems: 50
+              items:
+                $ref: '#/components/schemas/VmVolume'
+    Ec2VmRequirements:
+      type: object
+      required:
+        - burst_policy
+        - instance_store_use
+        - required_local_temp_disk_gb
+        - ephemeral_data_loss_acceptable
+        - high_frequency_requirement
+        - requested_target_arm_sku
+      properties:
+        burst_policy:
+          $ref: '#/components/schemas/VmBurstPolicy'
+        instance_store_use:
+          $ref: '#/components/schemas/VmInstanceStoreUse'
+        required_local_temp_disk_gb:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+        ephemeral_data_loss_acceptable:
+          type: [boolean, 'null']
+        high_frequency_requirement:
+          $ref: '#/components/schemas/VmHighFrequencyRequirement'
+        requested_target_arm_sku:
+          type: [string, 'null']
+          maxLength: 100
+          pattern: '^[A-Za-z0-9_.-]+$'
+    VmBurstPolicy:
+      type: string
+      enum: [confirmed_burst_compatible, requires_sustained_cpu, unknown, not_applicable]
+    VmInstanceStoreUse:
+      type: string
+      enum: [unknown, not_used, used]
+    VmHighFrequencyRequirement:
+      type: string
+      enum: [required, unknown, capacity_fit_accepted, not_applicable]
+    VmDiskRole:
+      type: string
+      enum: [os, data, unknown]
+    VmVolume:
+      type: object
+      required: [id, label, aws_volume_id, volume_type, role, capacity_gb, provisioned_iops, throughput_mibps]
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          minLength: 1
+          maxLength: 80
+        aws_volume_id:
+          type: [string, 'null']
+          maxLength: 128
+        volume_type:
+          type: string
+          enum: [gp3, io2]
+        role:
+          $ref: '#/components/schemas/VmDiskRole'
+        capacity_gb:
+          $ref: '#/components/schemas/Decimal'
+        provisioned_iops:
+          type: integer
+          minimum: 0
+        throughput_mibps:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
     EbsVolume:
       type: object
       required: [id, label, aws_volume_id, volume_type, capacity_gb, provisioned_iops, throughput_mibps]
@@ -2070,7 +2364,7 @@ components:
           type: string
         project_type:
           type: string
-          enum: [ec2, rds, on_prem, sql_payg]
+          enum: [ec2, ec2_vm, rds, on_prem, sql_payg]
         modified_at:
           type: string
           format: date-time

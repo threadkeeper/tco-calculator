@@ -117,6 +117,7 @@ fn map_calculation_error(error: CalculationError) -> Problem {
         CalculationError::EmptyCapabilityCatalog
         | CalculationError::InvalidTargetSelection
         | CalculationError::TargetSelection(_)
+        | CalculationError::VmTargetSelection(_)
         | CalculationError::Cost(_)
         | CalculationError::SqlPayg(_) => Problem::internal(INSTANCE),
     }

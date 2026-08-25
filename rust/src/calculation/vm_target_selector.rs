@@ -1,11 +1,14 @@
 //! Azure Virtual Machine and managed-disk target selection for the `ec2_vm` workload.
 //!
 //! This module owns the capability catalogs, the source-class policy, and the deterministic
-//! selection algorithm described in sections 7 and 8 of `docs/EC2-VM-TCO-SPEC.md`. It never
-//! reads a price: capability decisions must not be overridden by cost, and prices are resolved
-//! separately against the same calculation snapshot.
+//! selection algorithm described in sections 7 and 8 of `docs/EC2-VM-TCO-SPEC.md`. Capability
+//! filters run before a bounded pricing view from the same calculation snapshot verifies complete
+//! rates and supplies the final price tie-breaker.
 
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -179,15 +182,50 @@ pub struct VmTargetSelectionRequest<'a> {
     pub requires_local_temp_disk: bool,
     pub minimum_local_temp_disk_gb: DecimalValue,
     pub volumes: &'a [VmVolumeRequirement],
+    pub requested_target_arm_sku: Option<&'a str>,
+    pub price_availability: Option<&'a VmPriceAvailability>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct VmPriceAvailability {
+    pub vm_hourly_rates: BTreeMap<String, DecimalValue>,
+    pub managed_disk_dimensions: BTreeSet<VmDiskPriceKey>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct VmDiskPriceKey {
+    pub offer_key: String,
+    pub tier_key: Option<String>,
+    pub dimension: VmDiskPriceDimension,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum VmDiskPriceDimension {
+    CapacityTier,
+    CapacityGb,
+    AdditionalIops,
+    AdditionalThroughput,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct VmTargetSelection {
     pub mapping_status: MappingStatus,
+    #[serde(default)]
+    pub recommendation_status: VmRecommendationStatus,
     pub requested_lineage: VmLineage,
     pub selected: Option<SelectedVmTarget>,
     pub candidates: Vec<VmCandidateEvaluation>,
     pub outcome_reasons: Vec<VmSelectionReason>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VmRecommendationStatus {
+    #[default]
+    Recommended,
+    CapacityFitReviewRequired,
+    Incomplete,
+    NoEligibleTarget,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -257,6 +295,13 @@ pub enum VmSelectionReasonCode {
     NoEligibleDiskOffer,
     AggregateDiskIopsExceeded,
     AggregateDiskThroughputExceeded,
+    TargetOverrideIneligible,
+    BurstPolicyReviewRequired,
+    InstanceStoreReviewRequired,
+    EphemeralDataLossIncompatible,
+    HighFrequencyReviewRequired,
+    VolumeRoleUnconfirmed,
+    PriceUnavailable,
 }
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -274,14 +319,14 @@ pub enum VmTargetSelectionError {
 struct EvaluatedCandidate<'a> {
     candidate: &'a VmSizeCandidate,
     disks: Vec<SelectedManagedDisk>,
+    hourly_rate: Option<DecimalValue>,
 }
 
 /// Selects one Azure VM size and one managed disk per persistent source volume.
 ///
 /// Ranking follows section 8.4: lifecycle, then reviewed generation rank, then vCPU surplus, then
-/// memory surplus, then aggregate disk-capability surplus, then the ARM SKU name. Cost is not a
-/// tie-breaker here because vCPU and memory are unique within a lineage and generation, so the
-/// price rank in section 8.4 is unreachable before the stable name tie-breaker.
+/// memory surplus, aggregate disk-capability surplus, complete pay-as-you-go VM price, and finally
+/// the ARM SKU name.
 pub fn select_vm_target(
     vm_catalog: &VmCapabilityCatalog,
     disk_catalog: &ManagedDiskCatalog,
@@ -305,6 +350,24 @@ pub fn select_vm_target(
             continue;
         }
         if candidate.lineage != requested_lineage {
+            if request
+                .requested_target_arm_sku
+                .is_some_and(|requested| candidate.arm_sku_name.eq_ignore_ascii_case(requested))
+            {
+                evaluations.push(VmCandidateEvaluation {
+                    arm_sku_name: candidate.arm_sku_name.clone(),
+                    vcpus: candidate.vcpus,
+                    memory_gb: candidate.memory_gb,
+                    eligible: false,
+                    rejection_reasons: vec![reason(
+                        VmSelectionReasonCode::LineageMismatch,
+                        format!(
+                            "{} is not in the required {requested_lineage:?} lineage.",
+                            candidate.arm_sku_name
+                        ),
+                    )],
+                });
+            }
             continue;
         }
         if candidate.lifecycle != VmLifecycle::Current {
@@ -425,6 +488,36 @@ pub fn select_vm_target(
             }
         }
 
+        let hourly_rate = request.price_availability.and_then(|availability| {
+            availability
+                .vm_hourly_rates
+                .get(&candidate.arm_sku_name.to_ascii_lowercase())
+                .copied()
+        });
+        if request.price_availability.is_some() && hourly_rate.is_none() {
+            rejection_reasons.push(reason(
+                VmSelectionReasonCode::PriceUnavailable,
+                format!(
+                    "{} does not have a complete Windows PAYG rate in the coherent target snapshot.",
+                    candidate.arm_sku_name
+                ),
+            ));
+        }
+        if let Some(availability) = request.price_availability {
+            for disk in &disks {
+                if !managed_disk_price_is_complete(availability, disk) {
+                    rejection_reasons.push(reason(
+                        VmSelectionReasonCode::PriceUnavailable,
+                        format!(
+                            "Managed disk {} for volume {} is missing a required coherent price dimension.",
+                            disk.tier_key.as_deref().unwrap_or(&disk.offer_key),
+                            disk.label
+                        ),
+                    ));
+                }
+            }
+        }
+
         evaluations.push(VmCandidateEvaluation {
             arm_sku_name: candidate.arm_sku_name.clone(),
             vcpus: candidate.vcpus,
@@ -437,31 +530,55 @@ pub fn select_vm_target(
             .last()
             .is_some_and(|evaluation| evaluation.eligible)
         {
-            eligible.push(EvaluatedCandidate { candidate, disks });
+            eligible.push(EvaluatedCandidate {
+                candidate,
+                disks,
+                hourly_rate,
+            });
         }
     }
 
     evaluations.sort_by(|left, right| left.arm_sku_name.cmp(&right.arm_sku_name));
 
-    let Some(best) = eligible.into_iter().min_by(|left, right| rank(left, right)) else {
-        return Ok(VmTargetSelection {
-            mapping_status: MappingStatus::NoMapping,
-            requested_lineage,
-            selected: None,
-            candidates: evaluations,
-            outcome_reasons: vec![reason(
+    let best = match request.requested_target_arm_sku {
+        Some(requested) => eligible.into_iter().find(|evaluated| {
+            evaluated
+                .candidate
+                .arm_sku_name
+                .eq_ignore_ascii_case(requested)
+        }),
+        None => eligible.into_iter().min_by(|left, right| rank(left, right)),
+    };
+    let Some(best) = best else {
+        let outcome_reasons = match request.requested_target_arm_sku {
+            Some(requested) => vec![reason(
+                VmSelectionReasonCode::TargetOverrideIneligible,
+                format!(
+                    "Requested target {requested} is absent or fails the reviewed region, lineage, lifecycle, compute, local-storage, or managed-disk requirements."
+                ),
+            )],
+            None => vec![reason(
                 VmSelectionReasonCode::LineageMismatch,
                 format!(
                     "No current {requested_lineage:?} size in {} satisfies the vCPU, memory, disk, and aggregate limits.",
                     request.azure_region
                 ),
             )],
+        };
+        return Ok(VmTargetSelection {
+            mapping_status: MappingStatus::NoMapping,
+            recommendation_status: VmRecommendationStatus::NoEligibleTarget,
+            requested_lineage,
+            selected: None,
+            candidates: evaluations,
+            outcome_reasons,
         });
     };
 
     let candidate = best.candidate;
     Ok(VmTargetSelection {
         mapping_status: MappingStatus::Mapped,
+        recommendation_status: VmRecommendationStatus::Recommended,
         requested_lineage,
         selected: Some(SelectedVmTarget {
             arm_sku_name: candidate.arm_sku_name.clone(),
@@ -676,12 +793,35 @@ fn rank(left: &EvaluatedCandidate<'_>, right: &EvaluatedCandidate<'_>) -> Orderi
         .then_with(|| {
             disk_capacity(left)
                 .cmp(&disk_capacity(right))
+                .then_with(|| left.hourly_rate.cmp(&right.hourly_rate))
                 .then_with(|| {
                     left.candidate
                         .arm_sku_name
                         .cmp(&right.candidate.arm_sku_name)
                 })
         })
+}
+
+fn managed_disk_price_is_complete(
+    availability: &VmPriceAvailability,
+    disk: &SelectedManagedDisk,
+) -> bool {
+    let contains = |dimension| {
+        availability
+            .managed_disk_dimensions
+            .contains(&VmDiskPriceKey {
+                offer_key: disk.offer_key.clone(),
+                tier_key: disk.tier_key.clone(),
+                dimension,
+            })
+    };
+    if disk.tier_key.is_some() {
+        return contains(VmDiskPriceDimension::CapacityTier);
+    }
+    contains(VmDiskPriceDimension::CapacityGb)
+        && (disk.billed_additional_iops == 0 || contains(VmDiskPriceDimension::AdditionalIops))
+        && (disk.billed_additional_throughput_mbps.0 == Decimal::ZERO
+            || contains(VmDiskPriceDimension::AdditionalThroughput))
 }
 
 fn disk_capacity(candidate: &EvaluatedCandidate<'_>) -> Decimal {
@@ -745,6 +885,8 @@ mod tests {
             requires_local_temp_disk: false,
             minimum_local_temp_disk_gb: DecimalValue::ZERO,
             volumes,
+            requested_target_arm_sku: None,
+            price_availability: None,
         }
     }
 
@@ -955,6 +1097,110 @@ mod tests {
     }
 
     #[test]
+    fn an_eligible_target_override_is_revalidated_and_selected() {
+        let volumes = [os_volume()];
+        let mut overridden = request(SourceClass::GeneralPurpose, 2, 8, &volumes);
+        overridden.requested_target_arm_sku = Some("Standard_D4s_v7");
+
+        let selection = select(&overridden);
+        assert_eq!(selection.mapping_status, MappingStatus::Mapped);
+        assert_eq!(
+            selection
+                .selected
+                .expect("the eligible override is selected")
+                .arm_sku_name,
+            "Standard_D4s_v7"
+        );
+    }
+
+    #[test]
+    fn a_target_override_cannot_bypass_lineage_validation() {
+        let volumes = [os_volume()];
+        let mut overridden = request(SourceClass::GeneralPurpose, 2, 8, &volumes);
+        overridden.requested_target_arm_sku = Some("Standard_B2s_v2");
+
+        let selection = select(&overridden);
+        assert_eq!(selection.mapping_status, MappingStatus::NoMapping);
+        assert_eq!(
+            selection.recommendation_status,
+            VmRecommendationStatus::NoEligibleTarget
+        );
+        assert!(
+            selection
+                .outcome_reasons
+                .iter()
+                .any(|reason| { reason.code == VmSelectionReasonCode::TargetOverrideIneligible })
+        );
+        assert!(selection.candidates.iter().any(|candidate| {
+            candidate.arm_sku_name == "Standard_B2s_v2"
+                && candidate
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason.code == VmSelectionReasonCode::LineageMismatch)
+        }));
+    }
+
+    #[test]
+    fn an_unpriced_capability_candidate_is_rejected_for_a_priced_fallback() {
+        let volumes = [os_volume()];
+        let mut priced = request(SourceClass::GeneralPurpose, 2, 8, &volumes);
+        let availability = price_availability(&[("Standard_D2s_v7", 1)], true);
+        priced.price_availability = Some(&availability);
+
+        let selection = select(&priced);
+        assert_eq!(
+            selection
+                .selected
+                .expect("a complete priced fallback is selected")
+                .arm_sku_name,
+            "Standard_D2s_v7"
+        );
+        assert!(selection.candidates.iter().any(|candidate| {
+            candidate.arm_sku_name == "Standard_D2ds_v7"
+                && candidate
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason.code == VmSelectionReasonCode::PriceUnavailable)
+        }));
+    }
+
+    #[test]
+    fn a_missing_managed_disk_dimension_fails_closed() {
+        let volumes = [os_volume()];
+        let mut priced = request(SourceClass::GeneralPurpose, 2, 8, &volumes);
+        let availability = price_availability(&[("Standard_D2ds_v7", 1)], false);
+        priced.price_availability = Some(&availability);
+
+        let selection = select(&priced);
+        assert_eq!(selection.mapping_status, MappingStatus::NoMapping);
+        assert!(selection.candidates.iter().any(|candidate| {
+            candidate.arm_sku_name == "Standard_D2ds_v7"
+                && candidate
+                    .rejection_reasons
+                    .iter()
+                    .any(|reason| reason.code == VmSelectionReasonCode::PriceUnavailable)
+        }));
+    }
+
+    #[test]
+    fn complete_payg_price_breaks_an_otherwise_equal_capability_tie() {
+        let volumes = [os_volume()];
+        let mut priced = request(SourceClass::GeneralPurpose, 2, 8, &volumes);
+        let availability =
+            price_availability(&[("Standard_D2ds_v7", 2), ("Standard_D2s_v7", 1)], true);
+        priced.price_availability = Some(&availability);
+
+        let selection = select(&priced);
+        assert_eq!(
+            selection
+                .selected
+                .expect("the lower complete rate wins the final price tie-breaker")
+                .arm_sku_name,
+            "Standard_D2s_v7"
+        );
+    }
+
+    #[test]
     fn a_source_larger_than_every_reviewed_size_reports_no_mapping() {
         let volumes = [os_volume()];
         let selection = select(&request(SourceClass::Burstable, 64, 256, &volumes));
@@ -1010,5 +1256,23 @@ mod tests {
         let first = select(&request(SourceClass::MemoryOptimized, 8, 64, &volumes));
         let second = select(&request(SourceClass::MemoryOptimized, 8, 64, &volumes));
         assert_eq!(first, second);
+    }
+
+    fn price_availability(vm_rates: &[(&str, i64)], include_p4: bool) -> VmPriceAvailability {
+        VmPriceAvailability {
+            vm_hourly_rates: vm_rates
+                .iter()
+                .map(|(sku, rate)| (sku.to_ascii_lowercase(), decimal(*rate)))
+                .collect(),
+            managed_disk_dimensions: if include_p4 {
+                BTreeSet::from([VmDiskPriceKey {
+                    offer_key: "premium_ssd_lrs".to_owned(),
+                    tier_key: Some("P4".to_owned()),
+                    dimension: VmDiskPriceDimension::CapacityTier,
+                }])
+            } else {
+                BTreeSet::new()
+            },
+        }
     }
 }

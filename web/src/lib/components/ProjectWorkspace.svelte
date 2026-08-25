@@ -115,15 +115,19 @@
   const resourceLabel = $derived(
     workspace.project.settings.project_type === 'on_prem'
       ? 'server'
-      : workspace.project.settings.project_type.toUpperCase()
+      : workspace.project.settings.project_type === 'ec2_vm'
+        ? 'VM'
+        : workspace.project.settings.project_type.toUpperCase()
   );
   const isSqlPayg = $derived(workspace.project.settings.project_type === 'sql_payg');
+  const isVmProject = $derived(workspace.project.settings.project_type === 'ec2_vm');
   const calculatorLaunchEligible = $derived(
     mode === 'authenticated' &&
       currentProjectId !== null &&
       currentEtag !== null &&
       !dirty &&
       !isSqlPayg &&
+      !isVmProject &&
       workspace.calculation !== null
   );
 
@@ -406,7 +410,7 @@
     }
     const region = encodeURIComponent(project.settings.aws_region);
     try {
-      if (project.settings.project_type === 'ec2') {
+      if (project.settings.project_type === 'ec2' || project.settings.project_type === 'ec2_vm') {
         const [instances, volumes] = await Promise.all([
           requestJson(`/api/v1/catalog/aws/ec2/instances?region=${region}`),
           requestJson(`/api/v1/catalog/aws/ebs/types?region=${region}`)
@@ -617,7 +621,9 @@
           type="button"
           title={calculatorLaunchEligible
             ? 'Create Azure Calculator estimate'
-            : 'Save and calculate this project before creating a Calculator estimate'}
+            : isVmProject
+              ? 'Azure Calculator automation for EC2 VM estimates is not available yet'
+              : 'Save and calculate this project before creating a Calculator estimate'}
           onclick={createCalculatorEstimate}
           disabled={!calculatorLaunchEligible || saving || launchingCalculator}
         >
@@ -686,7 +692,7 @@
             <span class="eyebrow">Comparison scope</span>
             <h2>
               {workspace.project.settings.project_type === 'on_prem' ? 'Datacenter' : 'AWS'} to Azure
-              SQL Managed Instance
+              {isVmProject ? 'Virtual Machines' : 'SQL Managed Instance'}
             </h2>
           </div>
           <button
@@ -779,12 +785,14 @@
               oninput={markDirty}
             /></label
           >
-          <MiPurchasePlanSelector
-            id="settings-mi-purchase-plan"
-            legend="Default Azure SQL MI pricing for new workloads"
-            bind:value={workspace.project.settings.default_mi_purchase_option}
-            onchange={markDirty}
-          />
+          {#if !isVmProject}
+            <MiPurchasePlanSelector
+              id="settings-mi-purchase-plan"
+              legend="Default Azure SQL MI pricing for new workloads"
+              bind:value={workspace.project.settings.default_mi_purchase_option}
+              onchange={markDirty}
+            />
+          {/if}
           {#if workspace.project.settings.project_type !== 'on_prem'}
             <label
               ><span>Source compute discount</span><input
@@ -797,16 +805,18 @@
               /></label
             >
           {/if}
-          <label
-            ><span>Source license discount</span><input
-              type="number"
-              min="0"
-              max="1"
-              step="0.01"
-              bind:value={workspace.project.settings.source_license_discount}
-              oninput={markDirty}
-            /></label
-          >
+          {#if !isVmProject}
+            <label
+              ><span>Source license discount</span><input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                bind:value={workspace.project.settings.source_license_discount}
+                oninput={markDirty}
+              /></label
+            >
+          {/if}
           {#if workspace.project.settings.project_type !== 'on_prem'}
             <label
               ><span>Source storage discount</span><input
@@ -829,16 +839,18 @@
               oninput={markDirty}
             /></label
           >
-          <label
-            ><span>Azure license discount</span><input
-              type="number"
-              min="0"
-              max="1"
-              step="0.01"
-              bind:value={workspace.project.settings.azure_license_discount}
-              oninput={markDirty}
-            /></label
-          >
+          {#if !isVmProject}
+            <label
+              ><span>Azure license discount</span><input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                bind:value={workspace.project.settings.azure_license_discount}
+                oninput={markDirty}
+              /></label
+            >
+          {/if}
           <label
             ><span>Azure storage discount</span><input
               type="number"

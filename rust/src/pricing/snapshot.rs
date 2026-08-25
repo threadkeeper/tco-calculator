@@ -59,6 +59,10 @@ pub struct AzurePriceSnapshot {
     pub metadata: SnapshotMetadata,
     pub target_region: String,
     pub mi_rates: Vec<AzureMiRateRecord>,
+    #[serde(default)]
+    pub vm_rates: Vec<AzureVmRateRecord>,
+    #[serde(default)]
+    pub managed_disk_rates: Vec<AzureManagedDiskRateRecord>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -100,6 +104,37 @@ pub struct AzureMiRateRecord {
     pub provenance: RateProvenance,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AzureVmRateRecord {
+    pub stable_key: String,
+    pub arm_sku_name: String,
+    pub hourly_rate: crate::domain::decimal::DecimalValue,
+    pub unit_of_measure: String,
+    pub raw_price_lexeme: String,
+    pub provenance: RateProvenance,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AzureManagedDiskPriceDimension {
+    CapacityTier,
+    CapacityGb,
+    AdditionalIops,
+    AdditionalThroughput,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AzureManagedDiskRateRecord {
+    pub stable_key: String,
+    pub offer_key: String,
+    pub tier_key: Option<String>,
+    pub dimension: AzureManagedDiskPriceDimension,
+    pub normalized_monthly_rate: crate::domain::decimal::DecimalValue,
+    pub unit_of_measure: String,
+    pub raw_price_lexeme: String,
+    pub provenance: RateProvenance,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct SnapshotCreationMetadata {
     pub status: ResolutionStatus,
@@ -129,6 +164,8 @@ pub enum SnapshotError {
         "Azure SQL MI configurations require a complete and consistent eight-option price matrix"
     )]
     InvalidAzurePurchaseMatrix,
+    #[error("Azure Virtual Machine or managed-disk rates are invalid or conflicting")]
+    InvalidAzureVmRates,
     #[error("snapshot content could not be canonicalized")]
     Canonicalization,
     #[error("stored snapshot metadata or content does not match its canonical snapshot")]
@@ -230,17 +267,48 @@ impl AwsPriceSnapshot {
 
 impl AzurePriceSnapshot {
     pub fn create(
+        metadata: SnapshotCreationMetadata,
+        target_region: impl Into<String>,
+        mi_rates: Vec<AzureMiRateRecord>,
+    ) -> Result<Self, SnapshotError> {
+        Self::create_with_vm_rates(metadata, target_region, mi_rates, Vec::new(), Vec::new())
+    }
+
+    pub fn create_with_vm_rates(
         mut metadata: SnapshotCreationMetadata,
         target_region: impl Into<String>,
         mut mi_rates: Vec<AzureMiRateRecord>,
+        mut vm_rates: Vec<AzureVmRateRecord>,
+        mut managed_disk_rates: Vec<AzureManagedDiskRateRecord>,
     ) -> Result<Self, SnapshotError> {
         let target_region = target_region.into();
         validate_creation_metadata(&metadata, &target_region)?;
         normalize_provenance(&mut mi_rates, |record| &mut record.provenance);
+        normalize_provenance(&mut vm_rates, |record| &mut record.provenance);
+        normalize_provenance(&mut managed_disk_rates, |record| &mut record.provenance);
         mi_rates.sort_by(|left, right| left.stable_key.cmp(&right.stable_key));
-        validate_unique_keys(mi_rates.iter().map(|record| record.stable_key.as_str()))?;
-        validate_rate_provenance(mi_rates.iter().map(|record| &record.provenance))?;
+        vm_rates.sort_by(|left, right| left.stable_key.cmp(&right.stable_key));
+        managed_disk_rates.sort_by(|left, right| left.stable_key.cmp(&right.stable_key));
+        validate_unique_keys(
+            mi_rates
+                .iter()
+                .map(|record| record.stable_key.as_str())
+                .chain(vm_rates.iter().map(|record| record.stable_key.as_str()))
+                .chain(
+                    managed_disk_rates
+                        .iter()
+                        .map(|record| record.stable_key.as_str()),
+                ),
+        )?;
+        validate_rate_provenance(
+            mi_rates
+                .iter()
+                .map(|record| &record.provenance)
+                .chain(vm_rates.iter().map(|record| &record.provenance))
+                .chain(managed_disk_rates.iter().map(|record| &record.provenance)),
+        )?;
         validate_azure_purchase_matrices(&mi_rates)?;
+        validate_azure_vm_rates(&vm_rates, &managed_disk_rates)?;
 
         let canonical = AzureCanonicalPayload {
             provider: Provider::Azure,
@@ -248,6 +316,8 @@ impl AzurePriceSnapshot {
             target_region: &target_region,
             parser_schema_version: &metadata.parser_schema_version,
             mi_rates: &mi_rates,
+            vm_rates: &vm_rates,
+            managed_disk_rates: &managed_disk_rates,
         };
         let content_sha256 = hash_canonical(&canonical)?;
         let snapshot_id = format!("azure-{content_sha256}");
@@ -268,6 +338,8 @@ impl AzurePriceSnapshot {
             },
             target_region,
             mi_rates,
+            vm_rates,
+            managed_disk_rates,
         })
     }
 
@@ -298,6 +370,25 @@ impl AzurePriceSnapshot {
                 })
                 .count()
                 == 1
+        })
+    }
+
+    pub fn vm_rate(&self, arm_sku_name: &str) -> Option<&AzureVmRateRecord> {
+        self.vm_rates
+            .iter()
+            .find(|record| record.arm_sku_name.eq_ignore_ascii_case(arm_sku_name))
+    }
+
+    pub fn managed_disk_rate(
+        &self,
+        offer_key: &str,
+        tier_key: Option<&str>,
+        dimension: AzureManagedDiskPriceDimension,
+    ) -> Option<&AzureManagedDiskRateRecord> {
+        self.managed_disk_rates.iter().find(|record| {
+            record.offer_key.eq_ignore_ascii_case(offer_key)
+                && record.tier_key.as_deref() == tier_key
+                && record.dimension == dimension
         })
     }
 }
@@ -340,8 +431,16 @@ pub fn validate_stored_azure_snapshot(
         metadata,
         target_region,
         mi_rates,
+        vm_rates,
+        managed_disk_rates,
     } = snapshot;
-    let rebuilt = AzurePriceSnapshot::create(creation_metadata(metadata), target_region, mi_rates)?;
+    let rebuilt = AzurePriceSnapshot::create_with_vm_rates(
+        creation_metadata(metadata),
+        target_region,
+        mi_rates,
+        vm_rates,
+        managed_disk_rates,
+    )?;
     if serde_json::to_value(&rebuilt).map_err(|_| SnapshotError::Canonicalization)? != original {
         return Err(SnapshotError::StoredSnapshotMismatch);
     }
@@ -530,6 +629,8 @@ struct AzureCanonicalPayload<'a> {
     target_region: &'a str,
     parser_schema_version: &'a str,
     mi_rates: &'a [AzureMiRateRecord],
+    vm_rates: &'a [AzureVmRateRecord],
+    managed_disk_rates: &'a [AzureManagedDiskRateRecord],
 }
 
 fn validate_creation_metadata(
@@ -715,6 +816,54 @@ fn validate_azure_purchase_matrices(records: &[AzureMiRateRecord]) -> Result<(),
         }
     }
     Ok(())
+}
+
+fn validate_azure_vm_rates(
+    vm_rates: &[AzureVmRateRecord],
+    managed_disk_rates: &[AzureManagedDiskRateRecord],
+) -> Result<(), SnapshotError> {
+    let mut vm_keys = BTreeSet::new();
+    for record in vm_rates {
+        if record.arm_sku_name.is_empty()
+            || record.hourly_rate.0 <= Decimal::ZERO
+            || record.unit_of_measure != "1 Hour"
+            || !valid_raw_price(&record.raw_price_lexeme)
+            || !vm_keys.insert(record.arm_sku_name.to_ascii_lowercase())
+        {
+            return Err(SnapshotError::InvalidAzureVmRates);
+        }
+    }
+
+    let mut disk_keys = BTreeSet::new();
+    for record in managed_disk_rates {
+        let tier_shape_valid = match record.dimension {
+            AzureManagedDiskPriceDimension::CapacityTier => record.tier_key.is_some(),
+            AzureManagedDiskPriceDimension::CapacityGb
+            | AzureManagedDiskPriceDimension::AdditionalIops
+            | AzureManagedDiskPriceDimension::AdditionalThroughput => record.tier_key.is_none(),
+        };
+        let business_key = (
+            record.offer_key.to_ascii_lowercase(),
+            record.tier_key.as_deref(),
+            record.dimension,
+        );
+        if record.offer_key.is_empty()
+            || !tier_shape_valid
+            || record.normalized_monthly_rate.0 <= Decimal::ZERO
+            || record.unit_of_measure.is_empty()
+            || !valid_raw_price(&record.raw_price_lexeme)
+            || !disk_keys.insert(business_key)
+        {
+            return Err(SnapshotError::InvalidAzureVmRates);
+        }
+    }
+    Ok(())
+}
+
+fn valid_raw_price(value: &str) -> bool {
+    value
+        .parse::<Decimal>()
+        .is_ok_and(|price| price > Decimal::ZERO)
 }
 
 fn valid_azure_option_pair(

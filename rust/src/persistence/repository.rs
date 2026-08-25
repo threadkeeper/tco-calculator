@@ -321,8 +321,9 @@ mod tests {
         decimal::DecimalValue,
         project::ProjectSettings,
         resource::{
-            LicenseBasis, OnPremResource, ProjectType, PurchaseOption, Resource, SharedResource,
-            SqlEdition, SqlWorkload,
+            EbsVolumeType, Ec2VmRequirements, Ec2VmResource, LicenseBasis, OnPremResource,
+            ProjectType, PurchaseOption, Resource, SharedResource, SqlEdition, SqlWorkload,
+            VmDiskRole, VmVolume,
         },
     };
 
@@ -357,6 +358,44 @@ mod tests {
                 .name,
             "Private project"
         );
+    }
+
+    #[tokio::test]
+    async fn ec2_vm_project_lifecycle_is_owner_scoped() {
+        let repository = InMemoryProjectRepository::new();
+        let owner_id = "entra:tenant-a:user";
+        let created = repository
+            .create(owner_id, vm_project("VM project"), None)
+            .await
+            .expect("create VM project");
+
+        assert!(matches!(
+            repository.get("entra:tenant-b:user", created.id).await,
+            Err(RepositoryError::NotFound)
+        ));
+        assert!(matches!(created.resources.as_slice(), [Resource::Ec2Vm(_)]));
+
+        let updated = repository
+            .update(
+                owner_id,
+                created.id,
+                &created.etag,
+                vm_project("Updated VM project"),
+                None,
+            )
+            .await
+            .expect("update VM project");
+        assert_eq!(updated.name, "Updated VM project");
+        assert!(matches!(updated.resources.as_slice(), [Resource::Ec2Vm(_)]));
+
+        repository
+            .delete(owner_id, created.id)
+            .await
+            .expect("delete VM project");
+        assert!(matches!(
+            repository.get(owner_id, created.id).await,
+            Err(RepositoryError::NotFound)
+        ));
     }
 
     #[tokio::test]
@@ -599,5 +638,38 @@ mod tests {
             aws_price_snapshot_id: None,
             azure_price_snapshot_id: None,
         }
+    }
+
+    fn vm_project(name: &str) -> EditableProject {
+        let mut project = project(name);
+        project.settings.project_type = ProjectType::Ec2Vm;
+        project.settings.aws_region = Some("eu-west-1".to_owned());
+        project.settings.enterprise_license_sa_usd_per_two_core_pack = None;
+        project.settings.standard_license_sa_usd_per_two_core_pack = None;
+        project.settings.remaining_coverage_months = None;
+        project.settings.electricity_rate_usd_per_kwh = None;
+        project.resources = vec![Resource::Ec2Vm(Ec2VmResource {
+            shared: SharedResource {
+                id: Uuid::new_v4(),
+                workload_name: "Synthetic VM".to_owned(),
+                server_name: None,
+                quantity: 1,
+                source_ram_gb_per_instance: DecimalValue(Decimal::from(8_u8)),
+                annual_hours_per_instance: DecimalValue(Decimal::from(8_760_u32)),
+            },
+            instance_type: "m6i.large".to_owned(),
+            requirements: Ec2VmRequirements::default(),
+            volumes: vec![VmVolume {
+                id: Uuid::new_v4(),
+                label: "OS".to_owned(),
+                aws_volume_id: None,
+                volume_type: EbsVolumeType::Gp3,
+                role: VmDiskRole::Os,
+                capacity_gb: DecimalValue(Decimal::from(1_024_u32)),
+                provisioned_iops: Some(3_000),
+                throughput_mibps: Some(DecimalValue(Decimal::from(125_u16))),
+            }],
+        })];
+        project
     }
 }

@@ -5,7 +5,9 @@ use uuid::Uuid;
 
 use super::{
     decimal::DecimalValue,
-    resource::{EbsVolumeType, ProjectType, PurchaseOption, Resource, VmDiskRole},
+    resource::{
+        EbsVolumeType, ProjectType, PurchaseOption, Resource, VmDiskRole, VmInstanceStoreUse,
+    },
 };
 use crate::calculation::engine::CalculationRevision;
 
@@ -298,6 +300,47 @@ impl EditableProject {
                             "EC2 instance type is required.",
                         ));
                     }
+                    if resource.requirements.instance_store_use == VmInstanceStoreUse::Used {
+                        if resource
+                            .requirements
+                            .required_local_temp_disk_gb
+                            .is_none_or(|capacity| capacity.0 <= Decimal::ZERO)
+                        {
+                            issues.push(issue(
+                                &format!(
+                                    "/resources/{index}/requirements/required_local_temp_disk_gb"
+                                ),
+                                "required",
+                                "Used instance storage requires a positive local capacity.",
+                            ));
+                        }
+                        if resource
+                            .requirements
+                            .ephemeral_data_loss_acceptable
+                            .is_none()
+                        {
+                            issues.push(issue(
+                                &format!(
+                                    "/resources/{index}/requirements/ephemeral_data_loss_acceptable"
+                                ),
+                                "required",
+                                "Used instance storage requires an explicit ephemeral data-loss decision.",
+                            ));
+                        }
+                    }
+                    if let Some(target) = resource.requirements.requested_target_arm_sku.as_deref()
+                        && (target.is_empty()
+                            || target.len() > 100
+                            || !target.bytes().all(|byte| {
+                                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
+                            }))
+                    {
+                        issues.push(issue(
+                            &format!("/resources/{index}/requirements/requested_target_arm_sku"),
+                            "format",
+                            "Requested Azure VM target must be a bounded ARM SKU name.",
+                        ));
+                    }
                     if !(1..=50).contains(&resource.volumes.len()) {
                         issues.push(issue(
                             &format!("/resources/{index}/volumes"),
@@ -349,6 +392,20 @@ impl EditableProject {
                                 &format!("{prefix}/capacity_gb"),
                                 "range",
                                 "Volume capacity must not be negative.",
+                            ));
+                        }
+                        if volume.volume_type == EbsVolumeType::Ephemeral {
+                            issues.push(issue(
+                                &format!("{prefix}/volume_type"),
+                                "unsupported",
+                                "Instance storage must use the VM instance-store requirements rather than a persistent volume row.",
+                            ));
+                        }
+                        if volume.role == VmDiskRole::Unknown {
+                            issues.push(issue(
+                                &format!("{prefix}/role"),
+                                "required",
+                                "Persistent volume role must be confirmed before calculation.",
                             ));
                         }
                         if volume.volume_type != EbsVolumeType::Ephemeral

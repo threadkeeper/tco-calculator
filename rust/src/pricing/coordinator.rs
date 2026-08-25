@@ -6,7 +6,10 @@ use thiserror::Error;
 use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
-use crate::calculation::target_selector::CapabilityCatalog;
+use crate::calculation::{
+    target_selector::CapabilityCatalog,
+    vm_target_selector::{ManagedDiskCatalog, VmCapabilityCatalog},
+};
 
 use super::{
     live::PARSER_SCHEMA_VERSION,
@@ -21,8 +24,9 @@ use super::{
 
 const AWS_SERVICE: &str = "Amazon EC2, RDS, and EBS";
 const AWS_FILTER: &str = "current SQL Server compute and reviewed storage meters";
-const AZURE_SERVICE: &str = "Azure SQL Managed Instance";
-const AZURE_FILTER: &str = "reviewed SQL MI capability configurations and eight purchase options";
+const AZURE_SERVICE: &str = "Azure SQL Managed Instance, Virtual Machines, and Managed Disks";
+const AZURE_FILTER: &str =
+    "reviewed SQL MI, Windows VM, and managed-disk capability and price dimensions";
 const DISTRIBUTED_WAIT_BUDGET: Duration = Duration::from_secs(120);
 const INITIAL_LEASE_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_LEASE_BACKOFF: Duration = Duration::from_secs(2);
@@ -49,7 +53,7 @@ trait SnapshotLoader: Send + Sync {
     async fn load_azure_snapshot(
         &self,
         target_region: &str,
-        capabilities: &CapabilityCatalog,
+        catalogs: &AzurePricingCatalogs,
     ) -> Result<AzurePriceSnapshot, ProviderError>;
 }
 
@@ -65,9 +69,37 @@ impl SnapshotLoader for LivePricingLoader {
     async fn load_azure_snapshot(
         &self,
         target_region: &str,
-        capabilities: &CapabilityCatalog,
+        catalogs: &AzurePricingCatalogs,
     ) -> Result<AzurePriceSnapshot, ProviderError> {
-        LivePricingLoader::load_azure_snapshot(self, target_region, capabilities).await
+        LivePricingLoader::load_azure_snapshot(
+            self,
+            target_region,
+            &catalogs.sql_mi,
+            &catalogs.virtual_machines,
+            &catalogs.managed_disks,
+        )
+        .await
+    }
+}
+
+#[derive(Clone)]
+pub struct AzurePricingCatalogs {
+    sql_mi: Arc<CapabilityCatalog>,
+    virtual_machines: Arc<VmCapabilityCatalog>,
+    managed_disks: Arc<ManagedDiskCatalog>,
+}
+
+impl AzurePricingCatalogs {
+    pub fn new(
+        sql_mi: Arc<CapabilityCatalog>,
+        virtual_machines: Arc<VmCapabilityCatalog>,
+        managed_disks: Arc<ManagedDiskCatalog>,
+    ) -> Self {
+        Self {
+            sql_mi,
+            virtual_machines,
+            managed_disks,
+        }
     }
 }
 
@@ -77,7 +109,7 @@ pub struct PricingCoordinator {
     durable: Option<Arc<dyn DurableSnapshotRepository>>,
     leases: Option<Arc<dyn RefreshLeaseRepository>>,
     loader: Option<Arc<dyn SnapshotLoader>>,
-    capabilities: Arc<CapabilityCatalog>,
+    azure_catalogs: AzurePricingCatalogs,
     aws_flights: Arc<Mutex<HashMap<RefreshKey, Arc<Flight<AwsPriceSnapshot>>>>>,
     azure_flights: Arc<Mutex<HashMap<RefreshKey, Arc<Flight<AzurePriceSnapshot>>>>>,
 }
@@ -88,14 +120,14 @@ impl PricingCoordinator {
         durable: Option<Arc<dyn DurableSnapshotRepository>>,
         leases: Option<Arc<dyn RefreshLeaseRepository>>,
         loader: Option<LivePricingLoader>,
-        capabilities: Arc<CapabilityCatalog>,
+        azure_catalogs: AzurePricingCatalogs,
     ) -> Self {
         Self::with_loader(
             repository,
             durable,
             leases,
             loader.map(|loader| Arc::new(loader) as Arc<dyn SnapshotLoader>),
-            capabilities,
+            azure_catalogs,
         )
     }
 
@@ -104,14 +136,14 @@ impl PricingCoordinator {
         durable: Option<Arc<dyn DurableSnapshotRepository>>,
         leases: Option<Arc<dyn RefreshLeaseRepository>>,
         loader: Option<Arc<dyn SnapshotLoader>>,
-        capabilities: Arc<CapabilityCatalog>,
+        azure_catalogs: AzurePricingCatalogs,
     ) -> Self {
         Self {
             repository,
             durable,
             leases,
             loader,
-            capabilities,
+            azure_catalogs,
             aws_flights: Arc::new(Mutex::new(HashMap::new())),
             azure_flights: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -406,7 +438,7 @@ impl PricingCoordinator {
         let repository = self.repository.clone();
         let durable = self.durable.clone();
         let leases = self.leases.clone();
-        let capabilities = Arc::clone(&self.capabilities);
+        let azure_catalogs = self.azure_catalogs.clone();
         let flights = Arc::clone(&self.azure_flights);
         let task_flight = Arc::clone(&flight);
         let cache_key_sha256 = key.sha256();
@@ -419,7 +451,7 @@ impl PricingCoordinator {
                     loader: loader.as_ref(),
                     cache_key_sha256: &cache_key_sha256,
                 },
-                &capabilities,
+                &azure_catalogs,
                 &currency,
                 &target_region,
             )
@@ -548,13 +580,13 @@ async fn owner_refresh_aws(
 
 async fn refresh_azure_task(
     context: RefreshTaskContext<'_>,
-    capabilities: &CapabilityCatalog,
+    catalogs: &AzurePricingCatalogs,
     currency: &str,
     target_region: &str,
 ) -> Result<Arc<AzurePriceSnapshot>, RefreshFailure> {
     let deadline = tokio::time::Instant::now() + DISTRIBUTED_WAIT_BUDGET;
     let Some(distributed) = context.distributed() else {
-        let snapshot = load_azure_before(context.loader, target_region, capabilities, deadline)
+        let snapshot = load_azure_before(context.loader, target_region, catalogs, deadline)
             .await
             .map_err(RefreshFailure::Provider)?;
         return persist_azure(context.repository, context.durable, snapshot)
@@ -571,7 +603,7 @@ async fn refresh_azure_task(
             RefreshLeaseDecision::Acquired => {
                 return owner_refresh_azure(
                     distributed,
-                    capabilities,
+                    catalogs,
                     &owner_token,
                     target_region,
                     deadline,
@@ -598,12 +630,12 @@ async fn refresh_azure_task(
 
 async fn owner_refresh_azure(
     context: DistributedRefreshContext<'_>,
-    capabilities: &CapabilityCatalog,
+    catalogs: &AzurePricingCatalogs,
     owner_token: &str,
     target_region: &str,
     deadline: tokio::time::Instant,
 ) -> Result<Arc<AzurePriceSnapshot>, RefreshFailure> {
-    match load_azure_before(context.loader, target_region, capabilities, deadline).await {
+    match load_azure_before(context.loader, target_region, catalogs, deadline).await {
         Ok(snapshot) => {
             context
                 .durable
@@ -672,12 +704,12 @@ async fn load_aws_before(
 async fn load_azure_before(
     loader: &dyn SnapshotLoader,
     target_region: &str,
-    capabilities: &CapabilityCatalog,
+    catalogs: &AzurePricingCatalogs,
     deadline: tokio::time::Instant,
 ) -> Result<AzurePriceSnapshot, ProviderError> {
     tokio::time::timeout_at(
         deadline,
-        loader.load_azure_snapshot(target_region, capabilities),
+        loader.load_azure_snapshot(target_region, catalogs),
     )
     .await
     .unwrap_or(Err(ProviderError::TemporarilyUnavailable))
@@ -1189,7 +1221,7 @@ mod tests {
         async fn load_azure_snapshot(
             &self,
             target_region: &str,
-            _capabilities: &CapabilityCatalog,
+            _catalogs: &AzurePricingCatalogs,
         ) -> Result<AzurePriceSnapshot, ProviderError> {
             self.azure_calls.fetch_add(1, Ordering::SeqCst);
             match self.azure_behavior {
@@ -1761,12 +1793,26 @@ mod tests {
         PricingCoordinator::with_loader(repository, durable, None, loader, capabilities())
     }
 
-    fn capabilities() -> Arc<CapabilityCatalog> {
-        Arc::new(
-            serde_json::from_str(include_str!(
-                "../../../app/catalogs/sql-mi-capabilities.json"
-            ))
-            .expect("embedded capability catalog"),
+    fn capabilities() -> AzurePricingCatalogs {
+        AzurePricingCatalogs::new(
+            Arc::new(
+                serde_json::from_str(include_str!(
+                    "../../../app/catalogs/sql-mi-capabilities.json"
+                ))
+                .expect("embedded SQL MI capability catalog"),
+            ),
+            Arc::new(
+                serde_json::from_str(include_str!(
+                    "../../../app/catalogs/azure-vm-capabilities.json"
+                ))
+                .expect("embedded Azure VM capability catalog"),
+            ),
+            Arc::new(
+                serde_json::from_str(include_str!(
+                    "../../../app/catalogs/azure-managed-disk-capabilities.json"
+                ))
+                .expect("embedded managed-disk capability catalog"),
+            ),
         )
     }
 

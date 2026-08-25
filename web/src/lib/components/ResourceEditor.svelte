@@ -1,7 +1,12 @@
 <script lang="ts">
   import { ChevronDown, Database, Plus, Trash2 } from 'lucide-svelte';
   import { readBoolean, readString, type JsonRecord } from '$lib/api';
-  import type { EbsVolumeDraft, ResourceDraft } from '$lib/draft';
+  import {
+    createVmRequirements,
+    type EbsVolumeDraft,
+    type ResourceDraft,
+    type VmVolumeDraft
+  } from '$lib/draft';
   import type { PurchaseOptionDiscounts } from '$lib/mi-purchase-options';
   import MiPurchasePlanSelector from './MiPurchasePlanSelector.svelte';
 
@@ -26,13 +31,20 @@
   } = $props();
 
   function selectInstance(instanceType: string) {
-    if (resource.source_type === 'ec2' || resource.source_type === 'rds') {
+    if (
+      resource.source_type === 'ec2' ||
+      resource.source_type === 'ec2_vm' ||
+      resource.source_type === 'rds'
+    ) {
       resource.instance_type = instanceType;
       const selected = sourceInstances.find(
         (item) => readString(item, 'instance_type') === instanceType
       );
       resource.source_ram_gb_per_instance =
         readString(selected ?? null, 'memory_gib') ?? resource.source_ram_gb_per_instance;
+      if (resource.source_type === 'ec2_vm') {
+        resource.requirements = createVmRequirements(instanceType);
+      }
       onchange();
       oncatalogchange();
     }
@@ -62,22 +74,27 @@
   let selectedRdsOptionIndex = $derived(selectedRdsOption());
 
   function addVolume() {
-    if (resource.source_type !== 'ec2') return;
-    const volume: EbsVolumeDraft = {
+    if (resource.source_type !== 'ec2' && resource.source_type !== 'ec2_vm') return;
+    const volume: EbsVolumeDraft | VmVolumeDraft = {
       id: crypto.randomUUID(),
-      label: 'SQL data',
+      label: resource.source_type === 'ec2_vm' ? 'Data' : 'SQL data',
       aws_volume_id: null,
       volume_type: 'gp3',
       capacity_gb: '1024',
       provisioned_iops: 3000,
-      throughput_mibps: '125'
+      throughput_mibps: '125',
+      ...(resource.source_type === 'ec2_vm' ? { role: 'data' as const } : {})
     };
-    resource.volumes = [...resource.volumes, volume];
+    if (resource.source_type === 'ec2_vm') {
+      resource.volumes = [...resource.volumes, volume as VmVolumeDraft];
+    } else {
+      resource.volumes = [...resource.volumes, volume as EbsVolumeDraft];
+    }
     onchange();
   }
 
   function removeVolume(volumeId: string) {
-    if (resource.source_type !== 'ec2') return;
+    if (resource.source_type !== 'ec2' && resource.source_type !== 'ec2_vm') return;
     resource.volumes = resource.volumes.filter((volume) => volume.id !== volumeId);
     onchange();
   }
@@ -92,6 +109,44 @@
       volume.throughput_mibps =
         volume.volume_type === 'gp3' ? (volume.throughput_mibps ?? '125') : null;
     }
+    onchange();
+  }
+
+  function volumeRole(volume: EbsVolumeDraft | VmVolumeDraft): 'os' | 'data' | 'unknown' {
+    return 'role' in volume ? volume.role : 'data';
+  }
+
+  function setVolumeRole(volume: EbsVolumeDraft | VmVolumeDraft, role: string) {
+    if ('role' in volume && (role === 'os' || role === 'data' || role === 'unknown')) {
+      volume.role = role;
+    }
+    onchange();
+  }
+
+  function setInstanceStoreUse(value: string) {
+    if (
+      resource.source_type !== 'ec2_vm' ||
+      (value !== 'unknown' && value !== 'not_used' && value !== 'used')
+    )
+      return;
+    resource.requirements.instance_store_use = value;
+    if (value !== 'used') {
+      resource.requirements.required_local_temp_disk_gb = null;
+      resource.requirements.ephemeral_data_loss_acceptable = null;
+    }
+    onchange();
+  }
+
+  function ephemeralDataLossValue(): string {
+    if (resource.source_type !== 'ec2_vm') return 'unknown';
+    const value = resource.requirements.ephemeral_data_loss_acceptable;
+    return value === null ? 'unknown' : value ? 'acceptable' : 'not_acceptable';
+  }
+
+  function setEphemeralDataLoss(value: string) {
+    if (resource.source_type !== 'ec2_vm') return;
+    resource.requirements.ephemeral_data_loss_acceptable =
+      value === 'acceptable' ? true : value === 'not_acceptable' ? false : null;
     onchange();
   }
 
@@ -174,20 +229,6 @@
         >{/if}
     </label>
     <label>
-      <span>SQL edition</span>
-      <select bind:value={resource.sql_edition} {onchange}>
-        <option value="standard">Standard</option>
-        <option value="enterprise">Enterprise</option>
-      </select>
-    </label>
-    <label>
-      <span>License basis</span>
-      <select bind:value={resource.license_basis} {onchange}>
-        <option value="byol">Bring your own license</option>
-        <option value="license_included">License included</option>
-      </select>
-    </label>
-    <label>
       <span>Annual hours / instance</span>
       <input
         type="number"
@@ -216,35 +257,51 @@
           >Source RAM is required.</small
         >{/if}
     </label>
-    <label>
-      <span>SQL data / instance (GB)</span>
-      <input
-        type="number"
-        min="0.01"
-        step="0.01"
-        aria-invalid={isMissing(resource.sql_data_gb_per_instance)}
-        bind:value={resource.sql_data_gb_per_instance}
-        oninput={onchange}
+    {#if resource.source_type !== 'ec2_vm'}
+      <label>
+        <span>SQL edition</span>
+        <select bind:value={resource.sql_edition} {onchange}>
+          <option value="standard">Standard</option>
+          <option value="enterprise">Enterprise</option>
+        </select>
+      </label>
+      <label>
+        <span>License basis</span>
+        <select bind:value={resource.license_basis} {onchange}>
+          <option value="byol">Bring your own license</option>
+          <option value="license_included">License included</option>
+        </select>
+      </label>
+      <label>
+        <span>SQL data / instance (GB)</span>
+        <input
+          type="number"
+          min="0.01"
+          step="0.01"
+          aria-invalid={isMissing(resource.sql_data_gb_per_instance)}
+          bind:value={resource.sql_data_gb_per_instance}
+          oninput={onchange}
+        />
+        {#if isMissing(resource.sql_data_gb_per_instance)}<small class="field-error"
+            >SQL data is required.</small
+          >{/if}
+      </label>
+      <MiPurchasePlanSelector
+        id={`${resource.id}-mi-purchase-plan`}
+        legend="Azure SQL MI pricing override"
+        bind:value={resource.mi_purchase_option}
+        discounts={purchaseOptionDiscounts}
+        {onchange}
       />
-      {#if isMissing(resource.sql_data_gb_per_instance)}<small class="field-error"
-          >SQL data is required.</small
-        >{/if}
-    </label>
-    <MiPurchasePlanSelector
-      id={`${resource.id}-mi-purchase-plan`}
-      legend="Azure SQL MI pricing override"
-      bind:value={resource.mi_purchase_option}
-      discounts={purchaseOptionDiscounts}
-      {onchange}
-    />
+    {/if}
   </div>
 
-  {#if resource.source_type === 'ec2'}
+  {#if resource.source_type === 'ec2' || resource.source_type === 'ec2_vm'}
     <section class="source-section">
       <div class="section-heading">
         <div>
           <span class="eyebrow">Compute</span>
-          <h3>EC2 instance</h3>
+          <h3>{resource.source_type === 'ec2_vm' ? 'Windows EC2 instance' : 'EC2 instance'}</h3>
         </div>
       </div>
       <div class="field-grid compact">
@@ -277,13 +334,88 @@
             >{/if}
         </label>
       </div>
+      {#if resource.source_type === 'ec2_vm'}
+        <div class="field-grid vm-requirements">
+          {#if resource.instance_type.startsWith('t3.')}
+            <label>
+              <span>CPU utilization profile</span>
+              <select bind:value={resource.requirements.burst_policy} {onchange}>
+                <option value="confirmed_burst_compatible">Bursty workload</option>
+                <option value="requires_sustained_cpu">Sustained CPU required</option>
+                <option value="unknown">Needs review</option>
+              </select>
+            </label>
+          {/if}
+          <label>
+            <span>Instance store use</span>
+            <select
+              value={resource.requirements.instance_store_use}
+              onchange={(event) => setInstanceStoreUse(event.currentTarget.value)}
+            >
+              <option value="not_used">Not used</option>
+              <option value="used">Used</option>
+              <option value="unknown">Needs review</option>
+            </select>
+          </label>
+          {#if resource.requirements.instance_store_use === 'used'}
+            <label>
+              <span>Required local temporary disk (GiB)</span>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                aria-invalid={isMissing(resource.requirements.required_local_temp_disk_gb)}
+                bind:value={resource.requirements.required_local_temp_disk_gb}
+                oninput={onchange}
+              />
+              {#if isMissing(resource.requirements.required_local_temp_disk_gb)}<small
+                  class="field-error">Local temporary disk capacity is required.</small
+                >{/if}
+            </label>
+            <label>
+              <span>Ephemeral data loss</span>
+              <select
+                value={ephemeralDataLossValue()}
+                aria-invalid={resource.requirements.ephemeral_data_loss_acceptable === null}
+                onchange={(event) => setEphemeralDataLoss(event.currentTarget.value)}
+              >
+                <option value="unknown">Needs review</option>
+                <option value="acceptable">Acceptable</option>
+                <option value="not_acceptable">Not acceptable</option>
+              </select>
+              {#if resource.requirements.ephemeral_data_loss_acceptable === null}<small
+                  class="field-error">An explicit data-loss decision is required.</small
+                >{/if}
+            </label>
+          {/if}
+          {#if resource.instance_type.startsWith('z1d.')}
+            <label>
+              <span>High-frequency requirement</span>
+              <select bind:value={resource.requirements.high_frequency_requirement} {onchange}>
+                <option value="required">Required</option>
+                <option value="capacity_fit_accepted">Capacity fit accepted</option>
+                <option value="unknown">Needs review</option>
+              </select>
+            </label>
+          {/if}
+          <label>
+            <span>Azure target override</span>
+            <input
+              maxlength="100"
+              bind:value={resource.requirements.requested_target_arm_sku}
+              oninput={onchange}
+              placeholder="Automatic selection"
+            />
+          </label>
+        </div>
+      {/if}
     </section>
 
     <section class="source-section">
       <div class="section-heading">
         <div>
           <span class="eyebrow">Storage</span>
-          <h3>EBS volumes</h3>
+          <h3>Persistent EBS volumes</h3>
         </div>
         <button class="compact-button" type="button" onclick={addVolume}
           ><Plus size={16} /> Add volume</button
@@ -307,6 +439,19 @@
                     >Volume label is required.</small
                   >{/if}
               </label>
+              {#if resource.source_type === 'ec2_vm'}
+                <label>
+                  <span>Role</span>
+                  <select
+                    value={volumeRole(volume)}
+                    onchange={(event) => setVolumeRole(volume, event.currentTarget.value)}
+                  >
+                    <option value="unknown">Needs review</option>
+                    <option value="os">OS</option>
+                    <option value="data">Data</option>
+                  </select>
+                </label>
+              {/if}
               <label>
                 <span>Type</span>
                 <select
@@ -319,16 +464,20 @@
                       {@const priceUnavailable =
                         readBoolean(item, 'price_required') === true &&
                         readBoolean(item, 'pricing_available') !== true}
-                      <option value={readString(item, 'key') ?? ''}
-                        >{readString(item, 'label')}{priceUnavailable
-                          ? ' (price unavailable)'
-                          : ''}</option
-                      >
+                      {#if resource.source_type !== 'ec2_vm' || readString(item, 'key') !== 'ephemeral'}
+                        <option value={readString(item, 'key') ?? ''}
+                          >{readString(item, 'label')}{priceUnavailable
+                            ? ' (price unavailable)'
+                            : ''}</option
+                        >
+                      {/if}
                     {/each}
                   {:else}
                     <option value="gp3">gp3</option>
                     <option value="io2">io2</option>
-                    <option value="ephemeral">Instance storage</option>
+                    {#if resource.source_type !== 'ec2_vm'}<option value="ephemeral"
+                        >Instance storage</option
+                      >{/if}
                   {/if}
                 </select>
                 {#if isMissing(volume.volume_type)}
@@ -502,7 +651,7 @@
         </label>
       </div>
     </section>
-  {:else}
+  {:else if resource.source_type === 'on_prem'}
     <section class="source-section">
       <div class="section-heading">
         <div>
@@ -677,6 +826,9 @@
   }
   .field-grid.compact {
     grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  }
+  .vm-requirements {
+    margin-top: 14px;
   }
   label {
     display: grid;

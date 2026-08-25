@@ -4,7 +4,7 @@
     awsRegion = 'eu-west-1',
     azureRegion = 'swedencentral'
   }: {
-    projectType?: 'ec2' | 'rds' | 'on_prem';
+    projectType?: 'ec2' | 'ec2_vm' | 'rds' | 'on_prem';
     awsRegion?: string;
     azureRegion?: string;
   } = $props();
@@ -15,7 +15,7 @@
   <dl>
     <div>
       <dt>Project type</dt>
-      <dd>{projectType === 'on_prem' ? 'On-prem' : projectType.toUpperCase()}</dd>
+      <dd>{projectType === 'on_prem' ? 'On-prem' : projectType.replace('_', ' ').toUpperCase()}</dd>
     </div>
     <div>
       <dt>Source region</dt>

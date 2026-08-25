@@ -7,6 +7,7 @@
     Database,
     FileClock,
     Plus,
+    Server,
     Trash2
   } from 'lucide-svelte';
   import {
@@ -426,6 +427,14 @@
                 >
                 <button
                   type="button"
+                  class:selected={setupType === 'ec2_vm'}
+                  onclick={() => (setupType = 'ec2_vm')}
+                  ><Server size={22} /><b>EC2 Windows VM</b><span
+                    >Windows virtual machines and persistent EBS disks</span
+                  ></button
+                >
+                <button
+                  type="button"
                   class:selected={setupType === 'rds'}
                   onclick={() => (setupType = 'rds')}
                   ><Database size={22} /><b>Amazon RDS</b><span
@@ -668,7 +677,7 @@
   }
   .source-options {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 9px;
   }
   .source-options button {

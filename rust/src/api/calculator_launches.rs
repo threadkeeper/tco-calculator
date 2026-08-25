@@ -388,7 +388,7 @@ pub(crate) fn build_calculator_manifest(
     project: &ProjectDocument,
     generated_at: String,
 ) -> Result<CalculatorManifest, CalculatorManifestError> {
-    if project.settings.project_type == ProjectType::SqlPayg
+    if !calculator_project_type_supported(project.settings.project_type)
         || project.settings.currency != "USD"
         || project.resources.is_empty()
         || project.resources.len() > MAX_CALCULATOR_MANIFEST_ITEMS
@@ -422,6 +422,10 @@ pub(crate) fn build_calculator_manifest(
         estimate_name: project.name.clone(),
         items,
     })
+}
+
+fn calculator_project_type_supported(project_type: ProjectType) -> bool {
+    !matches!(project_type, ProjectType::Ec2Vm | ProjectType::SqlPayg)
 }
 
 fn validate_revision_binding(
@@ -655,6 +659,15 @@ mod tests {
                 (expected_plan, expected_ahb)
             );
         }
+    }
+
+    #[test]
+    fn calculator_contract_rejects_non_sql_vm_projects() {
+        assert!(!calculator_project_type_supported(ProjectType::Ec2Vm));
+        assert!(!calculator_project_type_supported(ProjectType::SqlPayg));
+        assert!(calculator_project_type_supported(ProjectType::Ec2));
+        assert!(calculator_project_type_supported(ProjectType::Rds));
+        assert!(calculator_project_type_supported(ProjectType::OnPrem));
     }
 
     #[test]

@@ -292,11 +292,30 @@ pub fn aws_region_offer_url(
 }
 
 pub fn azure_retail_url(scope: AzureRegionScope, currency: &str) -> Result<Url, ProviderError> {
+    azure_retail_url_for(scope, currency, AzureRetailService::SqlManagedInstance)
+}
+
+pub fn azure_vm_retail_url(scope: AzureRegionScope, currency: &str) -> Result<Url, ProviderError> {
+    azure_retail_url_for(scope, currency, AzureRetailService::VirtualMachines)
+}
+
+pub fn azure_managed_disk_retail_url(
+    scope: AzureRegionScope,
+    currency: &str,
+) -> Result<Url, ProviderError> {
+    azure_retail_url_for(scope, currency, AzureRetailService::ManagedDisks)
+}
+
+fn azure_retail_url_for(
+    scope: AzureRegionScope,
+    currency: &str,
+    service: AzureRetailService,
+) -> Result<Url, ProviderError> {
     if currency != "USD" {
         return Err(ProviderError::Unsupported);
     }
     let mut url = Url::parse(AZURE_RETAIL_BASE).map_err(|_| ProviderError::Unsupported)?;
-    let filter = azure_retail_filter(scope);
+    let filter = azure_retail_filter(scope, service);
     url.query_pairs_mut()
         .append_pair("currencyCode", currency)
         .append_pair("$filter", &filter);
@@ -307,6 +326,46 @@ pub fn azure_retail_continuation_url(
     scope: AzureRegionScope,
     currency: &str,
     source_url: &str,
+) -> Result<Url, ProviderError> {
+    azure_retail_continuation_url_for(
+        scope,
+        currency,
+        source_url,
+        AzureRetailService::SqlManagedInstance,
+    )
+}
+
+pub fn azure_vm_retail_continuation_url(
+    scope: AzureRegionScope,
+    currency: &str,
+    source_url: &str,
+) -> Result<Url, ProviderError> {
+    azure_retail_continuation_url_for(
+        scope,
+        currency,
+        source_url,
+        AzureRetailService::VirtualMachines,
+    )
+}
+
+pub fn azure_managed_disk_retail_continuation_url(
+    scope: AzureRegionScope,
+    currency: &str,
+    source_url: &str,
+) -> Result<Url, ProviderError> {
+    azure_retail_continuation_url_for(
+        scope,
+        currency,
+        source_url,
+        AzureRetailService::ManagedDisks,
+    )
+}
+
+fn azure_retail_continuation_url_for(
+    scope: AzureRegionScope,
+    currency: &str,
+    source_url: &str,
+    service: AzureRetailService,
 ) -> Result<Url, ProviderError> {
     if currency != "USD" {
         return Err(ProviderError::Unsupported);
@@ -323,7 +382,7 @@ pub fn azure_retail_continuation_url(
         return Err(ProviderError::Unsupported);
     }
 
-    let expected_filter = azure_retail_filter(scope);
+    let expected_filter = azure_retail_filter(scope, service);
     let mut currency_count = 0_usize;
     let mut filter_count = 0_usize;
     let mut skip_count = 0_usize;
@@ -354,11 +413,28 @@ pub fn azure_calculator_url() -> Result<Url, ProviderError> {
     Url::parse(AZURE_CALCULATOR_URL).map_err(|_| ProviderError::Unsupported)
 }
 
-fn azure_retail_filter(scope: AzureRegionScope) -> String {
-    format!(
-        "serviceName eq 'SQL Managed Instance' and armRegionName eq '{}'",
-        scope.arm_name
-    )
+#[derive(Clone, Copy)]
+enum AzureRetailService {
+    SqlManagedInstance,
+    VirtualMachines,
+    ManagedDisks,
+}
+
+fn azure_retail_filter(scope: AzureRegionScope, service: AzureRetailService) -> String {
+    match service {
+        AzureRetailService::SqlManagedInstance => format!(
+            "serviceName eq 'SQL Managed Instance' and armRegionName eq '{}'",
+            scope.arm_name
+        ),
+        AzureRetailService::VirtualMachines => format!(
+            "serviceName eq 'Virtual Machines' and armRegionName eq '{}'",
+            scope.arm_name
+        ),
+        AzureRetailService::ManagedDisks => format!(
+            "serviceName eq 'Storage' and armRegionName eq '{}' and (productName eq 'Premium SSD Managed Disks' or productName eq 'Azure Premium SSD v2')",
+            scope.arm_name
+        ),
+    }
 }
 
 fn provider_url(base: &str, segments: &[&str]) -> Result<Url, ProviderError> {
@@ -483,6 +559,42 @@ mod tests {
                 "serviceName eq 'SQL Managed Instance' and armRegionName eq 'swedencentral'"
                     .to_owned()
             )
+        );
+
+        let vm_retail = azure_vm_retail_url(azure, "USD").expect("Azure VM Retail URL");
+        assert_eq!(
+            vm_retail
+                .query_pairs()
+                .find(|(name, _)| name == "$filter")
+                .map(|(_, value)| value.into_owned()),
+            Some(
+                "serviceName eq 'Virtual Machines' and armRegionName eq 'swedencentral'".to_owned()
+            )
+        );
+        let vm_next = format!("{vm_retail}&$skip=1000");
+        assert!(azure_vm_retail_continuation_url(azure, "USD", &vm_next).is_ok());
+        assert_eq!(
+            azure_managed_disk_retail_continuation_url(azure, "USD", &vm_next),
+            Err(ProviderError::Unsupported)
+        );
+
+        let disk_retail =
+            azure_managed_disk_retail_url(azure, "USD").expect("managed-disk Retail URL");
+        assert_eq!(
+            disk_retail
+                .query_pairs()
+                .find(|(name, _)| name == "$filter")
+                .map(|(_, value)| value.into_owned()),
+            Some(
+                "serviceName eq 'Storage' and armRegionName eq 'swedencentral' and (productName eq 'Premium SSD Managed Disks' or productName eq 'Azure Premium SSD v2')"
+                    .to_owned()
+            )
+        );
+        let disk_next = format!("{disk_retail}&$skip=1000");
+        assert!(azure_managed_disk_retail_continuation_url(azure, "USD", &disk_next).is_ok());
+        assert_eq!(
+            azure_vm_retail_continuation_url(azure, "USD", &disk_next),
+            Err(ProviderError::Unsupported)
         );
 
         let continuation = azure_retail_continuation_url(
