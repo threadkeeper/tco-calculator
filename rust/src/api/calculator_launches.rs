@@ -829,6 +829,7 @@ mod tests {
                 outcome_reasons: Vec::new(),
                 storage_escalation: None,
             }),
+            vm_target_selection: None,
             source_costs: None,
             azure_costs: Some(AzureCostBreakdown {
                 compute_gross: decimal("100"),
