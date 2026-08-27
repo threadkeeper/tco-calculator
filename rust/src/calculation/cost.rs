@@ -146,6 +146,8 @@ pub enum CostError {
     InvalidIopsTiers,
     #[error("a required Azure managed-disk price dimension is unavailable")]
     MissingAzureManagedDiskRate,
+    #[error("the Azure VM license rate exceeds its total hourly rate")]
+    InvalidAzureVmRateComponents,
     #[error("on-premises License + SA settings are incomplete")]
     MissingOnPremLicenseSettings,
     #[error("on-premises electricity settings are incomplete")]
@@ -497,15 +499,23 @@ pub fn calculate_azure(
 pub fn calculate_azure_vm(
     quantity: u32,
     annual_hours: DecimalValue,
-    vm_hourly_rate: DecimalValue,
+    vm_total_hourly_rate: DecimalValue,
+    vm_license_hourly_rate: DecimalValue,
     managed_disk_monthly_per_instance: DecimalValue,
     settings: &ProjectSettings,
 ) -> Result<AzureCostBreakdown, CostError> {
-    validate_rate(vm_hourly_rate)?;
+    validate_rate(vm_total_hourly_rate)?;
+    validate_rate(vm_license_hourly_rate)?;
     validate_rate(managed_disk_monthly_per_instance)?;
+    if vm_license_hourly_rate.0 > vm_total_hourly_rate.0 {
+        return Err(CostError::InvalidAzureVmRateComponents);
+    }
     let quantity = Decimal::from(quantity);
-    let compute_gross = quantity * annual_hours.0 * vm_hourly_rate.0;
+    let compute_hourly_rate = vm_total_hourly_rate.0 - vm_license_hourly_rate.0;
+    let compute_gross = quantity * annual_hours.0 * compute_hourly_rate;
     let compute_net = apply_discount(compute_gross, settings.azure_compute_discount);
+    let license_gross = quantity * annual_hours.0 * vm_license_hourly_rate.0;
+    let license_net = apply_discount(license_gross, settings.azure_license_discount);
     let storage_gross = quantity * Decimal::from(12) * managed_disk_monthly_per_instance.0;
     let storage_net = apply_discount(storage_gross, settings.azure_storage_discount);
 
@@ -514,11 +524,11 @@ pub fn calculate_azure_vm(
         additional_ram_gb: DecimalValue::ZERO,
         additional_ram_gross: DecimalValue::ZERO,
         compute_plus_ram_net: DecimalValue(compute_net),
-        license_gross: DecimalValue::ZERO,
-        license_net: DecimalValue::ZERO,
+        license_gross: DecimalValue(license_gross),
+        license_net: DecimalValue(license_net),
         storage_gross: DecimalValue(storage_gross),
         storage_net: DecimalValue(storage_net),
-        total_before_parity: DecimalValue(compute_net + storage_net),
+        total_before_parity: DecimalValue(compute_net + license_net + storage_net),
     })
 }
 
@@ -817,6 +827,46 @@ mod tests {
         assert_eq!(azure.additional_ram_gb, decimal("32"));
         assert_eq!(azure.additional_ram_gross, decimal("6538.744320"));
         assert_eq!(azure.compute_plus_ram_net, decimal("21652.869888"));
+    }
+
+    #[test]
+    fn azure_vm_costs_split_compute_and_windows_license_before_discounts() {
+        let mut configured = settings(ProjectType::Ec2Vm);
+        configured.azure_compute_discount = decimal("0.10");
+        configured.azure_license_discount = decimal("0.20");
+        configured.azure_storage_discount = decimal("0.25");
+
+        let azure = calculate_azure_vm(
+            2,
+            decimal("8760"),
+            decimal("0.227"),
+            decimal("0.092"),
+            decimal("100"),
+            &configured,
+        )
+        .expect("Azure VM costs");
+
+        assert_eq!(azure.compute_gross, decimal("2365.200"));
+        assert_eq!(azure.compute_plus_ram_net, decimal("2128.6800"));
+        assert_eq!(azure.license_gross, decimal("1611.840"));
+        assert_eq!(azure.license_net, decimal("1289.4720"));
+        assert_eq!(azure.storage_gross, decimal("2400"));
+        assert_eq!(azure.storage_net, decimal("1800.00"));
+        assert_eq!(azure.total_before_parity, decimal("5218.1520"));
+    }
+
+    #[test]
+    fn azure_vm_costs_reject_license_above_total_rate() {
+        let result = calculate_azure_vm(
+            1,
+            decimal("8760"),
+            decimal("0.1"),
+            decimal("0.2"),
+            decimal("0"),
+            &settings(ProjectType::Ec2Vm),
+        );
+
+        assert_eq!(result, Err(CostError::InvalidAzureVmRateComponents));
     }
 
     #[test]

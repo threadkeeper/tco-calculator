@@ -27,7 +27,7 @@ use crate::{
         resource::{
             EbsVolume, EbsVolumeType, Ec2Resource, Ec2VmRequirements, Ec2VmResource, LicenseBasis,
             OnPremResource, ProjectType, PurchaseOption, RdsDeployment, RdsResource, Resource,
-            SharedResource, SqlEdition, SqlWorkload, VmDiskRole, VmVolume,
+            SharedResource, SqlEdition, SqlWorkload, VmDiskRole, VmPurchaseOption, VmVolume,
         },
     },
     persistence::repository::RepositoryError,
@@ -348,6 +348,11 @@ const STAGE_NEW_PROJECT_DRAFT_SCHEMA: &str = r#"{
                         "type": "string",
                         "enum": ["payg", "ahb", "one-year", "ahbone-year", "three-year", "ahbthree-year", "sv-one-year", "ahbsv-one-year"]
                     },
+                    "vm_purchase_option": {
+                        "type": "string",
+                        "enum": ["payg", "ahb", "one-year", "ahbone-year", "three-year", "ahbthree-year", "sv-one-year", "ahbsv-one-year", "sv-three-year", "ahbsv-three-year"],
+                        "description": "EC2 VM only. Preserve an explicit visible Azure VM commitment and Windows Server AHB choice. Omit when not visible; the host defaults to PAYG with the Windows license included. Never infer AHB entitlement."
+                    },
                     "instance_type": {
                         "type": "string",
                         "description": "EC2 or RDS only. Never send for on-premises resources."
@@ -569,7 +574,8 @@ fn scoped_new_project_draft_schema(project_type: ProjectType) -> Option<String> 
     }
 
     let allowed_specific_fields: &[&str] = match project_type {
-        ProjectType::Ec2 | ProjectType::Ec2Vm => &["instance_type", "volumes"],
+        ProjectType::Ec2 => &["instance_type", "volumes"],
+        ProjectType::Ec2Vm => &["instance_type", "volumes", "vm_purchase_option"],
         ProjectType::Rds => &[
             "instance_type",
             "deployment",
@@ -599,6 +605,7 @@ fn scoped_new_project_draft_schema(project_type: ProjectType) -> Option<String> 
         "hardware_capex_usd",
         "depreciation_years",
         "average_power_kw_override",
+        "vm_purchase_option",
     ];
     for field in SOURCE_SPECIFIC_FIELDS {
         if !allowed_specific_fields.contains(field) {
@@ -722,6 +729,7 @@ pub struct NewResourceInput {
     pub source_ram_gb_per_instance: Option<DecimalValue>,
     pub annual_hours_per_instance: Option<DecimalValue>,
     pub mi_purchase_option: Option<PurchaseOption>,
+    pub vm_purchase_option: Option<VmPurchaseOption>,
     pub instance_type: Option<String>,
     pub volumes: Option<Vec<NewVolumeInput>>,
     pub deployment: Option<RdsDeployment>,
@@ -747,7 +755,9 @@ impl NewResourceInput {
             || self.depreciation_years.is_some()
             || self.average_power_kw_override.is_some();
         match self.source_type {
-            ProjectType::Ec2 => !rds_fields && !on_prem_fields,
+            ProjectType::Ec2 => {
+                !rds_fields && !on_prem_fields && self.vm_purchase_option.is_none()
+            }
             // The VM workload is structurally non-SQL, so any SQL input is a mismatch.
             ProjectType::Ec2Vm => {
                 !rds_fields
@@ -757,8 +767,15 @@ impl NewResourceInput {
                     && self.sql_data_gb_per_instance.is_none()
                     && self.mi_purchase_option.is_none()
             }
-            ProjectType::Rds => !ec2_fields && !on_prem_fields,
-            ProjectType::OnPrem => self.instance_type.is_none() && !ec2_fields && !rds_fields,
+            ProjectType::Rds => {
+                !ec2_fields && !on_prem_fields && self.vm_purchase_option.is_none()
+            }
+            ProjectType::OnPrem => {
+                self.instance_type.is_none()
+                    && !ec2_fields
+                    && !rds_fields
+                    && self.vm_purchase_option.is_none()
+            }
             ProjectType::SqlPayg => false,
         }
     }
@@ -1479,6 +1496,7 @@ fn new_project_draft(
                 source_ram_gb_per_instance: None,
                 annual_hours_per_instance: None,
                 mi_purchase_option: None,
+                vm_purchase_option: None,
                 instance_type: None,
                 volumes: None,
                 deployment: None,
@@ -1611,6 +1629,7 @@ fn new_resource(
             Resource::Ec2Vm(Ec2VmResource {
                 shared,
                 instance_type: ec2_instance_type.to_owned(),
+                vm_purchase_option: input.vm_purchase_option.unwrap_or_default(),
                 requirements: Ec2VmRequirements::defaults_for(ec2_instance_type),
                 volumes,
             })
@@ -2490,7 +2509,7 @@ mod tests {
             .as_object()
             .expect("resource properties");
         assert_eq!(properties["source_type"]["enum"], json!(["ec2_vm"]));
-        for field in ["instance_type", "volumes"] {
+        for field in ["instance_type", "volumes", "vm_purchase_option"] {
             assert!(properties.contains_key(field), "ec2_vm needs {field}");
         }
         for field in SQL_ONLY_FIELDS {
@@ -2540,6 +2559,7 @@ mod tests {
                     "source_type":"ec2_vm",
                     "workload_name":"VM1",
                     "instance_type":"r6id.12xlarge",
+                    "vm_purchase_option":"ahbsv-three-year",
                     "volumes":[
                         {"volume_type":"gp3","capacity_gb":"1024"},
                         {"volume_type":"gp3","capacity_gb":"2048"}
@@ -2584,6 +2604,10 @@ mod tests {
             panic!("expected an EC2 virtual machine resource");
         };
         assert_eq!(resource.instance_type, "r6id.12xlarge");
+        assert_eq!(
+            resource.vm_purchase_option,
+            VmPurchaseOption::AhbSavingsThreeYear
+        );
         assert_eq!(
             resource
                 .volumes
@@ -2639,6 +2663,7 @@ mod tests {
         let Resource::Ec2Vm(resource) = &proposal.project.resources[0] else {
             panic!("expected an EC2 virtual machine resource");
         };
+        assert_eq!(resource.vm_purchase_option, VmPurchaseOption::Payg);
         let [volume] = resource.volumes.as_slice() else {
             panic!("expected exactly one default volume");
         };

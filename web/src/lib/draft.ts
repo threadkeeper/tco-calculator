@@ -1,3 +1,5 @@
+import type { components } from './api/generated';
+
 export type ProjectType = 'ec2' | 'ec2_vm' | 'rds' | 'on_prem' | 'sql_payg';
 export type SqlEdition = 'standard' | 'enterprise';
 export type LicenseBasis = 'license_included' | 'byol';
@@ -10,6 +12,24 @@ export type PurchaseOption =
   | 'ahbthree-year'
   | 'sv-one-year'
   | 'ahbsv-one-year';
+export type VmPurchaseOption = components['schemas']['VmPurchaseOptionKey'];
+
+const VM_PURCHASE_OPTIONS: ReadonlySet<string> = new Set([
+  'payg',
+  'ahb',
+  'one-year',
+  'ahbone-year',
+  'three-year',
+  'ahbthree-year',
+  'sv-one-year',
+  'ahbsv-one-year',
+  'sv-three-year',
+  'ahbsv-three-year'
+]);
+
+export function isVmPurchaseOption(value: unknown): value is VmPurchaseOption {
+  return typeof value === 'string' && VM_PURCHASE_OPTIONS.has(value);
+}
 
 export type ProjectSettingsDraft = {
   project_type: ProjectType;
@@ -115,6 +135,7 @@ export type Ec2VmRequirementsDraft = {
 export type Ec2VmResourceDraft = SharedResourceDraft & {
   source_type: 'ec2_vm';
   instance_type: string;
+  vm_purchase_option: VmPurchaseOption;
   requirements: Ec2VmRequirementsDraft;
   volumes: VmVolumeDraft[];
 };
@@ -225,6 +246,7 @@ export function createResource(
       ...shared,
       source_type: 'ec2_vm',
       instance_type: 'r6id.8xlarge',
+      vm_purchase_option: 'payg',
       requirements: createVmRequirements('r6id.8xlarge'),
       volumes: [
         {
@@ -394,6 +416,7 @@ export function projectRequestPayload(project: ProjectDraft): ProjectDraft {
         ...shared,
         source_type: 'ec2_vm',
         instance_type: resource.instance_type,
+        vm_purchase_option: resource.vm_purchase_option,
         requirements: {
           ...resource.requirements,
           required_local_temp_disk_gb: optionalDecimal(
@@ -542,6 +565,9 @@ export function editableProject(value: unknown): ProjectDraft | null {
   for (const resource of resources) {
     resource.server_name = typeof resource.server_name === 'string' ? resource.server_name : null;
     if (resource.source_type === 'ec2_vm') {
+      resource.vm_purchase_option = isVmPurchaseOption(Reflect.get(resource, 'vm_purchase_option'))
+        ? resource.vm_purchase_option
+        : 'payg';
       resource.requirements = editableVmRequirements(
         Reflect.get(resource, 'requirements'),
         resource.instance_type

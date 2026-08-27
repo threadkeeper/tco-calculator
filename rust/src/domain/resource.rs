@@ -60,6 +60,72 @@ impl PurchaseOption {
     ];
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub enum VmPurchaseOption {
+    #[default]
+    #[serde(rename = "payg")]
+    Payg,
+    #[serde(rename = "ahb")]
+    Ahb,
+    #[serde(rename = "one-year")]
+    OneYear,
+    #[serde(rename = "ahbone-year")]
+    AhbOneYear,
+    #[serde(rename = "three-year")]
+    ThreeYear,
+    #[serde(rename = "ahbthree-year")]
+    AhbThreeYear,
+    #[serde(rename = "sv-one-year")]
+    SavingsOneYear,
+    #[serde(rename = "ahbsv-one-year")]
+    AhbSavingsOneYear,
+    #[serde(rename = "sv-three-year")]
+    SavingsThreeYear,
+    #[serde(rename = "ahbsv-three-year")]
+    AhbSavingsThreeYear,
+}
+
+impl VmPurchaseOption {
+    pub const ALL: [Self; 10] = [
+        Self::Payg,
+        Self::Ahb,
+        Self::OneYear,
+        Self::AhbOneYear,
+        Self::ThreeYear,
+        Self::AhbThreeYear,
+        Self::SavingsOneYear,
+        Self::AhbSavingsOneYear,
+        Self::SavingsThreeYear,
+        Self::AhbSavingsThreeYear,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Payg => "payg",
+            Self::Ahb => "ahb",
+            Self::OneYear => "one-year",
+            Self::AhbOneYear => "ahbone-year",
+            Self::ThreeYear => "three-year",
+            Self::AhbThreeYear => "ahbthree-year",
+            Self::SavingsOneYear => "sv-one-year",
+            Self::AhbSavingsOneYear => "ahbsv-one-year",
+            Self::SavingsThreeYear => "sv-three-year",
+            Self::AhbSavingsThreeYear => "ahbsv-three-year",
+        }
+    }
+
+    pub const fn uses_ahb(self) -> bool {
+        matches!(
+            self,
+            Self::Ahb
+                | Self::AhbOneYear
+                | Self::AhbThreeYear
+                | Self::AhbSavingsOneYear
+                | Self::AhbSavingsThreeYear
+        )
+    }
+}
+
 /// Fields every workload resource carries, including the non-SQL VM variant.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SharedResource {
@@ -140,6 +206,8 @@ pub struct Ec2VmResource {
     #[serde(flatten)]
     pub shared: SharedResource,
     pub instance_type: String,
+    #[serde(default)]
+    pub vm_purchase_option: VmPurchaseOption,
     #[serde(default)]
     pub requirements: Ec2VmRequirements,
     pub volumes: Vec<VmVolume>,
@@ -462,6 +530,7 @@ mod tests {
         let Resource::Ec2Vm(vm) = &resource else {
             panic!("expected an EC2 VM resource");
         };
+        assert_eq!(vm.vm_purchase_option, VmPurchaseOption::Payg);
         assert_eq!(vm.requirements.burst_policy, VmBurstPolicy::NotApplicable);
         assert_eq!(
             vm.requirements.instance_store_use,
@@ -475,6 +544,7 @@ mod tests {
         let serialized = serde_json::to_value(&resource).expect("EC2 VM resource serializes");
         let object = serialized.as_object().expect("resource object");
         assert!(object.contains_key("requirements"));
+        assert_eq!(object.get("vm_purchase_option"), Some(&json!("payg")));
         for sql_field in [
             "sql_edition",
             "license_basis",

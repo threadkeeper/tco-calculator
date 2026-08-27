@@ -636,6 +636,11 @@ export interface components {
         };
         /** @enum {string} */
         PurchaseOptionKey: "payg" | "ahb" | "one-year" | "ahbone-year" | "three-year" | "ahbthree-year" | "sv-one-year" | "ahbsv-one-year";
+        /**
+         * @description Azure VM compute commitment and Windows Server license choice. AHB values require separately verified customer entitlement.
+         * @enum {string}
+         */
+        VmPurchaseOptionKey: "payg" | "ahb" | "one-year" | "ahbone-year" | "three-year" | "ahbthree-year" | "sv-one-year" | "ahbsv-one-year" | "sv-three-year" | "ahbsv-three-year";
         PriceResolutionRequest: {
             /** @constant */
             currency: "USD";
@@ -697,6 +702,7 @@ export interface components {
             source_costs: components["schemas"]["SourceCostBreakdown"] | null;
             azure_costs: components["schemas"]["AzureCostBreakdown"] | null;
             purchase_option_discounts: components["schemas"]["PurchaseOptionDiscounts"] | null;
+            vm_purchase_option_pricing?: components["schemas"]["VmPurchaseOptionPricing"][] | null;
             savings: components["schemas"]["SavingsBreakdown"] | null;
             explanation_steps: components["schemas"]["ExplanationStep"][];
             unresolved_components: components["schemas"]["UnresolvedComponent"][];
@@ -748,6 +754,12 @@ export interface components {
             three_year_reserved: components["schemas"]["Decimal"];
             one_year_savings_plan: components["schemas"]["Decimal"];
             azure_hybrid_benefit: components["schemas"]["Decimal"];
+        };
+        VmPurchaseOptionPricing: {
+            purchase_option: components["schemas"]["VmPurchaseOptionKey"];
+            available: boolean;
+            compute_discount: components["schemas"]["Decimal"] | null;
+            license_discount: components["schemas"]["Decimal"] | null;
         };
         SavingsBreakdown: {
             compute_savings: components["schemas"]["Decimal"];
@@ -1047,6 +1059,7 @@ export interface components {
             /** @constant */
             source_type: "ec2_vm";
             instance_type: string;
+            vm_purchase_option: components["schemas"]["VmPurchaseOptionKey"];
             requirements: components["schemas"]["Ec2VmRequirements"];
             volumes: components["schemas"]["VmVolume"][];
         } & {

@@ -171,12 +171,14 @@ describe('project drafts', () => {
     const original = createProjectDraft('ec2_vm', 'Legacy VM', null);
     const resource = createResource('ec2_vm', original.settings);
     Reflect.deleteProperty(resource, 'requirements');
+    Reflect.deleteProperty(resource, 'vm_purchase_option');
     original.resources.push(resource);
 
     const editable = editableProject(original)?.resources[0];
 
     expect(editable).toMatchObject({
       source_type: 'ec2_vm',
+      vm_purchase_option: 'payg',
       requirements: {
         burst_policy: 'not_applicable',
         instance_store_use: 'not_used',
@@ -203,6 +205,7 @@ describe('project drafts', () => {
 
     expect(payload).toMatchObject({
       source_type: 'ec2_vm',
+      vm_purchase_option: 'payg',
       requirements: {
         instance_store_use: 'used',
         required_local_temp_disk_gb: '600',
@@ -333,6 +336,7 @@ describe('resource drafts', () => {
     expect(resource).toMatchObject({
       source_type: 'ec2_vm',
       instance_type: 'r6id.8xlarge',
+      vm_purchase_option: 'payg',
       requirements: {
         burst_policy: 'not_applicable',
         instance_store_use: 'not_used',

@@ -20,6 +20,13 @@
     miPurchaseOptionParts,
     type PurchaseOptionDiscounts
   } from '$lib/mi-purchase-options';
+  import {
+    hasVmCommitment,
+    readVmPurchaseOptionPricing,
+    vmPricingForOption,
+    vmPurchaseOptionLabel,
+    vmPurchaseOptionParts
+  } from '$lib/vm-purchase-options';
 
   let { calculation, resources }: { calculation: unknown; resources: ResourceDraft[] } = $props();
 
@@ -46,9 +53,10 @@
     resources.length > 0 && resources.every((resource) => resource.source_type === 'ec2_vm')
   );
   const hasCommittedPlans = $derived(
-    resources.some(
-      (resource) =>
-        resource.source_type !== 'ec2_vm' && hasMiCommitment(resource.mi_purchase_option)
+    resources.some((resource) =>
+      resource.source_type === 'ec2_vm'
+        ? hasVmCommitment(resource.vm_purchase_option)
+        : hasMiCommitment(resource.mi_purchase_option)
     )
   );
 
@@ -102,6 +110,26 @@
     ];
     if (option.usesAzureHybridBenefit) {
       labels.push(`${formatAppliedDiscount(discounts.azure_hybrid_benefit)} AHB license discount`);
+    }
+    return labels.join(' · ');
+  }
+
+  function appliedVmDiscountLabel(resource: ResourceDraft, result: JsonRecord): string | null {
+    if (resource.source_type !== 'ec2_vm') return null;
+    const pricing = readVmPurchaseOptionPricing(Reflect.get(result, 'vm_purchase_option_pricing'));
+    const selectedPricing = vmPricingForOption(pricing, resource.vm_purchase_option);
+    if (!selectedPricing?.available) return null;
+    const labels: string[] = [];
+    if (selectedPricing.compute_discount !== null) {
+      labels.push(`${formatAppliedDiscount(selectedPricing.compute_discount)} compute discount`);
+    }
+    if (
+      vmPurchaseOptionParts(resource.vm_purchase_option).usesAzureHybridBenefit &&
+      selectedPricing.license_discount !== null
+    ) {
+      labels.push(
+        `${formatAppliedDiscount(selectedPricing.license_discount)} AHB license discount`
+      );
     }
     return labels.join(' · ');
   }
@@ -224,6 +252,7 @@
       {@const sourceCosts = readRecord(result, 'source_costs')}
       {@const resource = sourceResource(result)}
       {@const discounts = purchaseOptionDiscounts(result)}
+      {@const vmDiscountLabel = resource ? appliedVmDiscountLabel(resource, result) : null}
       {@const azureCosts = readRecord(result, 'azure_costs')}
       {@const savings = readRecord(result, 'savings')}
       {@const targetSelection =
@@ -294,12 +323,15 @@
             <span>Azure annual</span><strong class:unavailable={azureUnavailable}
               >{noMapping ? 'NO MAPPING' : formatMoney(azureAnnual)}</strong
             >
-            {#if resource && resource.source_type !== 'ec2_vm'}<small class="pricing-plan"
-                >{miPurchaseOptionLabel(resource.mi_purchase_option)}</small
+            {#if resource}<small class="pricing-plan"
+                >{resource.source_type === 'ec2_vm'
+                  ? vmPurchaseOptionLabel(resource.vm_purchase_option)
+                  : miPurchaseOptionLabel(resource.mi_purchase_option)}</small
               >{/if}
             {#if resource && resource.source_type !== 'ec2_vm' && discounts}<small
                 class="applied-discount">{appliedDiscountLabel(resource, discounts)}</small
               >{/if}
+            {#if vmDiscountLabel}<small class="applied-discount">{vmDiscountLabel}</small>{/if}
             {#if azureUnavailable}<small class="metric-error">Azure price is unavailable.</small
               >{/if}
           </div>

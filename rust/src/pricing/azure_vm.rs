@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::{
     calculation::vm_target_selector::{ManagedDiskCatalog, VmCapabilityCatalog},
-    domain::decimal::DecimalValue,
+    domain::{decimal::DecimalValue, resource::VmPurchaseOption},
     pricing::snapshot::{
         AzureManagedDiskPriceDimension, AzureManagedDiskRateRecord, AzureVmRateRecord,
         RateProvenance,
@@ -94,6 +94,17 @@ struct RetailItem {
     meter_id: String,
     #[serde(rename = "isPrimaryMeterRegion")]
     is_primary_meter_region: bool,
+    #[serde(rename = "reservationTerm")]
+    reservation_term: Option<String>,
+    #[serde(default, rename = "savingsPlan")]
+    savings_plan: Vec<SavingsPlanPrice>,
+}
+
+#[derive(Deserialize)]
+struct SavingsPlanPrice {
+    #[serde(rename = "retailPrice")]
+    retail_price: serde_json::Value,
+    term: String,
 }
 
 #[derive(Clone)]
@@ -104,6 +115,14 @@ struct RetailRate {
     effective_start_date: String,
     source_url: String,
     meter_ids: BTreeSet<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum VmCommitment {
+    ReservationOneYear,
+    ReservationThreeYear,
+    SavingsOneYear,
+    SavingsThreeYear,
 }
 
 pub fn normalize_azure_vm_pricing(
@@ -159,7 +178,9 @@ pub fn normalize_azure_vm_pricing(
         .map(|tier| tier.tier_key.as_str())
         .collect::<BTreeSet<_>>();
 
-    let mut vm_rates = BTreeMap::<String, RetailRate>::new();
+    let mut linux_vm_rates = BTreeMap::<String, RetailRate>::new();
+    let mut windows_vm_rates = BTreeMap::<String, RetailRate>::new();
+    let mut commitment_vm_rates = BTreeMap::<(String, VmCommitment), RetailRate>::new();
     let mut tier_rates = BTreeMap::<String, RetailRate>::new();
     let mut v2_rates = BTreeMap::<(AzureManagedDiskPriceDimension, Decimal), RetailRate>::new();
     let mut source_urls = BTreeSet::new();
@@ -175,7 +196,6 @@ pub fn normalize_azure_vm_pricing(
         for item in retail_page.items {
             if item.arm_region_name != context.target_region
                 || item.currency_code != context.currency
-                || item.price_type != "Consumption"
                 || !item.is_primary_meter_region
             {
                 continue;
@@ -184,12 +204,44 @@ pub fn normalize_azure_vm_pricing(
                 let key = item.arm_sku_name.to_ascii_lowercase();
                 let rate = retail_rate(&item, source_url)?;
                 merge_latest_rate(
-                    &mut vm_rates,
+                    &mut windows_vm_rates,
                     key,
                     rate,
                     AzureVmPricingNormalizationError::ConflictingVmRate,
                 )?;
-            } else if let Some(tier_key) = premium_ssd_tier(&item, &expected_tiers) {
+            } else if is_linux_vm_rate(&item, &expected_vms) {
+                let key = item.arm_sku_name.to_ascii_lowercase();
+                for plan in &item.savings_plan {
+                    let Some(commitment) = savings_plan_commitment(&plan.term) else {
+                        continue;
+                    };
+                    let rate = savings_plan_rate(&item, plan, source_url)?;
+                    merge_latest_rate(
+                        &mut commitment_vm_rates,
+                        (key.clone(), commitment),
+                        rate,
+                        AzureVmPricingNormalizationError::ConflictingVmRate,
+                    )?;
+                }
+                let rate = retail_rate(&item, source_url)?;
+                merge_latest_rate(
+                    &mut linux_vm_rates,
+                    key,
+                    rate,
+                    AzureVmPricingNormalizationError::ConflictingVmRate,
+                )?;
+            } else if let Some(commitment) = reservation_commitment(&item, &expected_vms) {
+                let key = item.arm_sku_name.to_ascii_lowercase();
+                let rate = reservation_hourly_rate(&item, commitment, source_url)?;
+                merge_latest_rate(
+                    &mut commitment_vm_rates,
+                    (key, commitment),
+                    rate,
+                    AzureVmPricingNormalizationError::ConflictingVmRate,
+                )?;
+            } else if item.price_type == "Consumption"
+                && let Some(tier_key) = premium_ssd_tier(&item, &expected_tiers)
+            {
                 let rate = retail_rate(&item, source_url)?;
                 merge_latest_rate(
                     &mut tier_rates,
@@ -197,7 +249,9 @@ pub fn normalize_azure_vm_pricing(
                     rate,
                     AzureVmPricingNormalizationError::ConflictingManagedDiskRate,
                 )?;
-            } else if let Some(dimension) = premium_ssd_v2_dimension(&item) {
+            } else if item.price_type == "Consumption"
+                && let Some(dimension) = premium_ssd_v2_dimension(&item)
+            {
                 let tier_minimum = parse_nonnegative_decimal(&item.tier_minimum_units)?.0;
                 let rate = retail_rate_allow_zero(&item, source_url)?;
                 merge_latest_rate(
@@ -210,30 +264,86 @@ pub fn normalize_azure_vm_pricing(
         }
     }
 
-    if vm_rates.is_empty() {
+    let mut vm_records = Vec::new();
+    let mut warnings = Vec::new();
+    for (key, sku) in &expected_vms {
+        let (Some(linux_payg), Some(windows_payg)) =
+            (linux_vm_rates.get(key), windows_vm_rates.get(key))
+        else {
+            warnings.push(format!(
+                "Azure VM {sku} has no complete Linux and Windows pay-as-you-go rate pair."
+            ));
+            continue;
+        };
+        let license_hourly = windows_payg.rate - linux_payg.rate;
+        if license_hourly <= Decimal::ZERO {
+            return Err(AzureVmPricingNormalizationError::InvalidValue);
+        }
+        push_vm_option_pair(
+            &mut vm_records,
+            context.target_region,
+            sku,
+            key,
+            VmPurchaseOption::Payg,
+            VmPurchaseOption::Ahb,
+            linux_payg,
+            windows_payg,
+            license_hourly,
+        )?;
+
+        for (commitment, licensed_option, ahb_option, label) in [
+            (
+                VmCommitment::ReservationOneYear,
+                VmPurchaseOption::OneYear,
+                VmPurchaseOption::AhbOneYear,
+                "1-year Reservation",
+            ),
+            (
+                VmCommitment::ReservationThreeYear,
+                VmPurchaseOption::ThreeYear,
+                VmPurchaseOption::AhbThreeYear,
+                "3-year Reservation",
+            ),
+            (
+                VmCommitment::SavingsOneYear,
+                VmPurchaseOption::SavingsOneYear,
+                VmPurchaseOption::AhbSavingsOneYear,
+                "1-year Savings Plan",
+            ),
+            (
+                VmCommitment::SavingsThreeYear,
+                VmPurchaseOption::SavingsThreeYear,
+                VmPurchaseOption::AhbSavingsThreeYear,
+                "3-year Savings Plan",
+            ),
+        ] {
+            let Some(compute_rate) = commitment_vm_rates.get(&(key.clone(), commitment)) else {
+                warnings.push(format!(
+                    "Azure VM {sku} has no exact {label} rate; that purchase option is unavailable."
+                ));
+                continue;
+            };
+            if compute_rate.rate >= linux_payg.rate {
+                return Err(AzureVmPricingNormalizationError::InvalidValue);
+            }
+            push_vm_option_pair(
+                &mut vm_records,
+                context.target_region,
+                sku,
+                key,
+                licensed_option,
+                ahb_option,
+                compute_rate,
+                windows_payg,
+                license_hourly,
+            )?;
+        }
+    }
+    if vm_records.is_empty() {
         return Err(AzureVmPricingNormalizationError::MissingVmRates);
     }
-    let mut warnings = expected_vms
-        .iter()
-        .filter(|(key, _)| !vm_rates.contains_key(*key))
-        .map(|(_, sku)| format!("Azure VM {sku} has no complete Windows pay-as-you-go rate."))
-        .collect::<Vec<_>>();
+    vm_records.sort_by(|left, right| left.stable_key.cmp(&right.stable_key));
     warnings.sort();
-
-    let vm_records = vm_rates
-        .into_iter()
-        .map(|(key, rate)| {
-            let provenance = provenance(&rate);
-            AzureVmRateRecord {
-                stable_key: format!("{}|windows|payg|{key}", context.target_region),
-                arm_sku_name: expected_vms[&key].to_owned(),
-                hourly_rate: DecimalValue(rate.rate),
-                unit_of_measure: rate.unit_of_measure,
-                raw_price_lexeme: rate.raw_price_lexeme,
-                provenance,
-            }
-        })
-        .collect::<Vec<_>>();
 
     let mut managed_disk_records = Vec::new();
     for tier_key in expected_tiers {
@@ -288,12 +398,182 @@ pub fn normalize_azure_vm_pricing(
 
 fn is_windows_vm_rate(item: &RetailItem, expected: &BTreeMap<String, &str>) -> bool {
     item.service_name == "Virtual Machines"
+        && item.price_type == "Consumption"
         && item.product_name.starts_with("Virtual Machines ")
         && item.product_name.ends_with(" Windows")
         && item.unit_of_measure == "1 Hour"
         && expected.contains_key(&item.arm_sku_name.to_ascii_lowercase())
         && !is_discounted_vm_meter(&item.sku_name)
         && !is_discounted_vm_meter(&item.meter_name)
+}
+
+fn is_linux_vm_rate(item: &RetailItem, expected: &BTreeMap<String, &str>) -> bool {
+    item.service_name == "Virtual Machines"
+        && item.price_type == "Consumption"
+        && item.product_name.starts_with("Virtual Machines ")
+        && !item.product_name.ends_with(" Windows")
+        && item.unit_of_measure == "1 Hour"
+        && expected.contains_key(&item.arm_sku_name.to_ascii_lowercase())
+        && !is_discounted_vm_meter(&item.sku_name)
+        && !is_discounted_vm_meter(&item.meter_name)
+}
+
+fn reservation_commitment(
+    item: &RetailItem,
+    expected: &BTreeMap<String, &str>,
+) -> Option<VmCommitment> {
+    if item.service_name != "Virtual Machines"
+        || item.price_type != "Reservation"
+        || item.product_name.ends_with(" Windows")
+        || item.unit_of_measure != "1 Hour"
+        || !expected.contains_key(&item.arm_sku_name.to_ascii_lowercase())
+        || is_discounted_vm_meter(&item.sku_name)
+        || is_discounted_vm_meter(&item.meter_name)
+    {
+        return None;
+    }
+    match item.reservation_term.as_deref()? {
+        "1 Year" => Some(VmCommitment::ReservationOneYear),
+        "3 Years" => Some(VmCommitment::ReservationThreeYear),
+        _ => None,
+    }
+}
+
+fn savings_plan_commitment(term: &str) -> Option<VmCommitment> {
+    match term {
+        "1 Year" => Some(VmCommitment::SavingsOneYear),
+        "3 Years" => Some(VmCommitment::SavingsThreeYear),
+        _ => None,
+    }
+}
+
+fn savings_plan_rate(
+    item: &RetailItem,
+    plan: &SavingsPlanPrice,
+    source_url: &str,
+) -> Result<RetailRate, AzureVmPricingNormalizationError> {
+    let (rate, raw_price_lexeme) = parse_nonnegative_decimal(&plan.retail_price)?;
+    if rate <= Decimal::ZERO || item.effective_start_date.is_empty() || item.meter_id.is_empty() {
+        return Err(AzureVmPricingNormalizationError::InvalidValue);
+    }
+    Ok(RetailRate {
+        rate,
+        raw_price_lexeme,
+        unit_of_measure: item.unit_of_measure.clone(),
+        effective_start_date: item.effective_start_date.clone(),
+        source_url: source_url.to_owned(),
+        meter_ids: BTreeSet::from([item.meter_id.clone()]),
+    })
+}
+
+fn reservation_hourly_rate(
+    item: &RetailItem,
+    commitment: VmCommitment,
+    source_url: &str,
+) -> Result<RetailRate, AzureVmPricingNormalizationError> {
+    let mut rate = retail_rate(item, source_url)?;
+    let term_hours = match commitment {
+        VmCommitment::ReservationOneYear => 8_760,
+        VmCommitment::ReservationThreeYear => 26_280,
+        VmCommitment::SavingsOneYear | VmCommitment::SavingsThreeYear => {
+            return Err(AzureVmPricingNormalizationError::InvalidValue);
+        }
+    };
+    rate.rate /= Decimal::from(term_hours);
+    rate.raw_price_lexeme = rate.rate.normalize().to_string();
+    Ok(rate)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_vm_option_pair(
+    records: &mut Vec<AzureVmRateRecord>,
+    target_region: &str,
+    arm_sku_name: &str,
+    normalized_sku: &str,
+    licensed_option: VmPurchaseOption,
+    ahb_option: VmPurchaseOption,
+    compute_rate: &RetailRate,
+    windows_payg: &RetailRate,
+    license_hourly: Decimal,
+) -> Result<(), AzureVmPricingNormalizationError> {
+    if compute_rate.unit_of_measure != "1 Hour"
+        || windows_payg.unit_of_measure != "1 Hour"
+        || compute_rate.rate <= Decimal::ZERO
+        || license_hourly <= Decimal::ZERO
+    {
+        return Err(AzureVmPricingNormalizationError::InvalidValue);
+    }
+    records.push(vm_record(
+        target_region,
+        arm_sku_name,
+        normalized_sku,
+        licensed_option,
+        compute_rate,
+        windows_payg,
+        license_hourly,
+    ));
+    records.push(vm_record(
+        target_region,
+        arm_sku_name,
+        normalized_sku,
+        ahb_option,
+        compute_rate,
+        windows_payg,
+        Decimal::ZERO,
+    ));
+    Ok(())
+}
+
+fn vm_record(
+    target_region: &str,
+    arm_sku_name: &str,
+    normalized_sku: &str,
+    purchase_option: VmPurchaseOption,
+    compute_rate: &RetailRate,
+    windows_payg: &RetailRate,
+    license_hourly: Decimal,
+) -> AzureVmRateRecord {
+    let hourly_rate = compute_rate.rate + license_hourly;
+    let mut meter_ids = compute_rate.meter_ids.clone();
+    meter_ids.extend(windows_payg.meter_ids.iter().cloned());
+    AzureVmRateRecord {
+        stable_key: format!(
+            "{target_region}|{normalized_sku}|{}",
+            vm_purchase_option_key(purchase_option)
+        ),
+        arm_sku_name: arm_sku_name.to_owned(),
+        purchase_option,
+        hourly_rate: DecimalValue(hourly_rate),
+        license_hourly: DecimalValue(license_hourly),
+        unit_of_measure: compute_rate.unit_of_measure.clone(),
+        raw_price_lexeme: hourly_rate.normalize().to_string(),
+        provenance: RateProvenance {
+            source_url: compute_rate.source_url.clone(),
+            effective_at: Some(
+                compute_rate
+                    .effective_start_date
+                    .clone()
+                    .max(windows_payg.effective_start_date.clone()),
+            ),
+            source_version: None,
+            meter_ids: meter_ids.into_iter().collect(),
+        },
+    }
+}
+
+fn vm_purchase_option_key(option: VmPurchaseOption) -> &'static str {
+    match option {
+        VmPurchaseOption::Payg => "payg",
+        VmPurchaseOption::Ahb => "ahb",
+        VmPurchaseOption::OneYear => "one-year",
+        VmPurchaseOption::AhbOneYear => "ahbone-year",
+        VmPurchaseOption::ThreeYear => "three-year",
+        VmPurchaseOption::AhbThreeYear => "ahbthree-year",
+        VmPurchaseOption::SavingsOneYear => "sv-one-year",
+        VmPurchaseOption::AhbSavingsOneYear => "ahbsv-one-year",
+        VmPurchaseOption::SavingsThreeYear => "sv-three-year",
+        VmPurchaseOption::AhbSavingsThreeYear => "ahbsv-three-year",
+    }
 }
 
 fn is_discounted_vm_meter(value: &str) -> bool {
@@ -478,10 +758,66 @@ mod tests {
         )
         .expect("frozen Azure VM prices normalize");
 
-        assert_eq!(normalized.vm_records.len(), 1);
-        assert_eq!(normalized.vm_records[0].arm_sku_name, "Standard_D2s_v7");
-        assert_eq!(normalized.vm_records[0].hourly_rate.to_string(), "0.227");
-        assert_eq!(normalized.vm_records[0].raw_price_lexeme, "0.227");
+        assert_eq!(normalized.vm_records.len(), VmPurchaseOption::ALL.len());
+        let payg = option_record(&normalized, VmPurchaseOption::Payg);
+        assert_eq!(payg.arm_sku_name, "Standard_D2s_v7");
+        assert_eq!(payg.hourly_rate.to_string(), "0.227");
+        assert_eq!(payg.license_hourly.to_string(), "0.092");
+        assert_eq!(payg.raw_price_lexeme, "0.227");
+        assert_eq!(
+            option_record(&normalized, VmPurchaseOption::Ahb)
+                .hourly_rate
+                .to_string(),
+            "0.135"
+        );
+        assert_eq!(
+            option_record(&normalized, VmPurchaseOption::OneYear)
+                .hourly_rate
+                .to_string(),
+            "0.172"
+        );
+        assert_eq!(
+            option_record(&normalized, VmPurchaseOption::AhbOneYear)
+                .hourly_rate
+                .to_string(),
+            "0.080"
+        );
+        assert_eq!(
+            option_record(&normalized, VmPurchaseOption::ThreeYear)
+                .hourly_rate
+                .to_string(),
+            "0.152"
+        );
+        assert_eq!(
+            option_record(&normalized, VmPurchaseOption::AhbThreeYear)
+                .hourly_rate
+                .to_string(),
+            "0.060"
+        );
+        assert_eq!(
+            option_record(&normalized, VmPurchaseOption::SavingsOneYear)
+                .hourly_rate
+                .to_string(),
+            "0.1876205"
+        );
+        assert_eq!(
+            option_record(&normalized, VmPurchaseOption::AhbSavingsOneYear)
+                .hourly_rate
+                .to_string(),
+            "0.0956205"
+        );
+        assert_eq!(
+            option_record(&normalized, VmPurchaseOption::SavingsThreeYear)
+                .hourly_rate
+                .to_string(),
+            "0.1563545"
+        );
+        assert_eq!(
+            option_record(&normalized, VmPurchaseOption::AhbSavingsThreeYear)
+                .hourly_rate
+                .to_string(),
+            "0.0643545"
+        );
         assert_eq!(normalized.managed_disk_records.len(), 17);
         let p30 = normalized
             .managed_disk_records
@@ -523,6 +859,55 @@ mod tests {
         )
         .expect_err("conflicting meters are refused");
         assert_eq!(error, AzureVmPricingNormalizationError::ConflictingVmRate);
+    }
+
+    #[test]
+    fn leaves_missing_exact_reservation_terms_unavailable() {
+        let mut fixture: Value =
+            serde_json::from_slice(&fixture_payload(false, true)).expect("fixture value");
+        fixture["Items"]
+            .as_array_mut()
+            .expect("fixture items")
+            .retain(|item| item["type"] != "Reservation");
+        let payload = serde_json::to_vec(&fixture).expect("fixture JSON");
+
+        let normalized = normalize_azure_vm_pricing(
+            context(),
+            &vm_catalog(),
+            &disk_catalog(),
+            &[AzureVmRetailPagePayload {
+                source_url: "https://prices.azure.com/api/retail/prices?fixture=1",
+                body: &payload,
+            }],
+        )
+        .expect("partial commitment availability normalizes");
+
+        assert_eq!(normalized.vm_records.len(), 6);
+        assert!(
+            normalized
+                .vm_records
+                .iter()
+                .all(|record| !matches!(
+                    record.purchase_option,
+                    VmPurchaseOption::OneYear
+                        | VmPurchaseOption::AhbOneYear
+                        | VmPurchaseOption::ThreeYear
+                        | VmPurchaseOption::AhbThreeYear
+                ))
+        );
+        assert_eq!(normalized.warnings.len(), 2);
+        assert!(
+            normalized
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("1-year Reservation"))
+        );
+        assert!(
+            normalized
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("3-year Reservation"))
+        );
     }
 
     #[test]
@@ -592,17 +977,32 @@ mod tests {
     }
 
     fn fixture_payload(conflicting_vm: bool, include_throughput: bool) -> Vec<u8> {
+        let mut linux_payg = vm_item(
+            "0.135",
+            "Virtual Machines Dsv7-series Linux",
+            "Standard_D2s_v7",
+        );
+        linux_payg["savingsPlan"] = json!([
+            {
+                "unitPrice": "0.0643545",
+                "retailPrice": "0.0643545",
+                "term": "3 Years"
+            },
+            {
+                "unitPrice": "0.0956205",
+                "retailPrice": "0.0956205",
+                "term": "1 Year"
+            }
+        ]);
         let mut items = vec![
             vm_item(
                 "0.227",
                 "Virtual Machines Dsv7-series Windows",
                 "Standard_D2s_v7",
             ),
-            vm_item(
-                "0.135",
-                "Virtual Machines Dsv7-series Linux",
-                "Standard_D2s_v7",
-            ),
+            linux_payg,
+            reservation_item("1 Year", "700.8"),
+            reservation_item("3 Years", "1576.8"),
             vm_item(
                 "0.04195",
                 "Virtual Machines Dsv7-series Windows",
@@ -699,6 +1099,28 @@ mod tests {
             "0",
             price,
         )
+    }
+
+    fn reservation_item(term: &str, price: &str) -> Value {
+        let mut item = vm_item(
+            price,
+            "Virtual Machines Dsv7-series Linux",
+            "Standard_D2s_v7",
+        );
+        item["type"] = json!("Reservation");
+        item["reservationTerm"] = json!(term);
+        item
+    }
+
+    fn option_record(
+        normalized: &AzureVmPricingNormalization,
+        purchase_option: VmPurchaseOption,
+    ) -> &AzureVmRateRecord {
+        normalized
+            .vm_records
+            .iter()
+            .find(|record| record.purchase_option == purchase_option)
+            .expect("VM purchase option")
     }
 
     fn disk_item(

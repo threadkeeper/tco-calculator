@@ -119,7 +119,7 @@ mod tests {
             resource::{
                 EbsVolume, EbsVolumeType, Ec2Resource, Ec2VmRequirements, Ec2VmResource,
                 LicenseBasis, ProjectType, PurchaseOption, RdsDeployment, RdsResource, Resource,
-                SharedResource, SqlEdition, SqlWorkload, VmDiskRole, VmVolume,
+                SharedResource, SqlEdition, SqlWorkload, VmDiskRole, VmPurchaseOption, VmVolume,
             },
         },
         pricing::snapshot::AzureManagedDiskPriceDimension,
@@ -163,7 +163,42 @@ mod tests {
                 .iter()
                 .any(|record| record.rate.volume_type == EbsVolumeType::Gp3)
         );
-        assert!(azure.vm_rate("Standard_D4s_v7").is_some());
+        assert!(
+            azure
+                .vm_rate("Standard_D4s_v7", VmPurchaseOption::Payg)
+                .is_some()
+        );
+        assert_eq!(
+            azure
+                .vm_rate("Standard_D2s_v7", VmPurchaseOption::Payg)
+                .expect("D2s v7 PAYG rate")
+                .hourly_rate,
+            decimal("0.227")
+        );
+        assert_eq!(
+            azure
+                .vm_rate("Standard_D2s_v7", VmPurchaseOption::AhbSavingsOneYear)
+                .expect("D2s v7 AHB one-year Savings Plan rate")
+                .hourly_rate,
+            decimal("0.0956205")
+        );
+        assert_eq!(
+            azure
+                .vm_rate("Standard_D2s_v7", VmPurchaseOption::SavingsThreeYear)
+                .expect("D2s v7 three-year Savings Plan rate")
+                .hourly_rate,
+            decimal("0.1563545")
+        );
+        assert!(
+            azure
+                .vm_rate("Standard_D2s_v7", VmPurchaseOption::OneYear)
+                .is_none()
+        );
+        assert!(
+            azure
+                .vm_rate("Standard_D2s_v7", VmPurchaseOption::ThreeYear)
+                .is_none()
+        );
         assert!(
             azure
                 .managed_disk_rate(
@@ -409,7 +444,11 @@ mod tests {
             vm_capabilities
                 .candidates
                 .iter()
-                .all(|candidate| { azure.vm_rate(&candidate.arm_sku_name).is_some() })
+                .all(|candidate| {
+                    azure
+                        .vm_rate(&candidate.arm_sku_name, VmPurchaseOption::Payg)
+                        .is_some()
+                })
         );
         assert!(
             azure
@@ -454,6 +493,7 @@ mod tests {
                 annual_hours_per_instance: decimal("8760"),
             },
             instance_type: "m6i.large".to_owned(),
+            vm_purchase_option: VmPurchaseOption::Payg,
             requirements: Ec2VmRequirements::defaults_for("m6i.large"),
             volumes: vec![VmVolume {
                 id: uuid::Uuid::parse_str("66666666-6666-6666-6666-666666666666")

@@ -134,7 +134,8 @@
         column('Target override', 'text', (row) => row.requestedTargetArmSku),
         column('Persistent EBS GB', 'number', (row) => row.persistentEbsGbPerInstance),
         column('Source RAM GB', 'number', (row) => row.sourceRamGbPerInstance),
-        column('Annual hours', 'number', (row) => row.annualHoursPerInstance)
+        column('Annual hours', 'number', (row) => row.annualHoursPerInstance),
+        column('VM purchase', 'text', (row) => row.vmPurchaseOption)
       ]
     },
     {
@@ -167,6 +168,8 @@
       columns: [
         column('Compute gross', 'money', (row) => row.azureComputeGross),
         column('Compute net', 'money', (row) => row.azureComputePlusRamNet),
+        column('License gross', 'money', (row) => row.azureLicenseGross),
+        column('License net', 'money', (row) => row.azureLicenseNet),
         column('Storage gross', 'money', (row) => row.azureStorageGross),
         column('Storage net', 'money', (row) => row.azureStorageNet),
         column('VM net before parity', 'money', (row) => row.azureTotalBeforeParity)
@@ -177,6 +180,7 @@
       tone: 'savings',
       columns: [
         column('Compute', 'money', (row) => row.computeSavings),
+        column('License', 'money', (row) => row.licenseSavings),
         column('Storage', 'money', (row) => row.storageSavings),
         column('Total', 'money', (row) => row.totalSavings)
       ]

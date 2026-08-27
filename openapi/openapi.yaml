@@ -1143,6 +1143,10 @@ components:
     PurchaseOptionKey:
       type: string
       enum: [payg, ahb, one-year, ahbone-year, three-year, ahbthree-year, sv-one-year, ahbsv-one-year]
+    VmPurchaseOptionKey:
+      type: string
+      description: Azure VM compute commitment and Windows Server license choice. AHB values require separately verified customer entitlement.
+      enum: [payg, ahb, one-year, ahbone-year, three-year, ahbthree-year, sv-one-year, ahbsv-one-year, sv-three-year, ahbsv-three-year]
     PriceResolutionRequest:
       type: object
       additionalProperties: false
@@ -1311,6 +1315,12 @@ components:
           oneOf:
             - $ref: '#/components/schemas/PurchaseOptionDiscounts'
             - type: 'null'
+        vm_purchase_option_pricing:
+          oneOf:
+            - type: array
+              items:
+                $ref: '#/components/schemas/VmPurchaseOptionPricing'
+            - type: 'null'
         savings:
           oneOf:
             - $ref: '#/components/schemas/SavingsBreakdown'
@@ -1436,6 +1446,22 @@ components:
           $ref: '#/components/schemas/Decimal'
         azure_hybrid_benefit:
           $ref: '#/components/schemas/Decimal'
+    VmPurchaseOptionPricing:
+      type: object
+      required: [purchase_option, available, compute_discount, license_discount]
+      properties:
+        purchase_option:
+          $ref: '#/components/schemas/VmPurchaseOptionKey'
+        available:
+          type: boolean
+        compute_discount:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+        license_discount:
+          oneOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
     SavingsBreakdown:
       type: object
       required: [compute_savings, license_savings, storage_savings, total_savings, required_adjustment, selected_adjustment, azure_after_selected_parity, difference]
@@ -2171,13 +2197,15 @@ components:
       allOf:
         - $ref: '#/components/schemas/SharedVmResourceProperties'
         - type: object
-          required: [source_type, instance_type, requirements, volumes]
+          required: [source_type, instance_type, vm_purchase_option, requirements, volumes]
           properties:
             source_type:
               type: string
               const: ec2_vm
             instance_type:
               type: string
+            vm_purchase_option:
+              $ref: '#/components/schemas/VmPurchaseOptionKey'
             requirements:
               $ref: '#/components/schemas/Ec2VmRequirements'
             volumes:

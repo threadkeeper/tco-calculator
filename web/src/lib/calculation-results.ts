@@ -16,6 +16,7 @@ export type CalculationResultRow = {
   sourceRamGbPerInstance: string | null;
   annualHoursPerInstance: string | null;
   miPurchaseOption: string | null;
+  vmPurchaseOption: string | null;
   burstPolicy: string | null;
   instanceStoreUse: string | null;
   requiredLocalTempDiskGb: string | null;
@@ -98,6 +99,7 @@ export function buildCalculationResultRows(
       annualHoursPerInstance: resource?.annual_hours_per_instance ?? null,
       miPurchaseOption:
         resource && resource.source_type !== 'ec2_vm' ? resource.mi_purchase_option : null,
+      vmPurchaseOption: resource?.source_type === 'ec2_vm' ? resource.vm_purchase_option : null,
       burstPolicy: resource?.source_type === 'ec2_vm' ? resource.requirements.burst_policy : null,
       instanceStoreUse:
         resource?.source_type === 'ec2_vm' ? resource.requirements.instance_store_use : null,

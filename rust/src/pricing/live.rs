@@ -2,7 +2,7 @@ use reqwest::Url;
 
 use super::provider::ProviderError;
 
-pub const PARSER_SCHEMA_VERSION: &str = "pricing-v2";
+pub const PARSER_SCHEMA_VERSION: &str = "pricing-v3";
 
 const EC2_CALCULATOR_BASE: &str =
     "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/";
@@ -10,6 +10,7 @@ const EBS_METER_MAP_BASE: &str =
     "https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/ec2/USD/current/";
 const AWS_PRICING_BASE: &str = "https://pricing.us-east-1.amazonaws.com/";
 const AZURE_RETAIL_BASE: &str = "https://prices.azure.com/api/retail/prices";
+const AZURE_VM_RETAIL_API_VERSION: &str = "2023-01-01-preview";
 const AZURE_CALCULATOR_URL: &str =
     "https://azure.microsoft.com/api/v3/pricing/azure-sql/calculator/?culture=en-us&discount=mca";
 const AZURE_RETAIL_PAGE_SIZE: u64 = 1_000;
@@ -319,6 +320,10 @@ fn azure_retail_url_for(
     url.query_pairs_mut()
         .append_pair("currencyCode", currency)
         .append_pair("$filter", &filter);
+    if matches!(service, AzureRetailService::VirtualMachines) {
+        url.query_pairs_mut()
+            .append_pair("api-version", AZURE_VM_RETAIL_API_VERSION);
+    }
     Ok(url)
 }
 
@@ -386,10 +391,17 @@ fn azure_retail_continuation_url_for(
     let mut currency_count = 0_usize;
     let mut filter_count = 0_usize;
     let mut skip_count = 0_usize;
+    let mut api_version_count = 0_usize;
     for (name, value) in url.query_pairs() {
         match name.as_ref() {
             "currencyCode" if value == currency => currency_count += 1,
             "$filter" if value == expected_filter => filter_count += 1,
+            "api-version"
+                if matches!(service, AzureRetailService::VirtualMachines)
+                    && value == AZURE_VM_RETAIL_API_VERSION =>
+            {
+                api_version_count += 1;
+            }
             "$skip"
                 if !value.is_empty()
                     && value.chars().all(|character| character.is_ascii_digit())
@@ -403,7 +415,13 @@ fn azure_retail_continuation_url_for(
             _ => return Err(ProviderError::Unsupported),
         }
     }
-    if (currency_count, filter_count, skip_count) != (1, 1, 1) {
+    let expected_api_version_count = usize::from(matches!(
+        service,
+        AzureRetailService::VirtualMachines
+    ));
+    if (currency_count, filter_count, skip_count, api_version_count)
+        != (1, 1, 1, expected_api_version_count)
+    {
         return Err(ProviderError::Unsupported);
     }
     Ok(url)
@@ -565,6 +583,13 @@ mod tests {
         assert_eq!(
             vm_retail
                 .query_pairs()
+                .find(|(name, _)| name == "api-version")
+                .map(|(_, value)| value.into_owned()),
+            Some("2023-01-01-preview".to_owned())
+        );
+        assert_eq!(
+            vm_retail
+                .query_pairs()
                 .find(|(name, _)| name == "$filter")
                 .map(|(_, value)| value.into_owned()),
             Some(
@@ -573,6 +598,14 @@ mod tests {
         );
         let vm_next = format!("{vm_retail}&$skip=1000");
         assert!(azure_vm_retail_continuation_url(azure, "USD", &vm_next).is_ok());
+        assert_eq!(
+            azure_vm_retail_continuation_url(
+                azure,
+                "USD",
+                &vm_next.replace("&api-version=2023-01-01-preview", "")
+            ),
+            Err(ProviderError::Unsupported)
+        );
         assert_eq!(
             azure_managed_disk_retail_continuation_url(azure, "USD", &vm_next),
             Err(ProviderError::Unsupported)

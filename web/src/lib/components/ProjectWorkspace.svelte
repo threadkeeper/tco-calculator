@@ -37,6 +37,10 @@
     type GuestWorkspace
   } from '$lib/draft';
   import type { PurchaseOptionDiscounts } from '$lib/mi-purchase-options';
+  import {
+    readVmPurchaseOptionPricing,
+    type VmPurchaseOptionPricing
+  } from '$lib/vm-purchase-options';
   import { pricingResolutionLabel } from '$lib/pricing-resolution';
   import { projectShareUrl } from '$lib/project-share';
   import { readRegionOptions, type RegionOption } from '$lib/regions';
@@ -179,6 +183,16 @@
       one_year_savings_plan: oneYearSavingsPlan,
       azure_hybrid_benefit: azureHybridBenefit
     };
+  }
+
+  function vmPurchaseOptionPricing(resourceId: string): VmPurchaseOptionPricing[] | null {
+    const calculation = asRecord(workspace.calculation);
+    const result = readRecords(calculation, 'resource_results').find(
+      (candidate) => readString(candidate, 'resource_id') === resourceId
+    );
+    return readVmPurchaseOptionPricing(
+      result ? Reflect.get(result, 'vm_purchase_option_pricing') : null
+    );
   }
 
   function isPositivePrice(value: string | null): boolean {
@@ -999,6 +1013,7 @@
                 {ebsTypes}
                 rdsOptions={rdsOptions[resource.id] ?? []}
                 purchaseOptionDiscounts={purchaseOptionDiscounts(resource.id)}
+                vmPurchaseOptionPricing={vmPurchaseOptionPricing(resource.id)}
                 onchange={markDirty}
                 oncatalogchange={() =>
                   resource.source_type === 'rds' && void loadRdsOptions(resource)}

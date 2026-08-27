@@ -60,7 +60,7 @@ Useful engineering practices reviewed in `C:\Repos\gaia-robot` and adopted here 
 - SQL Server Standard and Enterprise source editions.
 - Source license basis of `License included` or `BYOL`.
 - Azure SQL Managed Instance Next Generation General Purpose and Business Critical targets.
-- Eight Azure purchase options listed in section 10.6.
+- Eight Azure SQL Managed Instance purchase options and ten Azure VM purchase options listed in section 10.6.
 - Independent source and Azure component discounts using the six workbook fields.
 - Portfolio parity calculation.
 - Entra sign-in and user-private project persistence.
@@ -127,6 +127,10 @@ The owner also directed that the remaining inputs default to values covering the
 | High-frequency `z1d` sources | Current memory-optimized lineage, matched on capacity | Per-core frequency equivalence is NOT claimed and MUST be disclosed |
 
 Defaulting an input MUST NOT suppress its disclosure. Every defaulted value MUST appear in the result assumptions, and the T3 credit-model and `z1d` per-core caveats MUST remain visible in the result.
+
+Each `ec2_vm` resource has one server-authoritative Azure VM purchase option. The default is Windows license-included PAYG. The selectable matrix is PAYG, 1-Year Reserved, 3-Year Reserved, 1-Year Savings Plan, and 3-Year Savings Plan, each independently available with or without Azure Hybrid Benefit for Windows Server. A commitment changes only the base compute component; AHB changes only the Windows license component. Target selection and ranking MUST use the exact SKU's Windows license-included PAYG rate so a commercial option cannot change the technical recommendation.
+
+The UI and API MUST expose exact-SKU option availability returned by the server. A missing exact reservation or savings-plan term remains unavailable and MUST NOT be extrapolated, substituted from another VM size or generation, or represented as zero. Selecting AHB is a customer-controlled estimate input, not evidence of eligibility. The application MUST display the eligibility warning in section 10.6 and MUST NOT infer, attest, or persist a licensing entitlement.
 
 ## 5. Users and Access Modes
 
@@ -589,6 +593,16 @@ The adapter MUST:
 - Treat a calculator endpoint schema change as a provider error and use the last verified cache when available.
 - Never scrape HTML.
 
+For `ec2_vm`, use the Azure Retail Prices API `2023-01-01-preview` version because Microsoft documents Savings Plan rates only in that preview response. Filter to `serviceName eq 'Virtual Machines'`, the selected ARM region, USD, the exact ARM SKU, primary meters, and the exact normalized product and meter dimensions. Compose rates as follows:
+
+- Linux `Consumption` is the base compute rate.
+- Windows `Consumption` minus matching Linux `Consumption` is the Windows license rate; a negative or incomplete pair is invalid.
+- A matching `Reservation` row supplies exact 1-year or 3-year base compute after its upfront retail price is amortized over 8,760 or 26,280 hours respectively.
+- A nested `savingsPlan` row supplies the exact 1-year or 3-year hourly base compute rate.
+- AHB options use the same exact base compute component and set only the Windows license component to zero.
+
+Reject Spot, Dev/Test, low-priority, nonprimary, wrong-region, wrong-currency, wrong-unit, ambiguous, and conflicting records. Follow `NextPageLink` using the same validated host, path, currency, region, service, and API version. Preserve each component's source URL, effective date, retrieval time, meter ID, raw decimal lexeme, and parser schema version. The `2023-01-01-preview` dependency is an explicit provider limitation: a schema change fails closed and may use only a still-valid reviewed cache under section 9.4.
+
 The Azure calculator endpoint is public but not treated as a stable contract. Keep it behind an `AzurePriceProvider` interface so it can be replaced without changing the calculation engine.
 
 ### 9.4 Cache and Freshness
@@ -749,6 +763,8 @@ For EC2, `source_max_iops` is derived from persistent volumes. For RDS, it is a 
 
 ### 10.6 Azure Purchase Options
 
+#### 10.6.1 Azure SQL Managed Instance
+
 Supported labels and stable keys:
 
 | Label | Key |
@@ -765,6 +781,29 @@ Supported labels and stable keys:
 Default: `PAYG + Azure Hybrid Benefit`.
 
 The UI MUST display an eligibility warning for AHB options. It does not decide legal entitlement and MUST NOT require or persist an attestation.
+
+#### 10.6.2 Azure Virtual Machines
+
+Supported labels and stable keys:
+
+| Label | Key |
+|---|---|
+| PAYG | `payg` |
+| PAYG + Azure Hybrid Benefit | `ahb` |
+| 1-Year Reserved | `one-year` |
+| 1-Year Reserved + AHB | `ahbone-year` |
+| 3-Year Reserved | `three-year` |
+| 3-Year Reserved + AHB | `ahbthree-year` |
+| 1-Year Savings Plan | `sv-one-year` |
+| 1-Year Savings Plan + AHB | `ahbsv-one-year` |
+| 3-Year Savings Plan | `sv-three-year` |
+| 3-Year Savings Plan + AHB | `ahbsv-three-year` |
+
+Default: `PAYG`. Existing documents and drafts without this additive field deserialize as PAYG.
+
+The server returns all ten keys in a stable availability matrix for the selected exact VM SKU. PAYG and AHB are available only when a complete Windows/Linux PAYG pair exists. Each commitment pair is available only when the matching exact commitment term also exists. Unavailable terms carry a stable reason such as `azure_vm_purchase_option_unavailable`; the client disables them but preserves the user's selected value long enough to display the server error rather than silently changing it.
+
+AHB is an independent license axis. Microsoft states that qualifying Windows Server core licenses require active Software Assurance or qualifying subscription licenses, with applicable minimum-core and Product Terms conditions. The UI MUST link to current Microsoft eligibility guidance, warn the user to verify rights with the responsible licensing reviewer, and avoid legal or entitlement conclusions. The calculator removes the Windows license component for an AHB estimate; it does not value the qualifying license, Software Assurance, subscription, true-up, or migration rights.
 
 ### 10.7 AWS Cost Formulas
 
@@ -858,6 +897,19 @@ Let `a_c`, `a_l`, and `a_s` be Azure compute, license, and storage discounts. Le
 Additional RAM MUST be charged exactly once. The compute discount applies once to the sum of base compute and additional RAM.
 
 `mi_compute_hourly` is the already composed compute rate for the selected purchase option, including its reservation or savings-plan treatment. `mi_license_hourly` is the selected option's license rate, including zero where AHB applies. Additional memory uses the normalized per-GB-hour memory meter independently of purchase option; `a_c` is the workbook's Azure compute/MACC discount and is the only additional discount applied to both base compute and additional memory.
+
+For an `ec2_vm` target, let `vm_total_hourly` be the selected option's composed total rate, `vm_license_hourly` its Windows license component, and `vm_disk_monthly` the sum of the independently selected managed-disk monthly prices per VM:
+
+- `vm_compute_hourly = vm_total_hourly - vm_license_hourly`
+- `compute_gross = q * h * vm_compute_hourly`
+- `compute_net = compute_gross * (1 - a_c)`
+- `license_gross = q * h * vm_license_hourly`
+- `license_net = license_gross * (1 - a_l)`
+- `storage_gross = q * 12 * vm_disk_monthly`
+- `storage_net = storage_gross * (1 - a_s)`
+- `vm_net_before_parity = compute_net + license_net + storage_net`
+
+The selected commitment replaces only `vm_compute_hourly`. AHB sets only `vm_license_hourly` to zero. Managed-disk selection and pricing are independent of the VM purchase option. The application MUST reject a negative component split and MUST use decimal arithmetic without deriving a client-side discount percentage.
 
 ### 10.9 Savings and Parity
 

@@ -498,7 +498,7 @@ pub fn select_vm_target(
             rejection_reasons.push(reason(
                 VmSelectionReasonCode::PriceUnavailable,
                 format!(
-                    "{} does not have a complete Windows PAYG rate in the coherent target snapshot.",
+                    "{} does not have a PAYG VM rate in the coherent target snapshot.",
                     candidate.arm_sku_name
                 ),
             ));

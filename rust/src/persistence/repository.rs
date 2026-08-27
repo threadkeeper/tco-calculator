@@ -323,7 +323,7 @@ mod tests {
         resource::{
             EbsVolumeType, Ec2VmRequirements, Ec2VmResource, LicenseBasis, OnPremResource,
             ProjectType, PurchaseOption, Resource, SharedResource, SqlEdition, SqlWorkload,
-            VmDiskRole, VmVolume,
+            VmDiskRole, VmPurchaseOption, VmVolume,
         },
     };
 
@@ -658,6 +658,7 @@ mod tests {
                 annual_hours_per_instance: DecimalValue(Decimal::from(8_760_u32)),
             },
             instance_type: "m6i.large".to_owned(),
+            vm_purchase_option: VmPurchaseOption::Payg,
             requirements: Ec2VmRequirements::default(),
             volumes: vec![VmVolume {
                 id: Uuid::new_v4(),

@@ -15,7 +15,7 @@ use crate::{
         resource::{
             EbsVolumeType, Ec2Resource, Ec2VmResource, OnPremResource, ProjectType, PurchaseOption,
             RdsResource, Resource, VmBurstPolicy, VmDiskRole, VmHighFrequencyRequirement,
-            VmInstanceStoreUse,
+            VmInstanceStoreUse, VmPurchaseOption,
         },
     },
     pricing::{
@@ -89,6 +89,8 @@ pub struct ResourceCalculation {
     pub source_costs: Option<SourceCostBreakdown>,
     pub azure_costs: Option<AzureCostBreakdown>,
     pub purchase_option_discounts: Option<PurchaseOptionDiscounts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_purchase_option_pricing: Option<Vec<VmPurchaseOptionPricing>>,
     pub savings: Option<SavingsBreakdown>,
     pub explanation_steps: Vec<ExplanationStep>,
     pub unresolved_components: Vec<UnresolvedComponent>,
@@ -108,6 +110,14 @@ pub struct PurchaseOptionDiscounts {
     pub three_year_reserved: DecimalValue,
     pub one_year_savings_plan: DecimalValue,
     pub azure_hybrid_benefit: DecimalValue,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct VmPurchaseOptionPricing {
+    pub purchase_option: VmPurchaseOption,
+    pub available: bool,
+    pub compute_discount: Option<DecimalValue>,
+    pub license_discount: Option<DecimalValue>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -402,6 +412,7 @@ impl CalculationEngine {
                 source_costs: source.costs,
                 azure_costs: None,
                 purchase_option_discounts: None,
+                vm_purchase_option_pricing: None,
                 savings: None,
                 explanation_steps: source.explanation_steps,
                 unresolved_components: source.unresolved_components,
@@ -444,6 +455,7 @@ impl CalculationEngine {
                 source_costs: source.costs,
                 azure_costs: None,
                 purchase_option_discounts: None,
+                vm_purchase_option_pricing: None,
                 savings: None,
                 explanation_steps: source.explanation_steps,
                 unresolved_components: source.unresolved_components,
@@ -503,6 +515,7 @@ impl CalculationEngine {
             source_costs: source.costs,
             azure_costs,
             purchase_option_discounts,
+            vm_purchase_option_pricing: None,
             savings,
             explanation_steps: source.explanation_steps,
             unresolved_components: source.unresolved_components,
@@ -537,6 +550,7 @@ impl CalculationEngine {
                 source_costs: source.costs,
                 azure_costs: None,
                 purchase_option_discounts: None,
+                vm_purchase_option_pricing: None,
                 savings: None,
                 explanation_steps: source.explanation_steps,
                 unresolved_components: source.unresolved_components,
@@ -562,6 +576,7 @@ impl CalculationEngine {
                 source_costs: source.costs,
                 azure_costs: None,
                 purchase_option_discounts: None,
+                vm_purchase_option_pricing: None,
                 savings: None,
                 explanation_steps: source.explanation_steps,
                 unresolved_components: source.unresolved_components,
@@ -689,6 +704,7 @@ impl CalculationEngine {
                 source_costs: source.costs,
                 azure_costs: None,
                 purchase_option_discounts: None,
+                vm_purchase_option_pricing: None,
                 savings: None,
                 explanation_steps: source.explanation_steps,
                 unresolved_components: source.unresolved_components,
@@ -720,6 +736,7 @@ impl CalculationEngine {
                 source_costs: source.costs,
                 azure_costs: None,
                 purchase_option_discounts: None,
+                vm_purchase_option_pricing: None,
                 savings: None,
                 explanation_steps: source.explanation_steps,
                 unresolved_components: source.unresolved_components,
@@ -749,17 +766,42 @@ impl CalculationEngine {
         target_selection.outcome_reasons.extend(semantic_reasons);
 
         if target_selection.mapping_status == MappingStatus::NoMapping {
+            let price_blocked = target_selection.candidates.iter().any(|candidate| {
+                !candidate.rejection_reasons.is_empty()
+                    && candidate.rejection_reasons.iter().all(|reason| {
+                        reason.code == VmSelectionReasonCode::PriceUnavailable
+                    })
+            });
+            if price_blocked {
+                let message = "No technically eligible reviewed Azure VM has complete PAYG VM and managed-disk prices in the coherent snapshot."
+                    .to_owned();
+                target_selection.recommendation_status = VmRecommendationStatus::Incomplete;
+                target_selection.outcome_reasons.push(VmSelectionReason {
+                    code: VmSelectionReasonCode::PriceUnavailable,
+                    detail: message.clone(),
+                });
+                source.unresolved_components.push(UnresolvedComponent {
+                    provider: Some(Provider::Azure),
+                    code: "azure_vm_price_unavailable".to_owned(),
+                    message,
+                });
+            }
             return Ok(ResourceCalculation {
                 resource_id: resource.shared.id,
                 storage_inputs,
                 mapping_status: Some(MappingStatus::NoMapping),
                 aws_pricing_status: source.pricing_status,
-                azure_pricing_status: PricingStatus::NotRequired,
+                azure_pricing_status: if price_blocked {
+                    PricingStatus::Unavailable
+                } else {
+                    PricingStatus::NotRequired
+                },
                 target_selection: None,
                 vm_target_selection: Some(target_selection),
                 source_costs: source.costs,
                 azure_costs: None,
                 purchase_option_discounts: None,
+                vm_purchase_option_pricing: None,
                 savings: None,
                 explanation_steps: source.explanation_steps,
                 unresolved_components: source.unresolved_components,
@@ -770,6 +812,9 @@ impl CalculationEngine {
             .selected
             .as_ref()
             .ok_or(CalculationError::InvalidTargetSelection)?;
+        let vm_purchase_option_pricing = input
+            .azure_snapshot
+            .map(|snapshot| vm_purchase_option_pricing(snapshot, &selected.arm_sku_name));
         storage_inputs.azure_storage_gb_per_instance =
             DecimalValue(selected.disks.iter().map(|disk| disk.capacity_gb.0).sum());
         let (azure_costs, azure_pricing_status, unresolved, explanation_steps) =
@@ -819,6 +864,7 @@ impl CalculationEngine {
             source_costs: source.costs,
             azure_costs,
             purchase_option_discounts: None,
+            vm_purchase_option_pricing,
             savings,
             explanation_steps: source.explanation_steps,
             unresolved_components: source.unresolved_components,
@@ -831,6 +877,7 @@ fn vm_price_availability(snapshot: &AzurePriceSnapshot) -> VmPriceAvailability {
         vm_hourly_rates: snapshot
             .vm_rates
             .iter()
+            .filter(|record| record.purchase_option == VmPurchaseOption::Payg)
             .map(|record| (record.arm_sku_name.to_ascii_lowercase(), record.hourly_rate))
             .collect(),
         managed_disk_dimensions: snapshot
@@ -854,6 +901,34 @@ fn vm_price_availability(snapshot: &AzurePriceSnapshot) -> VmPriceAvailability {
             })
             .collect::<BTreeSet<_>>(),
     }
+}
+
+fn vm_purchase_option_pricing(
+    snapshot: &AzurePriceSnapshot,
+    arm_sku_name: &str,
+) -> Vec<VmPurchaseOptionPricing> {
+    let payg = snapshot.vm_rate(arm_sku_name, VmPurchaseOption::Payg);
+    VmPurchaseOption::ALL
+        .into_iter()
+        .map(|purchase_option| {
+            let rate = snapshot.vm_rate(arm_sku_name, purchase_option);
+            let discounts = payg.zip(rate).map(|(payg, rate)| {
+                let payg_compute = DecimalValue(payg.hourly_rate.0 - payg.license_hourly.0);
+                let option_compute =
+                    DecimalValue(rate.hourly_rate.0 - rate.license_hourly.0);
+                (
+                    rate_discount(payg_compute, option_compute),
+                    rate_discount(payg.license_hourly, rate.license_hourly),
+                )
+            });
+            VmPurchaseOptionPricing {
+                purchase_option,
+                available: rate.is_some(),
+                compute_discount: discounts.map(|(compute, _)| compute),
+                license_discount: discounts.map(|(_, license)| license),
+            }
+        })
+        .collect()
 }
 
 fn storage_inputs(resource: &Resource) -> StorageInputs {
@@ -1184,16 +1259,20 @@ fn resolve_azure_vm_costs(
             Vec::new(),
         );
     };
-    let Some(vm_rate) = snapshot.vm_rate(&selected.arm_sku_name) else {
+    let Some(vm_rate) = snapshot.vm_rate(
+        &selected.arm_sku_name,
+        resource.vm_purchase_option,
+    ) else {
         return (
             None,
             PricingStatus::Unavailable,
             vec![UnresolvedComponent {
                 provider: Some(Provider::Azure),
-                code: "azure_vm_rate_unavailable".to_owned(),
+                code: "azure_vm_purchase_option_unavailable".to_owned(),
                 message: format!(
-                    "The selected Azure VM {} does not have a complete Windows PAYG rate.",
-                    selected.arm_sku_name
+                    "The selected Azure VM {} does not have an exact rate for purchase option {}.",
+                    selected.arm_sku_name,
+                    resource.vm_purchase_option.as_str()
                 ),
             }],
             Vec::new(),
@@ -1225,6 +1304,7 @@ fn resolve_azure_vm_costs(
         resource.shared.quantity,
         resource.shared.annual_hours_per_instance,
         vm_rate.hourly_rate,
+        vm_rate.license_hourly,
         DecimalValue(monthly_disks),
         input.settings,
     ) {
@@ -1242,6 +1322,7 @@ fn resolve_azure_vm_costs(
                     selected,
                     resource,
                     vm_rate.hourly_rate,
+                    vm_rate.license_hourly,
                     DecimalValue(monthly_disks),
                     input.settings,
                     &costs,
@@ -1681,23 +1762,35 @@ fn vm_target_selection_step(
 fn vm_azure_cost_formula_step(
     selected: &SelectedVmTarget,
     resource: &Ec2VmResource,
-    vm_hourly_rate: DecimalValue,
+    vm_total_hourly_rate: DecimalValue,
+    vm_license_hourly_rate: DecimalValue,
     managed_disk_monthly_per_instance: DecimalValue,
     settings: &ProjectSettings,
     costs: &AzureCostBreakdown,
 ) -> ExplanationStep {
     ExplanationStep {
         code: "azure_vm_cost_formula".to_owned(),
-        message: "Azure Windows PAYG VM compute and selected managed-disk costs were calculated from one coherent snapshot."
+        message: "Azure VM base compute, Windows license, and selected managed-disk costs were calculated from one coherent snapshot for the selected purchase option."
             .to_owned(),
         values: BTreeMap::from([
             ("arm_sku_name".to_owned(), selected.arm_sku_name.clone()),
             (
                 "compute_formula".to_owned(),
-                "compute_gross = quantity * annual_hours_per_instance * windows_payg_hourly"
+                "compute_gross = quantity * annual_hours_per_instance * (vm_total_hourly - windows_license_hourly)"
                     .to_owned(),
             ),
-            ("windows_payg_hourly".to_owned(), vm_hourly_rate.to_string()),
+            (
+                "vm_purchase_option".to_owned(),
+                resource.vm_purchase_option.as_str().to_owned(),
+            ),
+            (
+                "vm_total_hourly".to_owned(),
+                vm_total_hourly_rate.to_string(),
+            ),
+            (
+                "windows_license_hourly".to_owned(),
+                vm_license_hourly_rate.to_string(),
+            ),
             ("compute_gross".to_owned(), costs.compute_gross.to_string()),
             (
                 "azure_compute_discount".to_owned(),
@@ -1717,10 +1810,16 @@ fn vm_azure_cost_formula_step(
                 settings.azure_storage_discount.to_string(),
             ),
             ("storage_net".to_owned(), costs.storage_net.to_string()),
-            ("license_gross".to_owned(), "0".to_owned()),
             (
-                "license_assumption".to_owned(),
-                "windows_license_included_in_compute_rate".to_owned(),
+                "license_formula".to_owned(),
+                "license_gross = quantity * annual_hours_per_instance * windows_license_hourly"
+                    .to_owned(),
+            ),
+            ("license_gross".to_owned(), costs.license_gross.to_string()),
+            ("license_net".to_owned(), costs.license_net.to_string()),
+            (
+                "azure_license_discount".to_owned(),
+                settings.azure_license_discount.to_string(),
             ),
             (
                 "quantity".to_owned(),
@@ -2449,6 +2548,7 @@ mod tests {
                 annual_hours_per_instance: decimal("8760"),
             },
             instance_type: "m5.2xlarge".to_owned(),
+            vm_purchase_option: VmPurchaseOption::Payg,
             requirements: Default::default(),
             volumes: vec![VmVolume {
                 id: Uuid::new_v4(),
@@ -2503,6 +2603,117 @@ mod tests {
         assert!(row.explanation_steps.iter().any(|step| {
             step.code == "vm_assumptions"
                 && step.values.get("source_instance_store").map(String::as_str) == Some("not_used")
+        }));
+    }
+
+    #[test]
+    fn ec2_vm_workflow_applies_three_year_savings_plan_with_ahb() {
+        let engine = reviewed_vm_engine();
+        let mut settings = settings();
+        settings.project_type = ProjectType::Ec2Vm;
+        let mut resource = reviewed_vm_resource(
+            "m5.2xlarge",
+            "32",
+            Ec2VmRequirements::defaults_for("m5.2xlarge"),
+        );
+        let Resource::Ec2Vm(vm) = &mut resource else {
+            unreachable!("VM resource")
+        };
+        vm.vm_purchase_option = VmPurchaseOption::AhbSavingsThreeYear;
+        let aws = vm_aws_snapshot_for("m5.2xlarge", 8, "32");
+        let azure = reviewed_vm_azure_snapshot("Standard_D8s_v7");
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: Some(&azure),
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("Savings Plan with AHB calculation");
+
+        let row = &revision.resource_results[0];
+        let selected = row
+            .vm_target_selection
+            .as_ref()
+            .and_then(|selection| selection.selected.as_ref())
+            .expect("selected VM");
+        assert_eq!(selected.arm_sku_name, "Standard_D8s_v7");
+        assert_eq!(row.azure_pricing_status, PricingStatus::Fresh);
+        let costs = row.azure_costs.as_ref().expect("Azure costs");
+        assert_eq!(costs.compute_gross, decimal("3504.0"));
+        assert_eq!(costs.license_gross, DecimalValue::ZERO);
+        assert_eq!(costs.storage_gross, decimal("60"));
+        assert_eq!(costs.total_before_parity, decimal("3564.0"));
+        let pricing = row
+            .vm_purchase_option_pricing
+            .as_ref()
+            .expect("VM option pricing");
+        assert_eq!(pricing.len(), VmPurchaseOption::ALL.len());
+        assert!(pricing.iter().all(|option| option.available));
+        let selected_pricing = pricing
+            .iter()
+            .find(|option| option.purchase_option == VmPurchaseOption::AhbSavingsThreeYear)
+            .expect("selected option pricing");
+        assert!(
+            selected_pricing
+                .compute_discount
+                .is_some_and(|value| value.0 > Decimal::ZERO)
+        );
+        assert_eq!(selected_pricing.license_discount, Some(decimal("1")));
+    }
+
+    #[test]
+    fn ec2_vm_workflow_reports_unavailable_exact_reservation_term() {
+        let engine = reviewed_vm_engine();
+        let mut settings = settings();
+        settings.project_type = ProjectType::Ec2Vm;
+        let mut resource = reviewed_vm_resource(
+            "m5.2xlarge",
+            "32",
+            Ec2VmRequirements::defaults_for("m5.2xlarge"),
+        );
+        let Resource::Ec2Vm(vm) = &mut resource else {
+            unreachable!("VM resource")
+        };
+        vm.vm_purchase_option = VmPurchaseOption::ThreeYear;
+        let aws = vm_aws_snapshot_for("m5.2xlarge", 8, "32");
+        let azure = reviewed_vm_azure_snapshot_without_reservations("Standard_D8s_v7");
+
+        let revision = engine
+            .calculate(CalculationInput {
+                settings: &settings,
+                resources: &[resource],
+                aws_snapshot: Some(&aws),
+                azure_snapshot: Some(&azure),
+                expected_formula_version: Some("1.0.0"),
+            })
+            .expect("unavailable Reservation calculation");
+
+        let row = &revision.resource_results[0];
+        assert_eq!(row.mapping_status, Some(MappingStatus::Mapped));
+        assert_eq!(row.azure_pricing_status, PricingStatus::Unavailable);
+        assert!(row.azure_costs.is_none());
+        assert_eq!(
+            row.vm_target_selection
+                .as_ref()
+                .map(|selection| selection.recommendation_status),
+            Some(VmRecommendationStatus::Incomplete)
+        );
+        assert!(row.unresolved_components.iter().any(|component| {
+            component.code == "azure_vm_purchase_option_unavailable"
+                && component.message.contains("three-year")
+        }));
+        let pricing = row
+            .vm_purchase_option_pricing
+            .as_ref()
+            .expect("VM option pricing");
+        assert!(pricing.iter().any(|option| {
+            option.purchase_option == VmPurchaseOption::ThreeYear && !option.available
+        }));
+        assert!(pricing.iter().any(|option| {
+            option.purchase_option == VmPurchaseOption::SavingsThreeYear && option.available
         }));
     }
 
@@ -3289,6 +3500,7 @@ mod tests {
                 annual_hours_per_instance: decimal("8760"),
             },
             instance_type: instance_type.to_owned(),
+            vm_purchase_option: VmPurchaseOption::Payg,
             requirements,
             volumes: vec![VmVolume {
                 id: Uuid::new_v4(),
@@ -3384,7 +3596,9 @@ mod tests {
             vec![AzureVmRateRecord {
                 stable_key: "Standard_D8s_v5".to_owned(),
                 arm_sku_name: "Standard_D8s_v5".to_owned(),
+                purchase_option: VmPurchaseOption::Payg,
                 hourly_rate: decimal("0.8"),
+                license_hourly: DecimalValue::ZERO,
                 unit_of_measure: "1 Hour".to_owned(),
                 raw_price_lexeme: "0.8".to_owned(),
                 provenance: provenance("https://example.test/azure-vm"),
@@ -3404,18 +3618,71 @@ mod tests {
     }
 
     fn reviewed_vm_azure_snapshot(arm_sku_name: &str) -> AzurePriceSnapshot {
+        reviewed_vm_azure_snapshot_with_options(arm_sku_name, &VmPurchaseOption::ALL)
+    }
+
+    fn reviewed_vm_azure_snapshot_without_reservations(
+        arm_sku_name: &str,
+    ) -> AzurePriceSnapshot {
+        reviewed_vm_azure_snapshot_with_options(
+            arm_sku_name,
+            &[
+                VmPurchaseOption::Payg,
+                VmPurchaseOption::Ahb,
+                VmPurchaseOption::SavingsOneYear,
+                VmPurchaseOption::AhbSavingsOneYear,
+                VmPurchaseOption::SavingsThreeYear,
+                VmPurchaseOption::AhbSavingsThreeYear,
+            ],
+        )
+    }
+
+    fn reviewed_vm_azure_snapshot_with_options(
+        arm_sku_name: &str,
+        options: &[VmPurchaseOption],
+    ) -> AzurePriceSnapshot {
         AzurePriceSnapshot::create_with_vm_rates(
             snapshot_metadata("azure-reviewed-vm"),
             "swedencentral",
             Vec::new(),
-            vec![AzureVmRateRecord {
-                stable_key: arm_sku_name.to_ascii_lowercase(),
-                arm_sku_name: arm_sku_name.to_owned(),
-                hourly_rate: decimal("0.8"),
-                unit_of_measure: "1 Hour".to_owned(),
-                raw_price_lexeme: "0.8".to_owned(),
-                provenance: provenance("https://example.test/azure-reviewed-vm"),
-            }],
+            options
+                .iter()
+                .map(|purchase_option| {
+                    let compute = match purchase_option {
+                        VmPurchaseOption::Payg | VmPurchaseOption::Ahb => decimal("0.6"),
+                        VmPurchaseOption::OneYear | VmPurchaseOption::AhbOneYear => {
+                            decimal("0.45")
+                        }
+                        VmPurchaseOption::ThreeYear | VmPurchaseOption::AhbThreeYear => {
+                            decimal("0.35")
+                        }
+                        VmPurchaseOption::SavingsOneYear
+                        | VmPurchaseOption::AhbSavingsOneYear => decimal("0.5"),
+                        VmPurchaseOption::SavingsThreeYear
+                        | VmPurchaseOption::AhbSavingsThreeYear => decimal("0.4"),
+                    };
+                    let license = if purchase_option.uses_ahb() {
+                        DecimalValue::ZERO
+                    } else {
+                        decimal("0.2")
+                    };
+                    let hourly_rate = DecimalValue(compute.0 + license.0);
+                    AzureVmRateRecord {
+                        stable_key: format!(
+                            "{}|{}",
+                            arm_sku_name.to_ascii_lowercase(),
+                            purchase_option.as_str()
+                        ),
+                        arm_sku_name: arm_sku_name.to_owned(),
+                        purchase_option: *purchase_option,
+                        hourly_rate,
+                        license_hourly: license,
+                        unit_of_measure: "1 Hour".to_owned(),
+                        raw_price_lexeme: hourly_rate.to_string(),
+                        provenance: provenance("https://example.test/azure-reviewed-vm"),
+                    }
+                })
+                .collect(),
             vec![AzureManagedDiskRateRecord {
                 stable_key: "premium_ssd_lrs|P4".to_owned(),
                 offer_key: "premium_ssd_lrs".to_owned(),

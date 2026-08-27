@@ -11,7 +11,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
     calculation::cost::{AzureRate, EbsRate, Ec2Rate, RdsRate},
-    domain::resource::{EbsVolumeType, PurchaseOption, RdsDeployment},
+    domain::resource::{EbsVolumeType, PurchaseOption, RdsDeployment, VmPurchaseOption},
 };
 
 use super::provider::{Provider, ResolutionStatus};
@@ -108,7 +108,11 @@ pub struct AzureMiRateRecord {
 pub struct AzureVmRateRecord {
     pub stable_key: String,
     pub arm_sku_name: String,
+    #[serde(default)]
+    pub purchase_option: VmPurchaseOption,
     pub hourly_rate: crate::domain::decimal::DecimalValue,
+    #[serde(default)]
+    pub license_hourly: crate::domain::decimal::DecimalValue,
     pub unit_of_measure: String,
     pub raw_price_lexeme: String,
     pub provenance: RateProvenance,
@@ -373,10 +377,15 @@ impl AzurePriceSnapshot {
         })
     }
 
-    pub fn vm_rate(&self, arm_sku_name: &str) -> Option<&AzureVmRateRecord> {
-        self.vm_rates
-            .iter()
-            .find(|record| record.arm_sku_name.eq_ignore_ascii_case(arm_sku_name))
+    pub fn vm_rate(
+        &self,
+        arm_sku_name: &str,
+        purchase_option: VmPurchaseOption,
+    ) -> Option<&AzureVmRateRecord> {
+        self.vm_rates.iter().find(|record| {
+            record.arm_sku_name.eq_ignore_ascii_case(arm_sku_name)
+                && record.purchase_option == purchase_option
+        })
     }
 
     pub fn managed_disk_rate(
@@ -823,14 +832,78 @@ fn validate_azure_vm_rates(
     managed_disk_rates: &[AzureManagedDiskRateRecord],
 ) -> Result<(), SnapshotError> {
     let mut vm_keys = BTreeSet::new();
+    let mut vm_configurations = BTreeMap::<String, Vec<&AzureVmRateRecord>>::new();
     for record in vm_rates {
+        let business_key = (
+            record.arm_sku_name.to_ascii_lowercase(),
+            record.purchase_option,
+        );
         if record.arm_sku_name.is_empty()
             || record.hourly_rate.0 <= Decimal::ZERO
+            || record.license_hourly.0 < Decimal::ZERO
+            || record.license_hourly.0 > record.hourly_rate.0
+            || (vm_option_uses_ahb(record.purchase_option)
+                && record.license_hourly.0 != Decimal::ZERO)
             || record.unit_of_measure != "1 Hour"
             || !valid_raw_price(&record.raw_price_lexeme)
-            || !vm_keys.insert(record.arm_sku_name.to_ascii_lowercase())
+            || !vm_keys.insert(business_key)
         {
             return Err(SnapshotError::InvalidAzureVmRates);
+        }
+        vm_configurations
+            .entry(record.arm_sku_name.to_ascii_lowercase())
+            .or_default()
+            .push(record);
+    }
+
+    for configuration in vm_configurations.values() {
+        if configuration.len() == 1
+            && configuration[0].purchase_option == VmPurchaseOption::Payg
+            && configuration[0].license_hourly.0 == Decimal::ZERO
+        {
+            continue;
+        }
+        let payg = configuration
+            .iter()
+            .find(|record| record.purchase_option == VmPurchaseOption::Payg);
+        let ahb = configuration
+            .iter()
+            .find(|record| record.purchase_option == VmPurchaseOption::Ahb);
+        let (Some(payg), Some(ahb)) = (payg, ahb) else {
+            return Err(SnapshotError::InvalidAzureVmRates);
+        };
+        if !valid_azure_vm_option_pair(payg, ahb) {
+            return Err(SnapshotError::InvalidAzureVmRates);
+        }
+        for (licensed_option, ahb_option) in [
+            (VmPurchaseOption::OneYear, VmPurchaseOption::AhbOneYear),
+            (
+                VmPurchaseOption::ThreeYear,
+                VmPurchaseOption::AhbThreeYear,
+            ),
+            (
+                VmPurchaseOption::SavingsOneYear,
+                VmPurchaseOption::AhbSavingsOneYear,
+            ),
+            (
+                VmPurchaseOption::SavingsThreeYear,
+                VmPurchaseOption::AhbSavingsThreeYear,
+            ),
+        ] {
+            let licensed = configuration
+                .iter()
+                .find(|record| record.purchase_option == licensed_option);
+            let ahb_commitment = configuration
+                .iter()
+                .find(|record| record.purchase_option == ahb_option);
+            match (licensed, ahb_commitment) {
+                (None, None) => {}
+                (Some(licensed), Some(ahb_commitment))
+                    if valid_azure_vm_option_pair(licensed, ahb_commitment)
+                        && licensed.license_hourly == payg.license_hourly
+                        && ahb_commitment.hourly_rate.0 < ahb.hourly_rate.0 => {}
+                _ => return Err(SnapshotError::InvalidAzureVmRates),
+            }
         }
     }
 
@@ -858,6 +931,27 @@ fn validate_azure_vm_rates(
         }
     }
     Ok(())
+}
+
+fn valid_azure_vm_option_pair(
+    licensed: &AzureVmRateRecord,
+    ahb: &AzureVmRateRecord,
+) -> bool {
+    licensed.hourly_rate.0 > licensed.license_hourly.0
+        && licensed.license_hourly.0 > Decimal::ZERO
+        && ahb.license_hourly.0 == Decimal::ZERO
+        && licensed.hourly_rate.0 - licensed.license_hourly.0 == ahb.hourly_rate.0
+}
+
+fn vm_option_uses_ahb(option: VmPurchaseOption) -> bool {
+    matches!(
+        option,
+        VmPurchaseOption::Ahb
+            | VmPurchaseOption::AhbOneYear
+            | VmPurchaseOption::AhbThreeYear
+            | VmPurchaseOption::AhbSavingsOneYear
+            | VmPurchaseOption::AhbSavingsThreeYear
+    )
 }
 
 fn valid_raw_price(value: &str) -> bool {
@@ -1024,6 +1118,42 @@ mod tests {
     }
 
     #[test]
+    fn partial_azure_vm_purchase_matrix_is_accepted_as_complete_pairs() {
+        let snapshot = AzurePriceSnapshot::create_with_vm_rates(
+            metadata(vec!["https://example.invalid/azure-vm"]),
+            "swedencentral",
+            Vec::new(),
+            vec![
+                vm_record(VmPurchaseOption::Payg, "0.227", "0.092"),
+                vm_record(VmPurchaseOption::Ahb, "0.135", "0"),
+                vm_record(VmPurchaseOption::SavingsOneYear, "0.187", "0.092"),
+                vm_record(VmPurchaseOption::AhbSavingsOneYear, "0.095", "0"),
+            ],
+            Vec::new(),
+        )
+        .expect("partial exact-term matrix");
+
+        assert_eq!(snapshot.vm_rates.len(), 4);
+    }
+
+    #[test]
+    fn orphaned_azure_vm_purchase_option_is_rejected() {
+        let result = AzurePriceSnapshot::create_with_vm_rates(
+            metadata(vec!["https://example.invalid/azure-vm"]),
+            "swedencentral",
+            Vec::new(),
+            vec![
+                vm_record(VmPurchaseOption::Payg, "0.227", "0.092"),
+                vm_record(VmPurchaseOption::Ahb, "0.135", "0"),
+                vm_record(VmPurchaseOption::SavingsOneYear, "0.187", "0.092"),
+            ],
+            Vec::new(),
+        );
+
+        assert!(matches!(result, Err(SnapshotError::InvalidAzureVmRates)));
+    }
+
+    #[test]
     fn retrieval_time_and_cache_status_do_not_change_content_id() {
         let mut alternate = metadata(Vec::new());
         alternate.status = ResolutionStatus::Stale;
@@ -1076,6 +1206,28 @@ mod tests {
                 effective_at: Some("2026-01-01T00:00:00Z".to_owned()),
                 source_version: Some("v1".to_owned()),
                 meter_ids: vec!["meter-b".to_owned(), "meter-a".to_owned()],
+            },
+        }
+    }
+
+    fn vm_record(
+        purchase_option: VmPurchaseOption,
+        hourly_rate: &str,
+        license_hourly: &str,
+    ) -> AzureVmRateRecord {
+        AzureVmRateRecord {
+            stable_key: format!("standard_d2s_v7|{purchase_option:?}"),
+            arm_sku_name: "Standard_D2s_v7".to_owned(),
+            purchase_option,
+            hourly_rate: decimal(hourly_rate),
+            license_hourly: decimal(license_hourly),
+            unit_of_measure: "1 Hour".to_owned(),
+            raw_price_lexeme: hourly_rate.to_owned(),
+            provenance: RateProvenance {
+                source_url: "https://example.invalid/azure-vm".to_owned(),
+                effective_at: Some("2026-01-01T00:00:00Z".to_owned()),
+                source_version: None,
+                meter_ids: Vec::new(),
             },
         }
     }

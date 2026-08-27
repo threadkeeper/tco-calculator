@@ -2,6 +2,7 @@
 
 Status: Adopted implementation specification  
 Evidence reviewed: 2026-08-24  
+Commercial-option evidence reviewed: 2026-08-27
 Product authority: The repository owner adopted this workload on 2026-08-24. The controlling
 product requirements now live in section 4.4 of
 [`research/Azure Specification.md`](../research/Azure%20Specification.md); this document is the
@@ -23,6 +24,8 @@ The implementation must:
   fields;
 - reuse the reviewed EC2 Windows Shared On-Demand and EBS pricing behavior without changing the
   existing EC2 SQL acceptance rules;
+- support exact-SKU Azure VM PAYG, Reservation, and Savings Plan compute prices with an independent
+  Azure Hybrid Benefit for Windows Server estimate axis;
 - select targets deterministically on the server and favor the newest eligible current Azure VM
   generation in the requested region;
 - treat CPU bursting, local instance storage, disk roles, regional restrictions, and price
@@ -38,7 +41,8 @@ The implementation must:
 - Source instance types that are still represented in the reviewed AWS catalog, including
   previous-generation inventory when a current public price is available.
 - Persistent EBS volumes already supported by the EBS provider, beginning with `gp3`.
-- Windows Azure VM pay-as-you-go compute.
+- Windows Azure VM PAYG, 1-year and 3-year Reservations, and 1-year and 3-year Savings Plans,
+  each with or without Azure Hybrid Benefit when the exact SKU and term are available.
 - Azure Premium SSD, Standard SSD when it satisfies the requirements, and Premium SSD v2 data
   disks.
 - Manual entry, reviewed image-assisted drafts, calculation, deterministic target explanations,
@@ -47,9 +51,10 @@ The implementation must:
 
 ### 2.2 Out of scope for the first release
 
-- Linux, Arm, Dedicated Host, Dedicated Instance, Spot, Savings Plans, Reserved Instances, Azure
-  Reservations, Azure Savings Plan, and negotiated discounts.
-- Azure Hybrid Benefit, BYOL, License Mobility, and customer entitlement inference.
+- Linux, Arm, Dedicated Host, Dedicated Instance, Spot, AWS Savings Plans, AWS Reserved Instances,
+  and contract-specific or negotiated provider prices.
+- Automatic Azure Hybrid Benefit entitlement determination, BYOL rights determination, License
+  Mobility advice, and license compliance or attestation.
 - Automatic rightsizing below the source vCPU or memory allocation.
 - CPU benchmark equivalence, application performance guarantees, or automatic equivalence for a
   high-frequency source.
@@ -147,7 +152,8 @@ Each `ec2_vm` resource must carry, directly or through established project-level
 - CPU behavior input for burstable sources;
 - instance-store use state and requirements when the source offers local storage;
 - high-frequency/per-core-performance requirement state when the source family has that semantic;
-- target licensing assumption, initially Windows license included with Azure Hybrid Benefit off.
+- target VM purchase option, defaulting to Windows license-included PAYG; AHB remains off unless
+  the user explicitly selects it.
 
 The client must not supply prices, totals, selected explanations, owner identifiers, revisions, or
 calculated target capabilities. A requested target override may be accepted only as a request; the
@@ -268,14 +274,28 @@ only as an explained fallback when no current target survives the hard constrain
 
 ### 5.4 Azure VM price provider
 
-Normalize Windows pay-as-you-go consumption prices from the Azure Retail Prices API. The provider
-must match the requested region, currency, ARM SKU, Windows product, consumption price type, and
-billing unit. It must exclude Spot, reservation, savings-plan, dev/test, low-priority, and Linux
-meters.
+Use the public Azure Retail Prices API
+[`2023-01-01-preview`](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices)
+response because Microsoft documents Savings Plan rates only in that preview version. Match the
+requested region, USD currency, exact ARM SKU, primary meter, product, price type, and hourly unit.
+Follow validated continuation links until exhausted.
 
-Price selection must not depend on a friendly-name substring alone. Normalize and validate all
-material meter dimensions, reject conflicting rows, and retain the source URL, effective date,
-retrieval time, currency, unit, and normalized raw price lexeme.
+For each exact SKU, pair Linux and Windows `Consumption` meters. Linux supplies base compute and
+Windows minus Linux supplies the Windows license component. A complete pair creates PAYG and AHB
+rates. Exact `Reservation` rows create 1-year and 3-year base-compute rates after their upfront
+prices are amortized over 8,760 and 26,280 hours. Exact nested `savingsPlan` rows supply the 1-year
+and 3-year hourly base-compute rates. Each commitment creates a Windows-license-included option and
+an AHB option with the same compute component and a zero Windows license component.
+
+Exclude Spot, Dev/Test, low-priority, nonprimary, wrong-region, wrong-currency, and wrong-unit
+meters. Reject negative Windows/Linux differences, ambiguous pairs, conflicting rows, unknown
+terms, and malformed decimals. An absent exact term remains absent; never infer a discount,
+substitute another size or generation, or manufacture a zero rate. Retain source URL, effective
+date, retrieval time, currency, unit, meter IDs, parser schema version, and raw decimal lexemes.
+
+The preview API is an explicit operational limitation. A schema change fails closed and may use
+only a still-valid reviewed cache. The selected technical target is always ranked with its Windows
+license-included PAYG rate; selecting a commitment or AHB changes cost only after target selection.
 
 ### 5.5 Azure managed-disk catalog and price provider
 
@@ -348,10 +368,13 @@ The exact provider billing units must be normalized before using the formula.
 ### 6.3 Azure monthly target cost
 
 ```text
-azure_compute(r) = azure_windows_payg_hourly_rate(selected_vm) * H(r) * Q(r)
+azure_compute_rate(r) = selected_vm_total_hourly_rate - selected_vm_license_hourly_rate
+azure_compute(r) = azure_compute_rate(r) * H(r) * Q(r)
+azure_license(r) = selected_vm_license_hourly_rate * H(r) * Q(r)
 
 azure_monthly(r) =
     azure_compute(r)
+  + azure_license(r)
   + Q(r) * sum(azure_managed_disk_cost(mapped_volume))
 ```
 
@@ -360,8 +383,17 @@ eligible tier. For Premium SSD v2 it is the sum of normalized capacity, IOPS abo
 throughput above 125 MB/s price components. The implementation must resolve the provider's units
 and hourly/monthly proration rules rather than assume every retail meter is monthly.
 
-Windows license-included PAYG is the initial target assumption. Azure Hybrid Benefit is `false` and
-must not be inferred. The source and target totals must use the same currency; currency conversion
+Windows license-included PAYG is the default target assumption. A Reservation or Savings Plan
+replaces only `azure_compute_rate`; AHB sets only `selected_vm_license_hourly_rate` to zero. The
+existing Azure compute, license, and storage discounts apply independently to those three gross
+components. Managed-disk prices do not change with the VM purchase option.
+
+Azure Hybrid Benefit is a user-selected estimate input and must not be inferred. Microsoft states
+that Windows Server AHB requires qualifying core licenses with active Software Assurance or
+qualifying subscription licenses, subject to minimum-core and Product Terms conditions. See
+[Azure Hybrid Benefit for Windows Server](https://learn.microsoft.com/windows-server/get-started/azure-hybrid-benefit).
+The UI must show an eligibility warning and direct the user to verify rights; it must not require or
+persist an attestation. The source and target totals must use the same currency; currency conversion
 is out of scope.
 
 ### 6.4 Project totals and exclusions
@@ -436,8 +468,8 @@ Apply these filters before ranking:
    and throughput limits.
 7. When instance-store use is `used`, the SKU provides reviewed local ephemeral storage with enough
    usable capacity and compatible semantics.
-8. A complete Windows VM rate and every required managed-disk price dimension are available for the
-   target region and currency.
+8. A complete Windows license-included PAYG VM rate and every required managed-disk price dimension
+  are available for the target region and currency.
 
 If a newer family fails a hard filter, retain a machine-readable rejection reason. Do not silently
 drop to an older family.
@@ -540,6 +572,7 @@ minimum, each resource explanation must identify:
 - every newer-generation rejection before an older fallback;
 - one-to-one disk mappings and VM-level disk-limit checks;
 - selected Windows VM and managed-disk price provenance;
+- selected VM commitment, AHB state, exact-term availability, and compute/license component split;
 - assumptions, exclusions, stale/missing data, and recommendation status.
 
 Use stable explanation codes, for example:
@@ -593,6 +626,8 @@ The editor must support:
 - instance-store review for source families that offer it;
 - high-frequency review for Z-family sources;
 - target override requests with server revalidation;
+- five VM compute commitments, with unavailable exact terms disabled from the server matrix;
+- an independent AHB control with a visible eligibility and entitlement warning;
 - visible incomplete, stale-price, fallback-generation, capacity-fit-only, and no-mapping states.
 
 The result must distinguish `recommended`, `capacity_fit_review_required`, `incomplete`, and
@@ -608,12 +643,12 @@ The repository does not currently contain the complete data or behavior needed f
 | Workload discriminator | `ec2` means EC2 SQL. | Add separate `ec2_vm` variants through domain, OpenAPI, persistence, workflow, and web draft/editor/result unions. |
 | Source VM fixture | `app/catalogs/local-price-fixture.json` contains only `r6id.8xlarge` from the eight represented source SKUs. | Add reviewed shape and Windows Shared On-Demand price rows for all eight SKUs in a confirmed source region. |
 | Source EBS fixture | The local fixture has no EBS price rows. | Add `gp3` capacity, additional IOPS, and additional throughput dimensions. |
-| Azure VM provider | Loader/provider support is SQL MI-specific on the Azure side. | Add Windows Azure VM Retail Prices normalization. |
-| Azure VM capabilities | No reviewed non-SQL VM target catalog or lifecycle rank exists. | Add generated, versioned region/capability/lifecycle records for approved D, E, B, and any reviewed high-frequency lineages. |
-| Azure managed disks | No managed-disk provider or capability catalog exists. | Add OS/data role, tier/configuration, IOPS, throughput, region, and price dimensions. |
-| Selector | `target_selector` selects SQL MI. | Add an independent Azure VM selector implementing section 8; do not add VM branches to SQL MI formulas. |
-| Calculation workflow | EC2 SQL aggregates persistent EBS and SQL data for SQL MI. | Preserve and price VM volumes independently and map one-to-one. |
-| Frontend | EC2 draft/editor requires SQL fields. | Add a separate VM draft/editor while reusing only neutral volume controls. |
+| Azure VM provider | Exact Linux/Windows PAYG pairing, Reservations, nested Savings Plans, and AHB composition are implemented. | Keep preview-schema and exact-term failure tests current. |
+| Azure VM capabilities | A generated, versioned non-SQL VM capability and lifecycle catalog is implemented. | Refresh only through the reviewed generator and sources. |
+| Azure managed disks | Managed-disk provider and capability catalogs are implemented. | Keep OS/data role and independent performance dimensions intact. |
+| Selector | A dedicated Azure VM selector is implemented and ranks candidates using PAYG only. | Do not let commercial options influence the target. |
+| Calculation workflow | VM compute, Windows license, and one-to-one managed disks are priced independently. | Preserve server ownership and decimal component discounts. |
+| Frontend | The separate VM editor exposes commitments, AHB, availability, and server-derived results. | Keep generated OpenAPI types and legacy PAYG hydration covered. |
 | Frozen end-to-end inventory | Exact per-SKU image multiplicities are unavailable. | Re-read the source images or accept a user-confirmed machine-readable inventory before freezing expected totals. |
 
 Exact public prices are intentionally not recorded in this specification. The source region is
@@ -655,8 +690,10 @@ feature.
 - Per-disk and aggregate VM IOPS/throughput limits.
 - No vCPU or memory undersizing.
 - Stable tie-breaking independent of input/catalog ordering.
-- Missing, duplicate, conflicting, stale, wrong-region, wrong-currency, Linux, Spot, and reservation
-  price rows fail closed.
+- Missing, duplicate, conflicting, stale, wrong-region, wrong-currency, Spot, Dev/Test, malformed
+  Linux/Windows pairs, and unknown commitment terms fail closed.
+- Exact PAYG, AHB, Reservation, and Savings Plan component composition, including partial exact-term
+  availability and no cross-SKU or cross-generation substitution.
 
 ### 14.2 Selector fixtures
 
@@ -683,6 +720,7 @@ Freeze catalog fixtures that prove:
 - Existing `ec2` EC2 SQL payloads, source acceptance, target selection, formulas, persistence, and
   generated frontend types remain unchanged except for additive union handling.
 - OpenAPI generation is clean and committed output matches the schema.
+- Existing drafts without `vm_purchase_option` hydrate as PAYG; all ten stable values round-trip.
 - API rejects SQL fields on `ec2_vm` and VM-only fields on existing SQL resources where the union
   requires it.
 - Tenant/object ownership tests cover create, read, update, calculate, export, and delete for the
@@ -750,10 +788,12 @@ result.
 
 ### 16.2 Standing explicit assumptions
 
-- Windows license-included pay-as-you-go on both clouds.
+- Windows license-included On-Demand on AWS and PAYG on Azure by default.
 - Shared EC2 tenancy and On-Demand source prices.
-- Azure Hybrid Benefit off; no entitlement inferred.
-- No reservations, savings plans, negotiated discounts, Spot, or dev/test pricing.
+- Azure Hybrid Benefit off by default; a user may select an AHB estimate, but no entitlement is
+  inferred or attested.
+- Azure VM Reservations and Savings Plans are optional exact-SKU terms. Missing terms are
+  unavailable. AWS commitments, negotiated discounts, Spot, and dev/test pricing remain excluded.
 - No automatic downsize, consolidation, high availability, backup, network egress, support, or
   operational-labor cost.
 - One target VM per source VM and one target managed disk per persistent EBS volume.

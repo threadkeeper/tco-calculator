@@ -843,6 +843,7 @@ mod tests {
                 total_before_parity: decimal("135"),
             }),
             purchase_option_discounts: None,
+            vm_purchase_option_pricing: None,
             savings: None,
             explanation_steps: Vec::new(),
             unresolved_components: Vec::new(),

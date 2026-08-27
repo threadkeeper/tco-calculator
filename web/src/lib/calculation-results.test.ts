@@ -95,6 +95,7 @@ describe('calculation result rows', () => {
         sourceRamGbPerInstance: '256',
         annualHoursPerInstance: '8760',
         miPurchaseOption: 'ahb',
+        vmPurchaseOption: null,
         burstPolicy: null,
         instanceStoreUse: null,
         requiredLocalTempDiskGb: null,
@@ -171,6 +172,7 @@ describe('calculation result rows', () => {
       source_ram_gb_per_instance: '8',
       annual_hours_per_instance: '8760',
       instance_type: 't3.large',
+      vm_purchase_option: 'payg',
       requirements: {
         burst_policy: 'unknown',
         instance_store_use: 'not_used',
@@ -220,6 +222,7 @@ describe('calculation result rows', () => {
       sqlEdition: null,
       licenseBasis: null,
       miPurchaseOption: null,
+      vmPurchaseOption: 'payg',
       burstPolicy: 'unknown',
       instanceStoreUse: 'not_used',
       highFrequencyRequirement: 'not_applicable',

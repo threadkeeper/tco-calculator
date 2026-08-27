@@ -211,7 +211,8 @@ const VM_RESULT_GROUPS: ResultGroup[] = [
       textColumn('Target override', (row) => row.requestedTargetArmSku),
       decimalColumn('Persistent EBS GB', (row) => row.persistentEbsGbPerInstance),
       decimalColumn('Source RAM GB', (row) => row.sourceRamGbPerInstance),
-      decimalColumn('Annual hours', (row) => row.annualHoursPerInstance)
+      decimalColumn('Annual hours', (row) => row.annualHoursPerInstance),
+      textColumn('VM purchase', (row) => row.vmPurchaseOption)
     ]
   },
   {
@@ -244,6 +245,8 @@ const VM_RESULT_GROUPS: ResultGroup[] = [
     columns: [
       moneyColumn('Compute gross', (row) => row.azureComputeGross),
       moneyColumn('Compute net', (row) => row.azureComputePlusRamNet),
+      moneyColumn('License gross', (row) => row.azureLicenseGross),
+      moneyColumn('License net', (row) => row.azureLicenseNet),
       moneyColumn('Storage gross', (row) => row.azureStorageGross),
       moneyColumn('Storage net', (row) => row.azureStorageNet),
       moneyColumn('VM net before parity', (row) => row.azureTotalBeforeParity)
@@ -254,6 +257,7 @@ const VM_RESULT_GROUPS: ResultGroup[] = [
     tone: 'savings',
     columns: [
       moneyColumn('Compute', (row) => row.computeSavings),
+      moneyColumn('License', (row) => row.licenseSavings),
       moneyColumn('Storage', (row) => row.storageSavings),
       moneyColumn('Total', (row) => row.totalSavings)
     ]

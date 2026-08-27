@@ -10,7 +10,7 @@
         "https://calculator.aws/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-calc/EU%20(Ireland)/OnDemand/Shared/Windows/NA/No%20License%20required/Yes/index.json",
         "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/20260806022930/eu-west-1/index.json"
       ],
-      "parser_schema_version": "local-public-fixture-v2",
+      "parser_schema_version": "local-public-fixture-v3",
       "warnings": [
         "Local development uses a frozen public-price fixture; refresh on an approved build machine before relying on current rates."
       ]
@@ -691,16 +691,109 @@
         }
       },
       {
-        "stable_key": "swedencentral|windows|payg|standard_d2s_v7",
+        "stable_key": "swedencentral|standard_d2s_v7|payg",
         "arm_sku_name": "Standard_D2s_v7",
+        "purchase_option": "payg",
         "hourly_rate": "0.227",
+        "license_hourly": "0.092",
         "unit_of_measure": "1 Hour",
         "raw_price_lexeme": "0.227",
         "provenance": {
-          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=9000",
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
           "effective_at": "2026-04-01T00:00:00Z",
           "source_version": null,
           "meter_ids": [
+            "80edb39b-8dec-5d79-bf27-fa84ea39eeb7",
+            "c39c3fdf-60dc-5ab9-bcb4-aaa0c2924472"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_d2s_v7|ahb",
+        "arm_sku_name": "Standard_D2s_v7",
+        "purchase_option": "ahb",
+        "hourly_rate": "0.135",
+        "license_hourly": "0",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.135",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "80edb39b-8dec-5d79-bf27-fa84ea39eeb7",
+            "c39c3fdf-60dc-5ab9-bcb4-aaa0c2924472"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_d2s_v7|sv-one-year",
+        "arm_sku_name": "Standard_D2s_v7",
+        "purchase_option": "sv-one-year",
+        "hourly_rate": "0.1876205",
+        "license_hourly": "0.092",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.1876205",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "80edb39b-8dec-5d79-bf27-fa84ea39eeb7",
+            "c39c3fdf-60dc-5ab9-bcb4-aaa0c2924472"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_d2s_v7|ahbsv-one-year",
+        "arm_sku_name": "Standard_D2s_v7",
+        "purchase_option": "ahbsv-one-year",
+        "hourly_rate": "0.0956205",
+        "license_hourly": "0",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.0956205",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "80edb39b-8dec-5d79-bf27-fa84ea39eeb7",
+            "c39c3fdf-60dc-5ab9-bcb4-aaa0c2924472"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_d2s_v7|sv-three-year",
+        "arm_sku_name": "Standard_D2s_v7",
+        "purchase_option": "sv-three-year",
+        "hourly_rate": "0.1563545",
+        "license_hourly": "0.092",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.1563545",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "80edb39b-8dec-5d79-bf27-fa84ea39eeb7",
+            "c39c3fdf-60dc-5ab9-bcb4-aaa0c2924472"
+          ]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_d2s_v7|ahbsv-three-year",
+        "arm_sku_name": "Standard_D2s_v7",
+        "purchase_option": "ahbsv-three-year",
+        "hourly_rate": "0.0643545",
+        "license_hourly": "0",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "0.0643545",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": [
+            "80edb39b-8dec-5d79-bf27-fa84ea39eeb7",
             "c39c3fdf-60dc-5ab9-bcb4-aaa0c2924472"
           ]
         }
@@ -1156,33 +1249,183 @@
         }
       },
       {
-        "stable_key": "swedencentral|windows|payg|standard_e48ds_v7",
+        "stable_key": "swedencentral|standard_e48ds_v7|payg",
         "arm_sku_name": "Standard_E48ds_v7",
+        "purchase_option": "payg",
         "hourly_rate": "7.285",
+        "license_hourly": "2.208",
         "unit_of_measure": "1 Hour",
         "raw_price_lexeme": "7.285",
         "provenance": {
-          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27",
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
           "effective_at": "2026-05-01T00:00:00Z",
           "source_version": null,
-          "meter_ids": [
-            "0831e419-dcfc-5258-a310-a97461d16056"
-          ]
+          "meter_ids": ["0831e419-dcfc-5258-a310-a97461d16056", "fbc78917-6777-519d-a9a5-b0e994591cbc"]
         }
       },
       {
-        "stable_key": "swedencentral|windows|payg|standard_e48s_v7",
+        "stable_key": "swedencentral|standard_e48ds_v7|ahb",
+        "arm_sku_name": "Standard_E48ds_v7",
+        "purchase_option": "ahb",
+        "hourly_rate": "5.077",
+        "license_hourly": "0",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "5.077",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": ["0831e419-dcfc-5258-a310-a97461d16056", "fbc78917-6777-519d-a9a5-b0e994591cbc"]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_e48ds_v7|sv-one-year",
+        "arm_sku_name": "Standard_E48ds_v7",
+        "purchase_option": "sv-one-year",
+        "hourly_rate": "5.6801603",
+        "license_hourly": "2.208",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "5.6801603",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": ["0831e419-dcfc-5258-a310-a97461d16056", "fbc78917-6777-519d-a9a5-b0e994591cbc"]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_e48ds_v7|ahbsv-one-year",
+        "arm_sku_name": "Standard_E48ds_v7",
+        "purchase_option": "ahbsv-one-year",
+        "hourly_rate": "3.4721603",
+        "license_hourly": "0",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "3.4721603",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": ["0831e419-dcfc-5258-a310-a97461d16056", "fbc78917-6777-519d-a9a5-b0e994591cbc"]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_e48ds_v7|sv-three-year",
+        "arm_sku_name": "Standard_E48ds_v7",
+        "purchase_option": "sv-three-year",
+        "hourly_rate": "4.6271905",
+        "license_hourly": "2.208",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "4.6271905",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": ["0831e419-dcfc-5258-a310-a97461d16056", "fbc78917-6777-519d-a9a5-b0e994591cbc"]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_e48ds_v7|ahbsv-three-year",
+        "arm_sku_name": "Standard_E48ds_v7",
+        "purchase_option": "ahbsv-three-year",
+        "hourly_rate": "2.4191905",
+        "license_hourly": "0",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "2.4191905",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-05-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": ["0831e419-dcfc-5258-a310-a97461d16056", "fbc78917-6777-519d-a9a5-b0e994591cbc"]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_e48s_v7|payg",
         "arm_sku_name": "Standard_E48s_v7",
+        "purchase_option": "payg",
         "hourly_rate": "6.449",
+        "license_hourly": "2.208",
         "unit_of_measure": "1 Hour",
         "raw_price_lexeme": "6.449",
         "provenance": {
-          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27swedencentral%27&$skip=2000",
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
           "effective_at": "2026-04-01T00:00:00Z",
           "source_version": null,
-          "meter_ids": [
-            "31855d38-2671-58cd-be91-9e0d320da2d0"
-          ]
+          "meter_ids": ["31855d38-2671-58cd-be91-9e0d320da2d0", "fa7ff102-f6d0-5e1a-8998-a9e34e2db0fb"]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_e48s_v7|ahb",
+        "arm_sku_name": "Standard_E48s_v7",
+        "purchase_option": "ahb",
+        "hourly_rate": "4.241",
+        "license_hourly": "0",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "4.241",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": ["31855d38-2671-58cd-be91-9e0d320da2d0", "fa7ff102-f6d0-5e1a-8998-a9e34e2db0fb"]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_e48s_v7|sv-one-year",
+        "arm_sku_name": "Standard_E48s_v7",
+        "purchase_option": "sv-one-year",
+        "hourly_rate": "5.0757642",
+        "license_hourly": "2.208",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "5.0757642",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": ["31855d38-2671-58cd-be91-9e0d320da2d0", "fa7ff102-f6d0-5e1a-8998-a9e34e2db0fb"]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_e48s_v7|ahbsv-one-year",
+        "arm_sku_name": "Standard_E48s_v7",
+        "purchase_option": "ahbsv-one-year",
+        "hourly_rate": "2.8677642",
+        "license_hourly": "0",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "2.8677642",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": ["31855d38-2671-58cd-be91-9e0d320da2d0", "fa7ff102-f6d0-5e1a-8998-a9e34e2db0fb"]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_e48s_v7|sv-three-year",
+        "arm_sku_name": "Standard_E48s_v7",
+        "purchase_option": "sv-three-year",
+        "hourly_rate": "4.2152653",
+        "license_hourly": "2.208",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "4.2152653",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": ["31855d38-2671-58cd-be91-9e0d320da2d0", "fa7ff102-f6d0-5e1a-8998-a9e34e2db0fb"]
+        }
+      },
+      {
+        "stable_key": "swedencentral|standard_e48s_v7|ahbsv-three-year",
+        "arm_sku_name": "Standard_E48s_v7",
+        "purchase_option": "ahbsv-three-year",
+        "hourly_rate": "2.0072653",
+        "license_hourly": "0",
+        "unit_of_measure": "1 Hour",
+        "raw_price_lexeme": "2.0072653",
+        "provenance": {
+          "source_url": "https://prices.azure.com/api/retail/prices?currencyCode=USD&%24filter=serviceName+eq+%27Virtual+Machines%27+and+armRegionName+eq+%27swedencentral%27&api-version=2023-01-01-preview",
+          "effective_at": "2026-04-01T00:00:00Z",
+          "source_version": null,
+          "meter_ids": ["31855d38-2671-58cd-be91-9e0d320da2d0", "fa7ff102-f6d0-5e1a-8998-a9e34e2db0fb"]
         }
       },
       {

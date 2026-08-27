@@ -8,7 +8,9 @@
     type VmVolumeDraft
   } from '$lib/draft';
   import type { PurchaseOptionDiscounts } from '$lib/mi-purchase-options';
+  import type { VmPurchaseOptionPricing } from '$lib/vm-purchase-options';
   import MiPurchasePlanSelector from './MiPurchasePlanSelector.svelte';
+  import VmPurchasePlanSelector from './VmPurchasePlanSelector.svelte';
 
   let {
     resource,
@@ -16,6 +18,7 @@
     ebsTypes = [],
     rdsOptions = [],
     purchaseOptionDiscounts = null,
+    vmPurchaseOptionPricing = null,
     onremove,
     onchange,
     oncatalogchange = () => {}
@@ -25,6 +28,7 @@
     ebsTypes?: JsonRecord[];
     rdsOptions?: JsonRecord[];
     purchaseOptionDiscounts?: PurchaseOptionDiscounts | null;
+    vmPurchaseOptionPricing?: VmPurchaseOptionPricing[] | null;
     onremove: () => void;
     onchange: () => void;
     oncatalogchange?: () => void;
@@ -336,6 +340,12 @@
       </div>
       {#if resource.source_type === 'ec2_vm'}
         <div class="field-grid vm-requirements">
+          <VmPurchasePlanSelector
+            id={`${resource.id}-vm-purchase-plan`}
+            bind:value={resource.vm_purchase_option}
+            pricing={vmPurchaseOptionPricing}
+            {onchange}
+          />
           {#if resource.instance_type.startsWith('t3.')}
             <label>
               <span>CPU utilization profile</span>

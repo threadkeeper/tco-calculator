@@ -1055,7 +1055,7 @@ mod tests {
         );
         assert_eq!(snapshot.metadata.source_urls.len(), 5);
         assert_eq!(snapshot.mi_rates.len(), 8);
-        assert_eq!(snapshot.vm_rates.len(), 1);
+        assert_eq!(snapshot.vm_rates.len(), 10);
         assert_eq!(snapshot.managed_disk_rates.len(), 4);
     }
 
@@ -1068,7 +1068,7 @@ mod tests {
         insert_payload(
             &mut payloads,
             vm_url,
-            azure_retail_page(vec![azure_vm_price_item()], None),
+            azure_retail_page(azure_vm_price_items(), None),
         );
         insert_payload(
             &mut payloads,
@@ -1138,9 +1138,17 @@ mod tests {
             .await
             .expect("load Azure VM and managed-disk prices");
 
-        assert_eq!(normalized.vm_records.len(), 1);
-        assert_eq!(normalized.vm_records[0].arm_sku_name, "Standard_D2s_v7");
-        assert_eq!(normalized.vm_records[0].hourly_rate.to_string(), "0.227");
+        assert_eq!(normalized.vm_records.len(), 10);
+        let payg = normalized
+            .vm_records
+            .iter()
+            .find(|record| {
+                record.purchase_option == crate::domain::resource::VmPurchaseOption::Payg
+            })
+            .expect("PAYG VM rate");
+        assert_eq!(payg.arm_sku_name, "Standard_D2s_v7");
+        assert_eq!(payg.hourly_rate.to_string(), "0.227");
+        assert_eq!(payg.license_hourly.to_string(), "0.092");
         assert_eq!(normalized.managed_disk_records.len(), 4);
         assert_eq!(normalized.source_urls.len(), 2);
         assert!(normalized.warnings.is_empty());
@@ -1272,7 +1280,7 @@ mod tests {
         insert_payload(
             payloads,
             azure_vm_retail_url(scope, "USD").expect("VM Retail Prices URL"),
-            azure_retail_page(vec![azure_vm_price_item()], None),
+            azure_retail_page(azure_vm_price_items(), None),
         );
         insert_payload(
             payloads,
@@ -1650,23 +1658,56 @@ mod tests {
         .expect("deserialize managed-disk capability fixture")
     }
 
-    fn azure_vm_price_item() -> serde_json::Value {
-        serde_json::json!({
+    fn azure_vm_price_items() -> Vec<serde_json::Value> {
+        let vm_item = |product_name: &str, price_type: &str, retail_price: &str| {
+            serde_json::json!({
             "serviceName": "Virtual Machines",
             "armRegionName": "swedencentral",
             "currencyCode": "USD",
             "armSkuName": "Standard_D2s_v7",
-            "productName": "Virtual Machines Dsv7-series Windows",
+            "productName": product_name,
             "skuName": "D2s v7",
             "meterName": "D2s v7",
             "unitOfMeasure": "1 Hour",
-            "type": "Consumption",
-            "retailPrice": "0.227",
+            "type": price_type,
+            "retailPrice": retail_price,
             "tierMinimumUnits": "0",
             "effectiveStartDate": "2026-04-01T00:00:00Z",
-            "meterId": "vm-meter",
+            "meterId": format!("vm-meter-{price_type}-{retail_price}"),
             "isPrimaryMeterRegion": true
-        })
+            })
+        };
+        let mut linux = vm_item(
+            "Virtual Machines Dsv7-series Linux",
+            "Consumption",
+            "0.135",
+        );
+        linux["savingsPlan"] = serde_json::json!([
+            {"retailPrice": "0.0956205", "unitPrice": "0.0956205", "term": "1 Year"},
+            {"retailPrice": "0.0643545", "unitPrice": "0.0643545", "term": "3 Years"}
+        ]);
+        let mut one_year = vm_item(
+            "Virtual Machines Dsv7-series Linux",
+            "Reservation",
+            "700.8",
+        );
+        one_year["reservationTerm"] = serde_json::json!("1 Year");
+        let mut three_year = vm_item(
+            "Virtual Machines Dsv7-series Linux",
+            "Reservation",
+            "1576.8",
+        );
+        three_year["reservationTerm"] = serde_json::json!("3 Years");
+        vec![
+            vm_item(
+                "Virtual Machines Dsv7-series Windows",
+                "Consumption",
+                "0.227",
+            ),
+            linux,
+            one_year,
+            three_year,
+        ]
     }
 
     fn azure_disk_price_item(
