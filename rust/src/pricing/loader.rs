@@ -470,10 +470,28 @@ impl LivePricingLoader {
         vm_capabilities: &VmCapabilityCatalog,
         disk_capabilities: &ManagedDiskCatalog,
     ) -> Result<AzurePriceSnapshot, ProviderError> {
-        let (normalized, vm_normalized) = tokio::try_join!(
-            self.load_azure_sql_mi(target_region, capabilities),
-            self.load_azure_vm(target_region, vm_capabilities, disk_capabilities),
-        )?;
+        // SQL MI supports more target regions than the reviewed VM catalog. Keep those SQL
+        // refreshes independent while retaining fail-closed VM pricing in reviewed VM regions.
+        let has_reviewed_vm_candidates = vm_capabilities
+            .candidates
+            .iter()
+            .any(|candidate| candidate.azure_region.eq_ignore_ascii_case(target_region));
+        let (normalized, vm_normalized) = if has_reviewed_vm_candidates {
+            tokio::try_join!(
+                self.load_azure_sql_mi(target_region, capabilities),
+                self.load_azure_vm(target_region, vm_capabilities, disk_capabilities),
+            )?
+        } else {
+            (
+                self.load_azure_sql_mi(target_region, capabilities).await?,
+                AzureVmPricingNormalization {
+                    vm_records: Vec::new(),
+                    managed_disk_records: Vec::new(),
+                    source_urls: Vec::new(),
+                    warnings: Vec::new(),
+                },
+            )
+        };
         let (_, source_published_at) = snapshot_sources(
             normalized
                 .records
@@ -1057,6 +1075,58 @@ mod tests {
         assert_eq!(snapshot.mi_rates.len(), 8);
         assert_eq!(snapshot.vm_rates.len(), 10);
         assert_eq!(snapshot.managed_disk_rates.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn loads_sql_mi_snapshot_outside_the_reviewed_vm_catalog_scope() {
+        let scope = azure_region_scope("australiaeast").expect("Azure scope");
+        let calculator_url = azure_calculator_url().expect("calculator URL");
+        let retail_url = azure_retail_url(scope, "USD").expect("Retail Prices URL");
+        let mut calculator: serde_json::Value =
+            serde_json::from_slice(&azure_calculator_payload()).expect("calculator fixture");
+        for offer in ["compute", "software"] {
+            let prices = calculator["offers"][offer]["prices"]["rate"]
+                .as_object_mut()
+                .expect("calculator regional prices");
+            let price = prices
+                .remove("sweden-central")
+                .expect("Sweden fixture price");
+            prices.insert("australia-east".to_owned(), price);
+        }
+        let mut storage = azure_storage_item();
+        storage["armRegionName"] = serde_json::Value::String(scope.arm_name.to_owned());
+        let mut memory = azure_memory_item();
+        memory["armRegionName"] = serde_json::Value::String(scope.arm_name.to_owned());
+        let mut payloads = BTreeMap::new();
+        insert_payload(
+            &mut payloads,
+            calculator_url,
+            serde_json::to_vec(&calculator).expect("serialize calculator fixture"),
+        );
+        insert_payload(
+            &mut payloads,
+            retail_url,
+            azure_retail_page(vec![storage, memory], None),
+        );
+        let loader = LivePricingLoader::with_source(Arc::new(RecordedSource { payloads }));
+        let mut capabilities = azure_capabilities();
+        capabilities.candidates[0].azure_region = scope.arm_name.to_owned();
+
+        let snapshot = loader
+            .load_azure_snapshot(
+                scope.arm_name,
+                &capabilities,
+                &azure_vm_capabilities(),
+                &azure_managed_disk_capabilities(),
+            )
+            .await
+            .expect("create SQL MI snapshot without unreviewed VM prices");
+
+        assert_eq!(snapshot.metadata.status, ResolutionStatus::Fresh);
+        assert_eq!(snapshot.mi_rates.len(), 8);
+        assert!(snapshot.vm_rates.is_empty());
+        assert!(snapshot.managed_disk_rates.is_empty());
+        assert_eq!(snapshot.metadata.source_urls.len(), 2);
     }
 
     #[tokio::test]
