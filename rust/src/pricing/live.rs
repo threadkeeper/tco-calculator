@@ -415,10 +415,8 @@ fn azure_retail_continuation_url_for(
             _ => return Err(ProviderError::Unsupported),
         }
     }
-    let expected_api_version_count = usize::from(matches!(
-        service,
-        AzureRetailService::VirtualMachines
-    ));
+    let expected_api_version_count =
+        usize::from(matches!(service, AzureRetailService::VirtualMachines));
     if (currency_count, filter_count, skip_count, api_version_count)
         != (1, 1, 1, expected_api_version_count)
     {

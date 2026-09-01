@@ -877,10 +877,7 @@ fn validate_azure_vm_rates(
         }
         for (licensed_option, ahb_option) in [
             (VmPurchaseOption::OneYear, VmPurchaseOption::AhbOneYear),
-            (
-                VmPurchaseOption::ThreeYear,
-                VmPurchaseOption::AhbThreeYear,
-            ),
+            (VmPurchaseOption::ThreeYear, VmPurchaseOption::AhbThreeYear),
             (
                 VmPurchaseOption::SavingsOneYear,
                 VmPurchaseOption::AhbSavingsOneYear,
@@ -933,10 +930,7 @@ fn validate_azure_vm_rates(
     Ok(())
 }
 
-fn valid_azure_vm_option_pair(
-    licensed: &AzureVmRateRecord,
-    ahb: &AzureVmRateRecord,
-) -> bool {
+fn valid_azure_vm_option_pair(licensed: &AzureVmRateRecord, ahb: &AzureVmRateRecord) -> bool {
     licensed.hourly_rate.0 > licensed.license_hourly.0
         && licensed.license_hourly.0 > Decimal::ZERO
         && ahb.license_hourly.0 == Decimal::ZERO

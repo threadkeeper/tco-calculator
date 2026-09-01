@@ -755,9 +755,7 @@ impl NewResourceInput {
             || self.depreciation_years.is_some()
             || self.average_power_kw_override.is_some();
         match self.source_type {
-            ProjectType::Ec2 => {
-                !rds_fields && !on_prem_fields && self.vm_purchase_option.is_none()
-            }
+            ProjectType::Ec2 => !rds_fields && !on_prem_fields && self.vm_purchase_option.is_none(),
             // The VM workload is structurally non-SQL, so any SQL input is a mismatch.
             ProjectType::Ec2Vm => {
                 !rds_fields
@@ -767,9 +765,7 @@ impl NewResourceInput {
                     && self.sql_data_gb_per_instance.is_none()
                     && self.mi_purchase_option.is_none()
             }
-            ProjectType::Rds => {
-                !ec2_fields && !on_prem_fields && self.vm_purchase_option.is_none()
-            }
+            ProjectType::Rds => !ec2_fields && !on_prem_fields && self.vm_purchase_option.is_none(),
             ProjectType::OnPrem => {
                 self.instance_type.is_none()
                     && !ec2_fields

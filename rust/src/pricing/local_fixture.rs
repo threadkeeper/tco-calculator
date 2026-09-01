@@ -440,16 +440,11 @@ mod tests {
             "../../../app/catalogs/azure-managed-disk-capabilities.json"
         ))
         .expect("valid disk catalog");
-        assert!(
-            vm_capabilities
-                .candidates
-                .iter()
-                .all(|candidate| {
-                    azure
-                        .vm_rate(&candidate.arm_sku_name, VmPurchaseOption::Payg)
-                        .is_some()
-                })
-        );
+        assert!(vm_capabilities.candidates.iter().all(|candidate| {
+            azure
+                .vm_rate(&candidate.arm_sku_name, VmPurchaseOption::Payg)
+                .is_some()
+        }));
         assert!(
             azure
                 .managed_disk_rate(

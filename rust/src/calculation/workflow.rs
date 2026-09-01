@@ -768,9 +768,10 @@ impl CalculationEngine {
         if target_selection.mapping_status == MappingStatus::NoMapping {
             let price_blocked = target_selection.candidates.iter().any(|candidate| {
                 !candidate.rejection_reasons.is_empty()
-                    && candidate.rejection_reasons.iter().all(|reason| {
-                        reason.code == VmSelectionReasonCode::PriceUnavailable
-                    })
+                    && candidate
+                        .rejection_reasons
+                        .iter()
+                        .all(|reason| reason.code == VmSelectionReasonCode::PriceUnavailable)
             });
             if price_blocked {
                 let message = "No technically eligible reviewed Azure VM has complete PAYG VM and managed-disk prices in the coherent snapshot."
@@ -914,8 +915,7 @@ fn vm_purchase_option_pricing(
             let rate = snapshot.vm_rate(arm_sku_name, purchase_option);
             let discounts = payg.zip(rate).map(|(payg, rate)| {
                 let payg_compute = DecimalValue(payg.hourly_rate.0 - payg.license_hourly.0);
-                let option_compute =
-                    DecimalValue(rate.hourly_rate.0 - rate.license_hourly.0);
+                let option_compute = DecimalValue(rate.hourly_rate.0 - rate.license_hourly.0);
                 (
                     rate_discount(payg_compute, option_compute),
                     rate_discount(payg.license_hourly, rate.license_hourly),
@@ -1259,10 +1259,8 @@ fn resolve_azure_vm_costs(
             Vec::new(),
         );
     };
-    let Some(vm_rate) = snapshot.vm_rate(
-        &selected.arm_sku_name,
-        resource.vm_purchase_option,
-    ) else {
+    let Some(vm_rate) = snapshot.vm_rate(&selected.arm_sku_name, resource.vm_purchase_option)
+    else {
         return (
             None,
             PricingStatus::Unavailable,
@@ -3621,9 +3619,7 @@ mod tests {
         reviewed_vm_azure_snapshot_with_options(arm_sku_name, &VmPurchaseOption::ALL)
     }
 
-    fn reviewed_vm_azure_snapshot_without_reservations(
-        arm_sku_name: &str,
-    ) -> AzurePriceSnapshot {
+    fn reviewed_vm_azure_snapshot_without_reservations(arm_sku_name: &str) -> AzurePriceSnapshot {
         reviewed_vm_azure_snapshot_with_options(
             arm_sku_name,
             &[
@@ -3650,14 +3646,13 @@ mod tests {
                 .map(|purchase_option| {
                     let compute = match purchase_option {
                         VmPurchaseOption::Payg | VmPurchaseOption::Ahb => decimal("0.6"),
-                        VmPurchaseOption::OneYear | VmPurchaseOption::AhbOneYear => {
-                            decimal("0.45")
-                        }
+                        VmPurchaseOption::OneYear | VmPurchaseOption::AhbOneYear => decimal("0.45"),
                         VmPurchaseOption::ThreeYear | VmPurchaseOption::AhbThreeYear => {
                             decimal("0.35")
                         }
-                        VmPurchaseOption::SavingsOneYear
-                        | VmPurchaseOption::AhbSavingsOneYear => decimal("0.5"),
+                        VmPurchaseOption::SavingsOneYear | VmPurchaseOption::AhbSavingsOneYear => {
+                            decimal("0.5")
+                        }
                         VmPurchaseOption::SavingsThreeYear
                         | VmPurchaseOption::AhbSavingsThreeYear => decimal("0.4"),
                     };

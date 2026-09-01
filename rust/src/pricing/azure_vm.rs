@@ -119,10 +119,10 @@ struct RetailRate {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum VmCommitment {
-    ReservationOneYear,
-    ReservationThreeYear,
-    SavingsOneYear,
-    SavingsThreeYear,
+    ReservationOne,
+    ReservationThree,
+    SavingsOne,
+    SavingsThree,
 }
 
 pub fn normalize_azure_vm_pricing(
@@ -293,25 +293,25 @@ pub fn normalize_azure_vm_pricing(
 
         for (commitment, licensed_option, ahb_option, label) in [
             (
-                VmCommitment::ReservationOneYear,
+                VmCommitment::ReservationOne,
                 VmPurchaseOption::OneYear,
                 VmPurchaseOption::AhbOneYear,
                 "1-year Reservation",
             ),
             (
-                VmCommitment::ReservationThreeYear,
+                VmCommitment::ReservationThree,
                 VmPurchaseOption::ThreeYear,
                 VmPurchaseOption::AhbThreeYear,
                 "3-year Reservation",
             ),
             (
-                VmCommitment::SavingsOneYear,
+                VmCommitment::SavingsOne,
                 VmPurchaseOption::SavingsOneYear,
                 VmPurchaseOption::AhbSavingsOneYear,
                 "1-year Savings Plan",
             ),
             (
-                VmCommitment::SavingsThreeYear,
+                VmCommitment::SavingsThree,
                 VmPurchaseOption::SavingsThreeYear,
                 VmPurchaseOption::AhbSavingsThreeYear,
                 "3-year Savings Plan",
@@ -433,16 +433,16 @@ fn reservation_commitment(
         return None;
     }
     match item.reservation_term.as_deref()? {
-        "1 Year" => Some(VmCommitment::ReservationOneYear),
-        "3 Years" => Some(VmCommitment::ReservationThreeYear),
+        "1 Year" => Some(VmCommitment::ReservationOne),
+        "3 Years" => Some(VmCommitment::ReservationThree),
         _ => None,
     }
 }
 
 fn savings_plan_commitment(term: &str) -> Option<VmCommitment> {
     match term {
-        "1 Year" => Some(VmCommitment::SavingsOneYear),
-        "3 Years" => Some(VmCommitment::SavingsThreeYear),
+        "1 Year" => Some(VmCommitment::SavingsOne),
+        "3 Years" => Some(VmCommitment::SavingsThree),
         _ => None,
     }
 }
@@ -473,9 +473,9 @@ fn reservation_hourly_rate(
 ) -> Result<RetailRate, AzureVmPricingNormalizationError> {
     let mut rate = retail_rate(item, source_url)?;
     let term_hours = match commitment {
-        VmCommitment::ReservationOneYear => 8_760,
-        VmCommitment::ReservationThreeYear => 26_280,
-        VmCommitment::SavingsOneYear | VmCommitment::SavingsThreeYear => {
+        VmCommitment::ReservationOne => 8_760,
+        VmCommitment::ReservationThree => 26_280,
+        VmCommitment::SavingsOne | VmCommitment::SavingsThree => {
             return Err(AzureVmPricingNormalizationError::InvalidValue);
         }
     };
@@ -883,18 +883,13 @@ mod tests {
         .expect("partial commitment availability normalizes");
 
         assert_eq!(normalized.vm_records.len(), 6);
-        assert!(
-            normalized
-                .vm_records
-                .iter()
-                .all(|record| !matches!(
-                    record.purchase_option,
-                    VmPurchaseOption::OneYear
-                        | VmPurchaseOption::AhbOneYear
-                        | VmPurchaseOption::ThreeYear
-                        | VmPurchaseOption::AhbThreeYear
-                ))
-        );
+        assert!(normalized.vm_records.iter().all(|record| !matches!(
+            record.purchase_option,
+            VmPurchaseOption::OneYear
+                | VmPurchaseOption::AhbOneYear
+                | VmPurchaseOption::ThreeYear
+                | VmPurchaseOption::AhbThreeYear
+        )));
         assert_eq!(normalized.warnings.len(), 2);
         assert!(
             normalized

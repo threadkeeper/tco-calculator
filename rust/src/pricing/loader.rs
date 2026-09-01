@@ -1677,20 +1677,12 @@ mod tests {
             "isPrimaryMeterRegion": true
             })
         };
-        let mut linux = vm_item(
-            "Virtual Machines Dsv7-series Linux",
-            "Consumption",
-            "0.135",
-        );
+        let mut linux = vm_item("Virtual Machines Dsv7-series Linux", "Consumption", "0.135");
         linux["savingsPlan"] = serde_json::json!([
             {"retailPrice": "0.0956205", "unitPrice": "0.0956205", "term": "1 Year"},
             {"retailPrice": "0.0643545", "unitPrice": "0.0643545", "term": "3 Years"}
         ]);
-        let mut one_year = vm_item(
-            "Virtual Machines Dsv7-series Linux",
-            "Reservation",
-            "700.8",
-        );
+        let mut one_year = vm_item("Virtual Machines Dsv7-series Linux", "Reservation", "700.8");
         one_year["reservationTerm"] = serde_json::json!("1 Year");
         let mut three_year = vm_item(
             "Virtual Machines Dsv7-series Linux",
